@@ -125,6 +125,8 @@ import { registerBonzoReassignRoutes } from "./bonzo-reassign-routes";
 import { registerTvCarRoutes } from "./tv-car-routes";
 import { normalizeTvCarAppearance } from "@shared/tv-car";
 import { displayTvCarWrapUrl } from "./tv-car-wrap";
+import { withTvRaceGuests, tvRaceCreditsForEvents } from "./tv-race-roster";
+import { TV_OUTCOME_EVENT_STAMP_SQL } from "./tv-transfer-events";
 import {
   peopleFromPayload, fallbackPeopleFromLos,
   PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS, PEOPLE_REFRESH_MS,
@@ -23008,7 +23010,8 @@ ${note}` : daysLine;
     // here feeding a field nothing reads — the wall's transfers PAGE still
     // names the gap between the team total and the list it shows, which is
     // where that reconciliation belongs.
-    const ids = clrs.map((c) => Number(c.id));
+    const raceParticipants = withTvRaceGuests(sqlite, orgId, clrs);
+    const ids = raceParticipants.map((c) => Number(c.id));
     const carPreferences = new Map((sqlite.prepare(
       `SELECT user_id, body_color AS bodyColor, accent_color AS accentColor, livery
          FROM tv_car_preferences WHERE org_id=?`,
@@ -23096,7 +23099,7 @@ ${note}` : daysLine;
       for (const r of rows) best.set(Number(r.assistant_id), Number(r.best) || 0);
     } catch { /* an empty history is a fine history */ }
 
-    const people: PersonStats[] = clrs.map((c) => ({
+    const personStats = (c: any): PersonStats => ({
       id: Number(c.id),
       name: String(c.name ?? ""),
       car: normalizeTvCarAppearance({
@@ -23114,7 +23117,10 @@ ${note}` : daysLine;
       bestDayBefore: best.get(Number(c.id)) ?? 0,
       lastTransferAt: lastTransfer.get(Number(c.id)) ?? null,
       lastCallAt: lastCall.get(Number(c.id)) ?? null,
-    })).sort((a, b) => b.transfersToday - a.transfersToday || b.transfersWeek - a.transfersWeek || a.name.localeCompare(b.name));
+    });
+    const byTransfers = (a: PersonStats, b: PersonStats) => b.transfersToday - a.transfersToday || b.transfersWeek - a.transfersWeek || a.name.localeCompare(b.name);
+    const people = clrs.map(personStats).sort(byTransfers);
+    const racePeople = raceParticipants.map(personStats).sort(byTransfers);
 
     const teamRow = sqlite.prepare(
       `SELECT
@@ -23129,10 +23135,10 @@ ${note}` : daysLine;
     // ── events since the TV last asked ───────────────────────────────────
     const since = typeof req.query.since === "string" && /^\d{4}-\d{2}-\d{2}T/.test(req.query.since) ? req.query.since : null;
     const eventSql = `
-      SELECT o.id, o.outcome_type, o.transfer_type, o.borrower_name, o.appointment_datetime,
+      SELECT o.id, o.assistant_id, o.outcome_type, o.transfer_type, o.borrower_name, o.appointment_datetime,
              o.reschedule_datetime, o.rescheduled, o.missed_reason, o.created_at, o.updated_at,
              u.name AS assistant_name, lo.full_name AS lo_name, loa.full_name AS loa_name,
-             COALESCE(o.updated_at, o.created_at) AS stamp
+             ${TV_OUTCOME_EVENT_STAMP_SQL} AS stamp
         FROM lead_outcomes o
         LEFT JOIN users u ON u.id = o.assistant_id
         LEFT JOIN loan_officers lo ON lo.id = o.lo_id
@@ -23141,14 +23147,19 @@ ${note}` : daysLine;
     let events: ReturnType<typeof classifyOutcome>[] = [];
     let cursor = since;
     if (since) {
-      const rows = sqlite.prepare(`${eventSql} AND COALESCE(o.updated_at, o.created_at) > ? ORDER BY stamp ASC LIMIT 40`)
+      const rows = sqlite.prepare(`${eventSql} AND ${TV_OUTCOME_EVENT_STAMP_SQL} > ? ORDER BY stamp ASC LIMIT 40`)
         .all(orgId, since) as any[];
-      events = rows.map(classifyOutcome).filter(Boolean);
+      const raceCredits = tvRaceCreditsForEvents(sqlite, orgId, today, rows.filter(row => row.outcome_type === "transfer").map(row => Number(row.id)));
+      events = rows.map(row => {
+        const event = classifyOutcome(row);
+        if (event?.kind === "transfer") event.raceCredits = raceCredits.get(Number(row.id)) ?? [];
+        return event;
+      }).filter(Boolean);
       if (rows.length) cursor = String(rows[rows.length - 1].stamp);
     } else {
       // First poll: no replaying history at the TV on boot. Start the cursor
       // at the newest thing that exists.
-      const last = sqlite.prepare(`SELECT MAX(COALESCE(updated_at, created_at)) AS m FROM lead_outcomes WHERE org_id=?`).get(orgId) as any;
+      const last = sqlite.prepare(`SELECT MAX(${TV_OUTCOME_EVENT_STAMP_SQL}) AS m FROM lead_outcomes o WHERE o.org_id=?`).get(orgId) as any;
       cursor = String(last?.m || new Date().toISOString());
     }
     const recent = (sqlite.prepare(`${eventSql} AND o.date >= ? ORDER BY stamp DESC LIMIT 10`)
@@ -23188,6 +23199,7 @@ ${note}` : daysLine;
       version: APP_VERSION,
       now: new Date().toISOString(),
       today, weekStart, cursor,
+      racePeople: racePeople.map(({ bestDayBefore, ...p }) => p),
       scorecard: {
         people: people.map(({ bestDayBefore, ...p }) => p),
         team: {

@@ -21,10 +21,10 @@ test("My TV Car has a lazy hash route and an Advanced Settings personal link", (
   assert.match(sidebar, /advancedPersonalItems\.filter\(item => item.url !== "\/tv-car" \|\| canCustomizeTvCar\)/);
 });
 
-test("the page and navigation admit C3 CLRs, not LAP, LOP or manager-only accounts", () => {
+test("the page and navigation share the narrow CLR-or-owner race participant policy", () => {
   for (const source of [page, sidebar]) {
-    assert.match(source, /user\.portal == null \|\| user\.portal === "c3"/);
-    assert.match(source, /user\.role === "assistant" \|\| \(user\.role === "admin" && user\.isClr\)/);
+    assert.match(source, /import \{ isTvCarParticipant \} from "@shared\/tv-race-participation"/);
+    assert.match(source, /isTvCarParticipant\(user\)/);
   }
   const entry = page.slice(page.indexOf("export default function TvCar"));
   assert.ok(entry.indexOf("if (!canCustomize || !user)") < entry.indexOf("return <Garage"));

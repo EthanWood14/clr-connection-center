@@ -12,6 +12,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { currentOrgId, getOrgContext } from "./orgContext";
 import { ensureVintageLeadBranch } from "./script-vintage-lead";
+import { ensureTvTransferEvents } from "./tv-transfer-events";
 import { agentKey as dialpadAgentKey } from "./dialpad-stats";
 import { auditDetails, detailsHasPlaintextSecret } from "./audit-details";
 import {
@@ -1690,6 +1691,10 @@ function normalizeLoanOfficer(row: any): any {
   }
   return out;
 }
+
+// Install after the legacy table rebuild and historical seeds. Existing rows
+// retain a null event timestamp; deployment itself must not announce transfers.
+ensureTvTransferEvents(sqlite);
 
 export class Storage implements IStorage {
   getUsers() {

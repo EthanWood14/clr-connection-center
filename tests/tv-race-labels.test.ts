@@ -146,7 +146,7 @@ test("variable name widths and label heights remain separated in a typical TV cl
 test("every racer gets their full name, stable identity, and an owned connector element", () => {
   const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
   assert.match(scene, /const tags\s*=\s*racers\.map\(/, "nameplates are not limited to the leader or scorer");
-  assert.match(scene, /element\.textContent\s*=\s*r\.driver\.name\s*;/, "names must not be shortened to first names");
+  assert.match(scene, /element\.textContent\s*=\s*r\.driver\.id===options\.focusId\?`▶ \$\{r\.driver\.name\}`:r\.driver\.name\s*;/, "the focus marker retains every driver's full name");
   assert.match(scene, /element\.dataset\.driverId\s*=\s*String\(r\.driver\.id\)/);
   assert.match(scene, /tagElements\.push\(line,\s*element\)/, "both DOM nodes belong to scene cleanup");
   assert.match(scene, /layoutRaceLabels\(anchors,/);
@@ -157,6 +157,7 @@ test("the scene speeds up travel and wheels while preserving a static reduced-mo
   assert.match(scene, /const speed\s*=\s*options\.reduced\s*\?\s*RACE_BASE_ANGULAR_SPEED\s*:\s*RACE_BASE_ANGULAR_SPEED\s*\*\s*RACE_SPEED_MULTIPLIER/);
   assert.match(scene, /wheel\.rotation\.x\s*=[^;]*\(options\.reduced\s*\?\s*1\s*:\s*RACE_SPEED_MULTIPLIER\)/);
   assert.match(scene, /const motionTime\s*=\s*options\.reduced\s*\?\s*[\d.]+\s*:\s*elapsed/);
-  assert.match(scene, /const orbit\s*=\s*motionTime\s*\*\s*\(speed\s*-\s*RACE_BASE_ANGULAR_SPEED\)/,
-    "the camera follows the additional angular travel instead of losing the faster pack");
+  assert.match(scene, /const shot=raceCameraPose\(subjects,options\.reduced\?12:elapsed,lead,camera\.aspect,framingRadius\)/,
+    "the camera follows full angular travel and the scorer's actual rivals instead of losing the pass");
+  assert.match(scene, /camera\.lookAt\(shot\.target\.x,shot\.target\.y,shot\.target\.z\)/);
 });

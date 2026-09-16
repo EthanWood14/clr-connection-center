@@ -5,8 +5,9 @@ import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid"
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
 import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
 import { isSafeTvCarWrapUrl } from "@shared/tv-car";
+import { RACE_CAMERA_FOV, raceCameraPose, raceCameraRadius, raceCameraSubjects } from "@shared/tv-race-camera";
 
-type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void };
+type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void; onProgress?: (elapsed: number) => void };
 
 /** Procedural scene with optional same-origin, access-controlled car pictures. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
@@ -23,7 +24,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#61717e");
   scene.fog = new THREE.Fog("#687985", 105, 230);
-  const camera = new THREE.PerspectiveCamera(46, 1, .3, 300);
+  const camera = new THREE.PerspectiveCamera(RACE_CAMERA_FOV, 1, .3, 400);
   const resources = new Set<{ dispose: () => void }>();
   const keep = <T extends { dispose: () => void }>(resource: T) => { resources.add(resource); return resource; };
   let disposed=false, frame=0, observer:ResizeObserver|undefined;
@@ -165,6 +166,8 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   const wrapLoader=new THREE.ImageLoader();
   const grid=raceGrid(options.drivers);
   const transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
+  const subjects=raceCameraSubjects(Array.from(transitions.values()),options.focusId);
+  const framingRadius=raceCameraRadius(subjects);
   const racers=grid.map(driver=>{
     const root=new THREE.Group();scene.add(root);
     const tied=grid.filter(p=>p.gap===driver.gap).length;
@@ -215,7 +218,17 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       box(root,Math.abs(x),.055,.055,x/2,.5,z,black);
     }
     const number=banner(String(driver.rank),.65,.25,"#14232a");number.rotation.x=-Math.PI/2;number.position.set(0,.845,1.26);root.add(number);
-    return {driver,root,wheels};
+    const isFocus=driver.id===options.focusId;
+    if(isFocus) {
+      const halo=new THREE.Mesh(keep(new THREE.RingGeometry(2.65,2.82,48)),keep(new THREE.MeshBasicMaterial({color:'#7cf5ee',transparent:true,opacity:.85,side:THREE.DoubleSide,depthWrite:false})));
+      halo.rotation.x=-Math.PI/2;halo.position.y=.1;root.add(halo);
+    }
+    const boost=new THREE.Group();root.add(boost);
+    if(isFocus) {
+      const glow=keep(new THREE.MeshBasicMaterial({color:'#86fff1',transparent:true,opacity:.65,depthWrite:false}));
+      for(const x of [-1.25,1.25])box(boost,.08,.06,5.2,x,.25,-4.7,glow);
+    }
+    return {driver,root,wheels,boost};
   });
 
   // Every driver is named. Screen-space placement keeps nearby nameplates readable.
@@ -223,7 +236,8 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const element=document.createElement("div");
     element.style.cssText="position:absolute;pointer-events:none;padding:5px 8px;border-left:3px solid;background:#101a25ed;color:white;font:700 clamp(11px,1vw,17px) system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 3px 12px #0004;";
     element.style.borderColor=r.driver.color;
-    element.textContent=r.driver.name;
+    element.textContent=r.driver.id===options.focusId?`▶ ${r.driver.name}`:r.driver.name;
+    if(r.driver.id===options.focusId){element.style.background='#064e4bed';element.style.borderColor='#7cf5ee';element.style.fontWeight='900';element.style.zIndex='2';}
     element.title=r.driver.name;
     element.dataset.driverId=String(r.driver.id);
     const line=document.createElement("div");
@@ -233,7 +247,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     return {element,line,racer:r,width:element.offsetWidth,height:element.offsetHeight};
   });
 
-  let start:number|undefined, previous=0, draw:(now:number)=>void;
+  let start:number|undefined, previous=0, reported=-1, draw:(now:number)=>void;
   const vector=new THREE.Vector3();
   const resize=()=>{
     const w=Math.max(1,host.clientWidth),h=Math.max(1,host.clientHeight);
@@ -260,22 +274,19 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const motionTime=options.reduced?4.6:elapsed;
     const speed=options.reduced?RACE_BASE_ANGULAR_SPEED:RACE_BASE_ANGULAR_SPEED*RACE_SPEED_MULTIPLIER;
     const lead=.06+motionTime*speed;
-    for(const {driver,root,wheels} of racers) {
+    for(const {driver,root,wheels,boost} of racers) {
       const transition=transitions.get(driver.id)!;
       const position=interpolateRaceTransition(transition,options.reduced?12:elapsed);
       const point=raceTrackPoint(lead-position.distance/42,position.lane);
       root.position.set(point.x,point.y,point.z);root.rotation.set(0,point.yaw,Math.atan(.075));
+      boost.visible=!options.reduced&&transition.scored&&position.progress>.15&&position.progress<.85;
       for(const wheel of wheels)wheel.rotation.x=-motionTime*19*(options.reduced?1:RACE_SPEED_MULTIPLIER);
     }
-    const shot=THREE.MathUtils.smoothstep(elapsed,3.5,7);
-    const focusTransition=options.focusId===undefined?undefined:transitions.get(options.focusId);
-    const focusPose=focusTransition?.passing?interpolateRaceTransition(focusTransition,options.reduced?12:elapsed):undefined;
-    // Follow an earned midfield pass too, not only whoever already leads.
-    const focusOffset=focusPose?Math.max(0,focusPose.distance-8)/42:0;
-    // Follow the extra lap travel at trackside height so faster cars stay in view.
-    const orbit=motionTime*(speed-RACE_BASE_ANGULAR_SPEED)-focusOffset,cx=70-shot*25,cz=28+shot*31;
-    camera.position.set(cx*Math.cos(orbit)-cz*Math.sin(orbit),11-shot*2.5,cx*Math.sin(orbit)+cz*Math.cos(orbit));
-    const aim=raceTrackPoint(lead-.22-focusOffset,0);camera.lookAt(aim.x,1.4,aim.z);
+    const shot=raceCameraPose(subjects,options.reduced?12:elapsed,lead,camera.aspect,framingRadius);
+    camera.position.set(shot.position.x,shot.position.y,shot.position.z);
+    camera.lookAt(shot.target.x,shot.target.y,shot.target.z);
+    const progressTick=options.reduced?120:Math.floor(elapsed*5);
+    if(progressTick!==reported){reported=progressTick;options.onProgress?.(options.reduced?12:elapsed);}
     try {renderer.render(scene,camera);}catch{fail();return;}
     const anchors=[];
     for(const {element,line,racer,width,height} of tags) {

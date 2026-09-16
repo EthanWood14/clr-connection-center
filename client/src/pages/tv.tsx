@@ -27,27 +27,26 @@ import { useQuery } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
-  ArrowRightLeft, CalendarCheck2, CalendarClock, CalendarX2, Flame, GraduationCap, Quote, Trophy, UserPlus, Users,
+  ArrowRightLeft, CalendarCheck2, CalendarClock, CalendarX2, Flame, GraduationCap, Play, Quote, Trophy, UserPlus, Users,
 } from "lucide-react";
 import { Confetti } from "@/components/goal-celebration";
 import { HypeScene, HYPE_IMPACT_MS } from "@/components/tv/hype";
 import { RaceScene } from "@/components/tv/race";
 import { FieldRace, preloadFieldRace } from "@/components/tv/field-race";
-import { showsFieldRace } from "@shared/tv-field-race";
-import { planRaceTransition } from "@shared/tv-race-transition";
+import { appendTvMoments, createTvRacePreview, planTransferRaces, racePreviewStatus } from "@shared/tv-field-race";
 import {
   PAN_BOX, usePan,
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
   StarvedPage, UpcomingPage, LoSplitPage,
 } from "@/components/tv/pages";
-import { detectOvertakes, type Overtake, type RankRow } from "@shared/tv-overtake";
+import { type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
 import { formatTransferCount } from "@shared/transfer-credit";
 import type { TvCarAppearance } from "@shared/tv-car";
 
 // ── types (mirror server/tv-board.ts) ───────────────────────────────────────
 type Kind = "transfer" | "appointment" | "rescheduled" | "fell_through" | "missed_appointment";
-interface TvEvent { id: string; kind: Kind; at: string; borrower: string; who: string; lo: string | null; detail: string | null }
+interface TvEvent { id: string; kind: Kind; at: string; borrower: string; who: string; lo: string | null; detail: string | null; assistantId?: number | null; raceCredits?: { userId: number; credit: number }[] }
 interface Person {
   // Transfer CREDIT, in halves — see shared/transfer-credit.ts. Print it
   // through CountUp or formatTransferCount, never Math.round.
@@ -80,10 +79,11 @@ interface Feed {
   events: TvEvent[]; recent: TvEvent[]; milestones: Milestone[]; tip: Tip | null;
   newLeads?: NewLead[];
   racePlayback?: { id: number } | null;
+  racePeople?: Person[];
 }
 
 type Moment =
-  | { type: "event"; key: string; event: TvEvent; fieldRace?: RankRow[]; raceBefore?: RankRow[] | null; preview?: boolean }
+  | { type: "event"; key: string; event: TvEvent; fieldRace?: RankRow[]; raceBefore?: RankRow[] | null; focusId?: number; preview?: boolean }
   | { type: "milestone"; key: string; milestone: Milestone }
   | { type: "overtake"; key: string; overtake: Overtake; fieldRace?: RankRow[]; raceBefore?: RankRow[] | null };
 
@@ -524,7 +524,7 @@ function TipPage({ tip, reduced }: { tip: Tip | null; reduced: boolean }) {
 // Every moment is a hype screen. See components/tv/hype.tsx for what each
 // kind does with the word and the screen; this only decides the words under it.
 function MomentOverlay({ moment, reduced }: { moment: Moment; reduced: boolean }) {
-  if (moment.type === "event" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} before={moment.raceBefore} who={moment.event.who} reduced={reduced} preview={moment.preview} />;
+  if (moment.type === "event" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} before={moment.raceBefore} who={moment.event.who} focusId={moment.focusId} reduced={reduced} preview={moment.preview} />;
   if (moment.type === "overtake" && moment.fieldRace) return <FieldRace key={moment.key} people={moment.fieldRace} before={moment.raceBefore} who={moment.overtake.passerName} focusId={moment.overtake.passerId} reduced={reduced} />;
   // The race is its own scene rather than a hype screen: it is about two
   // people on the board, not one thing that happened.
@@ -703,6 +703,17 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   // ── moments ───────────────────────────────────────────────────────────
   const [queue, setQueue] = useState<Moment[]>([]);
   const [current, setCurrent] = useState<Moment | null>(null);
+  const previewSequence = useRef(0);
+  const previewStatus = racePreviewStatus(current, queue);
+  const previewPeople = data?.racePeople ?? data?.scorecard.people ?? [];
+  const playRacePreview = useCallback(() => {
+    if (!previewPeople.length || previewStatus) return;
+    const key = `local-race-preview:${Date.now()}:${++previewSequence.current}`;
+    const moment = createTvRacePreview(previewPeople, key, new Date().toISOString());
+    // A double click cannot add two previews. Real celebrations already in
+    // line keep their place, and the current transfer is never interrupted.
+    setQueue(queued => racePreviewStatus(current, queued) ? queued : [...queued, moment]);
+  }, [previewPeople, previewStatus, current]);
   /** Last poll's standings, for spotting one CLR passing another. */
   const prevStandings = useRef<RankRow[] | null>(null);
   const prevStandingsDay = useRef<string | null>(null);
@@ -721,45 +732,27 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     if (!data) return;
     cursorRef.current = data.cursor;
     const next: Moment[] = [];
-    const standings: RankRow[] = data.scorecard.people.map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday, car: p.car }));
+    const standings: RankRow[] = (data.racePeople ?? data.scorecard.people).map((p) => ({ id: p.id, name: p.name, transfersToday: p.transfersToday, car: p.car }));
     const before = prevStandingsDay.current === data.today ? prevStandings.current : null;
-    const moves = planRaceTransition(before, standings);
-    const overtakes = detectOvertakes(before, standings, data.today).filter(o=>moves.some(m=>m.id===o.passerId&&m.passedIds.length>0));
+    const races = new Map(planTransferRaces(before, standings, data.events, played.current).map(race => [race.event.id, race]));
     const playbackKey = data.racePlayback ? `manual-race:${data.racePlayback.id}` : null;
     if (playbackKey && !played.current.has(playbackKey)) next.push({
-      type: "event", key: playbackKey, preview: true, fieldRace: data.scorecard.people,
+      type: "event", key: playbackKey, preview: true, fieldRace: standings,
       event: { id: playbackKey, kind: "transfer", at: data.now, borrower: "", who: "", lo: null, detail: null },
     });
     for (const ev of data.events) {
-      if (!played.current.has(ev.id)) next.push({ type: "event", key: ev.id, event: ev });
-      const raceKey = `${ev.id}:field-race`;
-      const matching = standings.filter(p=>p.name===ev.who);
-      const move = matching.length===1 ? moves.find(m=>m.id===matching[0].id) : undefined;
-      const catchesTie = !!move?.tieIds.length;
-      const fieldRaceQueued = next.some(m=>(m.type==="event"||m.type==="overtake")&&m.fieldRace);
-      if (ev.kind === "transfer" && overtakes.length===0 && !fieldRaceQueued && (showsFieldRace(ev.id) || catchesTie) && !played.current.has(raceKey)) {
-        next.push({ type: "event", key: raceKey, event: ev, fieldRace: standings, raceBefore: before });
-      }
+      if (played.current.has(ev.id)) continue;
+      const race = races.get(ev.id);
+      // The race IS this transfer's moment, not a second sampled celebration.
+      // Keep its original ID so an edit or refresh cannot replay an old result.
+      next.push(race
+        ? { type: "event", key: ev.id, event: ev, fieldRace: race.people, raceBefore: race.before, focusId: race.focusId }
+        : { type: "event", key: ev.id, event: ev });
     }
     for (const m of data.milestones) if (!played.current.has(m.id)) next.push({ type: "milestone", key: m.id, milestone: m });
-    // Someone climbing past someone else on the scorecard. Worked out here
-    // rather than on the server because it is a change BETWEEN two polls, and
-    // the feed is stateless. The first poll after a load has no previous
-    // standing to compare against and stays quiet, like events do.
-    for (const o of overtakes) {
-      // One scene replays the whole poll, including simultaneous scorers.
-      if (next.some(m=>(m.type==="event"||m.type==="overtake")&&m.fieldRace)) break;
-      if (!played.current.has(o.key)) {
-        next.push({ type: "overtake", key: o.key, overtake: o, fieldRace: standings, raceBefore: before });
-        break;
-      }
-    }
     prevStandings.current = standings;
     prevStandingsDay.current = data.today;
-    if (next.length) setQueue((q) => {
-      const have = new Set(q.map((x) => x.key));
-      return [...q, ...next.filter((x) => !have.has(x.key))];
-    });
+    if (next.length) setQueue((q) => appendTvMoments(q, next, played.current));
   }, [data]);
 
   // ?demo=1 plays one of every moment with sample names, so a screen can be
@@ -952,14 +945,14 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
       )}
 
       {/* ── header: the one thing that never leaves ── */}
-      <header className="relative z-10 flex h-24 items-center justify-between px-16">
-        <div className="flex items-baseline gap-5">
+      <header className="relative z-10 flex h-24 items-center justify-between gap-5 px-6 xl:px-12 2xl:px-16">
+        <div className="flex min-w-0 flex-col justify-center gap-1 2xl:flex-row 2xl:items-baseline 2xl:gap-5">
           <span className="text-[clamp(1.2rem,1.8vw,1.8rem)] font-black tracking-[0.22em] text-amber-300">WEST CAPITAL</span>
-          <span className="text-[clamp(.9rem,1.3vw,1.3rem)] font-medium uppercase tracking-[0.3em] text-white/45">CLR Connection Center</span>
+          <span className="truncate text-[clamp(.65rem,1vw,1.3rem)] font-medium uppercase tracking-[0.2em] text-white/45">CLR Connection Center</span>
         </div>
-        <div className="flex items-center gap-8">
-          <span className="text-[clamp(1rem,1.6vw,1.6rem)] text-white/60">{dateLabel}</span>
-          <span className="text-[clamp(1.8rem,3vw,3rem)] font-bold tabular-nums">{clock}</span>
+        <div className="flex shrink-0 items-center gap-4 xl:gap-8">
+          <span className="hidden text-[clamp(1rem,1.4vw,1.6rem)] text-white/60 lg:inline">{dateLabel}</span>
+          <span className="whitespace-nowrap text-[clamp(1.5rem,2.6vw,3rem)] font-bold tabular-nums">{clock}</span>
           <span className="flex items-center gap-2 text-[clamp(.85rem,1.1vw,1.1rem)] uppercase tracking-widest text-white/50" data-testid="tv-live">
             <span className={`h-3 w-3 rounded-full ${isError ? "bg-rose-400" : "bg-emerald-400"} ${!reduced && !isError ? "animate-pulse" : ""}`} />
             {isError ? "Reconnecting" : "Live"}
@@ -1121,7 +1114,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
              in the page's own flow, ten percent of the screen, over nothing —
              see NewLeadZone above. ── */}
       <footer
-        className="relative z-10 flex h-[10vh] items-stretch gap-8 border-t border-white/10 bg-white/[0.03] px-10"
+        className="relative z-10 flex h-[10vh] items-stretch gap-8 border-t border-white/10 bg-white/[0.03] pl-44 pr-10"
         data-testid="tv-strip"
       >
         <NewLeadZone notice={leadNotice} up={leadUp} reduced={reduced} />
@@ -1145,6 +1138,20 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
       </footer>
 
       {current && <MomentOverlay moment={current} reduced={reduced} />}
+      <button
+        type="button"
+        data-testid="tv-play-race"
+        className="absolute bottom-1 left-3 z-50 flex h-8 items-center gap-2 rounded-md border border-cyan-200/50 bg-slate-950/95 px-3 text-xs font-bold text-cyan-100 shadow-lg transition-colors hover:bg-cyan-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-default disabled:border-white/20 disabled:text-white/60"
+        disabled={!previewPeople.length || !!previewStatus}
+        onClick={(event) => { event.stopPropagation(); playRacePreview(); }}
+        onKeyDown={(event) => event.stopPropagation()}
+        onKeyUp={(event) => event.stopPropagation()}
+        aria-label={previewStatus === "playing" ? "Race preview playing" : previewStatus === "queued" ? "Race preview queued" : "Play race preview"}
+        title="Play today's race on this screen only. Does not log a transfer or change scores."
+      >
+        <Play className="h-3.5 w-3.5" aria-hidden="true" />
+        {previewStatus === "playing" ? "Race playing…" : previewStatus === "queued" ? "Race queued…" : "Play race"}
+      </button>
     </div>
   );
 }

@@ -36,6 +36,10 @@ export interface TvEvent {
   at: string;
   borrower: string;
   who: string;
+  /** Stable identity for racing; names are labels, never ownership keys. */
+  assistantId?: number;
+  /** Current-day transfer credits, attached by the organization-scoped feed. */
+  raceCredits?: Array<{ userId: number; credit: number }>;
   lo: string | null;
   /** The one line under the headline: an LO name, a time, a reason. */
   detail: string | null;
@@ -53,7 +57,10 @@ export interface OutcomeRow {
   missed_reason?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  /** Feed-selected event time; transfer edits keep their original event time. */
+  stamp?: string | null;
   assistant_name?: string | null;
+  assistant_id?: number | null;
   lo_name?: string | null;
   /** The LO's assistant this transfer was handed to, when there is one. Not the CLR — that is assistant_name. */
   loa_name?: string | null;
@@ -222,11 +229,12 @@ export function whenLabel(iso: string | null | undefined, tz = "America/Los_Ange
  * a wrong number, a deferral. The TV is for the moments worth looking up for.
  */
 export function classifyOutcome(row: OutcomeRow): TvEvent | null {
-  const at = String(row.updated_at || row.created_at || "");
+  const at = String(row.stamp || row.updated_at || row.created_at || "");
   const base = {
     at,
     borrower: clean(row.borrower_name) || "A borrower",
     who: clean(row.assistant_name) || "A CLR",
+    ...(Number.isSafeInteger(row.assistant_id) && Number(row.assistant_id) > 0 ? { assistantId: Number(row.assistant_id) } : {}),
     lo: clean(row.lo_name) || null,
   };
   switch (row.outcome_type) {

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { defaultTvCarAppearance, isSafeTvCarWrapUrl, normalizeTvCarAppearance, validateTvCarAppearance, type TvCarAppearance } from "@shared/tv-car";
 import { prepareTvCarWrap, type PreparedTvCarWrap } from "@/lib/tv-car-wrap";
+import { isTvCarParticipant } from "@shared/tv-race-participation";
 
 type CarResponse = { appearance: TvCarAppearance };
 const COLOR_PRESETS = [
@@ -298,11 +299,9 @@ function Garage({ user }: { user: AuthUser }) {
 
 export default function TvCar() {
   const { user } = useAuth();
-  const canCustomize = !!user
-    && (user.portal == null || user.portal === "c3")
-    && (user.role === "assistant" || (user.role === "admin" && user.isClr));
+  const canCustomize = isTvCarParticipant(user);
   if (!canCustomize || !user) return (
-    <div className="mx-auto max-w-3xl p-4 md:p-6"><Alert><Flag className="h-4 w-4" /><AlertTitle>My TV Car is for C3 CLRs</AlertTitle><AlertDescription>Sign in with your active C3 CLR account to customize your own race car.</AlertDescription></Alert></div>
+    <div className="mx-auto max-w-3xl p-4 md:p-6"><Alert><Flag className="h-4 w-4" /><AlertTitle>My TV Car is for C3 race participants</AlertTitle><AlertDescription>Sign in with your active C3 race-participant account to customize your own race car.</AlertDescription></Alert></div>
   );
   // Keep cached data and unsaved edits isolated when an impersonated account changes.
   return <Garage key={`${user.orgId}:${user.id}`} user={user} />;

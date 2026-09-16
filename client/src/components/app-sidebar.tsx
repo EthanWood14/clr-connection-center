@@ -17,6 +17,7 @@ import {
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { useAuth } from "@/lib/auth";
 import { APP_VERSION } from "@shared/version";
+import { isTvCarParticipant } from "@shared/tv-race-participation";
 
 // ── Nav structure ────────────────────────────────────────────────────────────
 
@@ -308,9 +309,7 @@ const viewerItems: NavItem[] = [
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
-  const canCustomizeTvCar = !!user
-    && (user.portal == null || user.portal === "c3")
-    && (user.role === "assistant" || (user.role === "admin" && user.isClr));
+  const canCustomizeTvCar = isTvCarParticipant(user);
 
   // Advanced Settings folder — collapsed by default; preference persisted.
   const [advancedOpen, setAdvancedOpen] = useState(() => {

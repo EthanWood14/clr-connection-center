@@ -43,6 +43,15 @@ test("a transfer is a transfer, and says who it went to", () => {
   assert.equal(e.detail, "to Christopher Redoble");
 });
 
+test("TV events preserve exact assistant identity independently from duplicate display names", () => {
+  const first = classifyOutcome(row({ assistant_id: 1, assistant_name: "Same Name" }))!;
+  const second = classifyOutcome(row({ assistant_id: 7, assistant_name: "Same Name" }))!;
+  assert.equal(first.assistantId, 1);
+  assert.equal(second.assistantId, 7);
+  assert.equal(first.who, second.who);
+  for (const id of [null, 0, -1, 1.5, NaN]) assert.equal(classifyOutcome(row({ assistant_id: id }))!.assistantId, undefined);
+});
+
 test("an appointment is a meeting set; a moved one is REBOOKED", () => {
   const set = classifyOutcome(row({ outcome_type: "appointment", appointment_datetime: "2026-09-03T14:30" }))!;
   assert.equal(set.kind, "appointment");
@@ -674,11 +683,12 @@ test("the TV has no session and can only read", () => {
   assert.match(feed, /org_id/, "org-scoped");
 });
 
-test("events come from an updated_at cursor, so a miss can animate", () => {
+test("the event cursor uses durable transfer time while misses and appointments retain update time", () => {
   // Cut at the /pages route, not at the next section: the board pages are a
   // separate endpoint on purpose, and their queries are not the fast feed's.
   const feed = routes.slice(routes.indexOf('app.get("/api/tv/:token/feed"'), routes.indexOf('app.get("/api/tv/:token/pages"'));
-  assert.match(feed, /COALESCE\(o\.updated_at, o\.created_at\) > \?/);
+  assert.match(feed, /\$\{TV_OUTCOME_EVENT_STAMP_SQL\} > \?/);
+  assert.match(feed, /MAX\(\$\{TV_OUTCOME_EVENT_STAMP_SQL\}\)/);
   // First poll: no replaying history at the TV on boot.
   assert.match(feed, /First poll: no replaying history/);
 });
@@ -744,7 +754,7 @@ test("the moment queue cannot deadlock, and cannot lose moments on reload", () =
   assert.match(page, /if \(!current\) return;\s*\r?\n\s*const hold = /, "the hold timer lives in its own effect keyed on current");
   const enqueue = page.slice(page.indexOf("cursorRef.current = data.cursor;"), page.indexOf("}, [data]);"));
   assert.doesNotMatch(enqueue, /remember\(/, "enqueueing must not mark anything as played");
-  assert.match(enqueue, /!have\.has\(x\.key\)/, "a re-poll cannot double-queue the same moment");
+  assert.match(enqueue, /appendTvMoments\(q, next, played\.current\)/, "the tested queue merge rejects queued, playing, and duplicate poll moments");
 });
 
 test("pages rotate like signage, and pause under a moment", () => {
@@ -925,26 +935,46 @@ test("the tip page shows standalone quotes, not raw manual lines", async () => {
 });
 
 // ── one CLR passing another ─────────────────────────────────────────────────
-test("an overtake is worked out between polls and plays its own race scene", () => {
+test("every new transfer owns a race scene with day-scoped history and stable event dedupe", () => {
   // The feed is stateless, so a CHANGE between two polls cannot come from the
   // server — the board holds the previous standings and compares.
   assert.match(page, /const prevStandings = useRef<RankRow\[\] \| null>\(null\);/);
   assert.match(page, /prevStandingsDay\.current === data\.today \? prevStandings\.current : null/);
-  assert.match(page, /detectOvertakes\(before, standings, data\.today\)/);
+  assert.match(page, /planTransferRaces\(before, standings, data\.events, played\.current\)/);
   assert.match(page, /prevStandings\.current = standings;/);
   // It goes through the same played-set as every other moment, so a pass that
   // is still true on the next poll cannot play twice.
   const enqueue = page.slice(page.indexOf("cursorRef.current = data.cursor;"), page.indexOf("}, [data]);"));
-  assert.match(enqueue, /!played\.current\.has\(o\.key\)/);
-  assert.match(enqueue, /overtakes\.length===0 && !fieldRaceQueued/, "sampled/tie scenes yield to one full-field pass replay");
-  assert.match(enqueue, /if \(next\.some\(m=>\(m\.type==="event"\|\|m\.type==="overtake"\)&&m\.fieldRace\)\) break;/, "simultaneous scorers do not replay the same field repeatedly");
-  assert.match(enqueue, /fieldRace: standings, raceBefore: before/);
+  assert.match(enqueue, /if \(played\.current\.has\(ev\.id\)\) continue;/);
+  assert.match(enqueue, /key: ev\.id, event: ev, fieldRace: race\.people, raceBefore: race\.before, focusId: race\.focusId/);
+  assert.match(enqueue, /appendTvMoments\(q, next, played\.current\)/);
+  assert.doesNotMatch(enqueue, /showsFieldRace|fieldRaceQueued|overtakes\.length/, "no sampling or one-scene-per-poll cap");
+  assert.match(page, /data\.racePeople \?\? data\.scorecard\.people/, "race guests do not change scorecard roster");
   // Its own scene, its own hold, its own sound.
   assert.match(page, /<RaceScene passerName=\{o\.passerName\} passedName=\{o\.passedName\} count=\{o\.count\} reduced=\{reduced\} \/>/);
   assert.match(page, /overtake: 8500,/);
   assert.match(page, /overtake:\s+\(\) => \{ crash\(/);
   // The union stays exhaustive: nothing may assume a moment is an event.
   assert.doesNotMatch(page, /m\.type === "milestone" \? "milestone" : m\.event\.kind/);
+});
+
+test("the TV exposes a local-only Play race button without changing scores or advancing the deck", () => {
+  const control = page.slice(page.indexOf('data-testid="tv-play-race"'), page.indexOf('</button>', page.indexOf('data-testid="tv-play-race"')));
+  assert.match(control, /Play race/);
+  assert.match(control, /Race playing/);
+  assert.match(control, /Race queued/);
+  assert.match(control, /disabled=\{!previewPeople\.length \|\| !!previewStatus\}/);
+  assert.match(control, /onClick=\{\(event\) => \{ event\.stopPropagation\(\); playRacePreview\(\); \}\}/);
+  assert.match(control, /onKeyDown=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.match(control, /onKeyUp=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.match(control, /z-50/);
+  assert.match(control, /Does not log a transfer or change scores/);
+  const handler = page.slice(page.indexOf("const playRacePreview = useCallback"), page.indexOf("/** Last poll's standings"));
+  assert.match(handler, /createTvRacePreview\(previewPeople, key/);
+  assert.match(handler, /racePreviewStatus\(current, queued\) \? queued : \[\.\.\.queued, moment\]/);
+  assert.doesNotMatch(handler, /fetch\(|apiRequest|setCurrent\(|setQueue\(\[|transfersToday\s*[+:=]/);
+  assert.match(page, /previewPeople = data\?\.racePeople \?\? data\?\.scorecard\.people/);
+  assert.match(page, /preview=\{moment\.preview\}/);
 });
 
 test("the race scene never mocks the person who got passed", () => {

@@ -1,6 +1,7 @@
 import { raw, type Express, type RequestHandler, type Response } from "express";
 import { normalizeTvCarAppearance, validateTvCarAppearance, TV_CAR_WRAP_MAX_BYTES, type TvCarAppearance } from "../shared/tv-car";
 import { removeTvCarWrap, saveTvCarWrap, selfTvCarWrapUrl, sendTvCarWrap, TvCarWrapError, validateTvCarWrapImage } from "./tv-car-wrap";
+import { isTvCarParticipant } from "../shared/tv-race-participation";
 
 type CarSession = { userId?: unknown; orgId?: unknown; portal?: unknown };
 type CarOwner = { id: number; org_id: number; name: string; role: string; is_clr: number; is_active: number; portal: string | null };
@@ -16,14 +17,14 @@ export interface TvCarRouteDeps {
 const positiveId = (value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
 const internalPortal = (value: unknown) => value == null || value === "c3";
 
-/** Managers cannot override ownership; an admin must themselves be a CLR. */
+/** Participation never overrides the current owner, org or active C3 boundary. */
 export function canCustomizeTvCar(session: CarSession | null, owner: CarOwner | null | undefined): boolean {
   if (!session || !owner || !positiveId(session.userId) || !positiveId(session.orgId)) return false;
   return Number(session.userId) === Number(owner.id)
     && Number(session.orgId) === Number(owner.org_id)
     && Number(owner.is_active) === 1
     && internalPortal(session.portal) && internalPortal(owner.portal)
-    && (owner.role === "assistant" || (owner.role === "admin" && Number(owner.is_clr) === 1));
+    && isTvCarParticipant(owner);
 }
 
 function readAppearance(db: any, owner: CarOwner): TvCarAppearance {
@@ -44,7 +45,7 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
     const owner = deps.db().prepare(`SELECT id, org_id, name, role, is_clr, is_active, portal
       FROM users WHERE id = ? AND org_id = ?`).get(Number(session.userId), Number(session.orgId)) as CarOwner | undefined;
     if (!canCustomizeTvCar(session, owner)) {
-      res.status(403).json({ error: "Your active C3 CLR account is required to customize a TV car." });
+      res.status(403).json({ error: "Your active C3 race-participant account is required to customize a TV car." });
       return null;
     }
     return owner!;

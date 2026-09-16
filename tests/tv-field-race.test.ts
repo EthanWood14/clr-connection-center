@@ -1,17 +1,139 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { showsFieldRace, fieldStandings, cornerPosition } from "../shared/tv-field-race";
+import { showsFieldRace, fieldStandings, cornerPosition, planTransferRaces, appendTvMoments, createTvRacePreview, racePreviewStatus, type TransferRaceEvent } from "../shared/tv-field-race";
+import { planRaceTransition } from "../shared/tv-race-transition";
+import type { RankRow } from "../shared/tv-overtake";
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 
-test("field-race selection stays stable and samples approximately 15%", () => {
-  let picked = 0;
+test("every transfer gets a field race instead of 15% sampling", () => {
   for (let n = 0; n < 10000; n++) {
-    const id = `transfer:${n}`;
-    assert.equal(showsFieldRace(id), showsFieldRace(id));
-    if (showsFieldRace(id)) picked++;
+    assert.equal(showsFieldRace(`${n}:transfer`), true);
   }
-  assert.ok(picked > 1300 && picked < 1700, String(picked));
+  assert.equal(showsFieldRace(""), false);
+});
+
+const driver = (id: number, transfersToday: number): RankRow => ({ id, name: `Driver ${id}`, transfersToday });
+const transfer = (id: number, userId: number, credit = 1): TransferRaceEvent => ({
+  id: `${id}:transfer`, kind: "transfer", who: `Driver ${userId}`, assistantId: userId,
+  raceCredits: [{ userId, credit }],
+});
+const count = (rows: RankRow[] | null, id: number) => rows?.find(row => row.id === id)?.transfersToday;
+
+test("multiple transfers in one poll each replay their own true scoring step", () => {
+  const before = [driver(1, 5), driver(2, 4), driver(3, 2)];
+  const after = [driver(1, 5), driver(2, 6), driver(3, 3)];
+  const events = [transfer(1, 2), transfer(2, 3), transfer(3, 2)];
+  const races = planTransferRaces(before, after, events);
+  assert.equal(races.length, 3);
+  assert.deepEqual(races.map(race => race.focusId), [2, 3, 2]);
+  assert.equal(count(races[0].before, 2), 4);
+  assert.equal(count(races[0].people, 2), 5);
+  assert.equal(count(races[1].before, 3), 2);
+  assert.equal(count(races[1].people, 3), 3);
+  assert.equal(count(races[2].before, 2), 5);
+  assert.equal(count(races[2].people, 2), 6);
+  assert.deepEqual(races[2].people, after);
+  const catches = planRaceTransition(races[0].before, races[0].people, 2).find(row => row.id === 2)!;
+  const passes = planRaceTransition(races[2].before, races[2].people, 2).find(row => row.id === 2)!;
+  assert.deepEqual(catches.tieIds, [1]);
+  assert.deepEqual(catches.passedIds, []);
+  assert.deepEqual(passes.passedIds, [1]);
+});
+
+test("split credit remains in halves and does not make up a whole transfer for either car", () => {
+  const event = { ...transfer(1, 2, .5), raceCredits: [{ userId: 2, credit: .5 }, { userId: 3, credit: .5 }] };
+  const [race] = planTransferRaces([driver(1, 5), driver(2, 4.5), driver(3, 1)], [driver(1, 5), driver(2, 5), driver(3, 1.5)], [event]);
+  assert.equal(race.focusId, 2);
+  assert.equal(count(race.before, 2), 4.5);
+  assert.equal(count(race.people, 2), 5);
+  assert.equal(count(race.before, 3), 1);
+  assert.equal(count(race.people, 3), 1.5);
+});
+
+test("polling, transfer edits, and duplicate event rows cannot queue a second race", () => {
+  const before = [driver(1, 1)], after = [driver(1, 2)], first = transfer(1, 1), second = transfer(2, 1);
+  assert.equal(planTransferRaces(before, after, [first, first]).length, 1);
+  assert.equal(planTransferRaces(before, after, [first], new Set([first.id])).length, 0);
+  const queued = [{ key: first.id, payload: "original snapshot" }];
+  const incoming = [{ key: first.id, payload: "poll repeat" }, { key: second.id, payload: "new" }, { key: second.id, payload: "duplicate" }, { key: "on-screen", payload: "already started" }];
+  assert.deepEqual(appendTvMoments(queued, incoming, new Set(["on-screen"])), [queued[0], incoming[1]]);
+  assert.equal(queued.length, 1, "queue inputs stay immutable");
+});
+
+test("first load, day rollover and changed rosters never manufacture movement", () => {
+  const after = [driver(1, 6), driver(2, 1)];
+  assert.deepEqual(planTransferRaces(null, after, []), [], "the startup feed has no new events");
+  for (const before of [null, [], [driver(1, 5)]]) {
+    const [race] = planTransferRaces(before, after, [transfer(1, 1)]);
+    assert.equal(race.before, null);
+    assert.deepEqual(race.people, after);
+  }
+});
+
+test("old-date edits, missing credit and unexplained score changes celebrate without invented passes", () => {
+  const before = [driver(1, 5), driver(2, 4)], after = [driver(1, 5), driver(2, 6)];
+  for (const event of [transfer(1, 2), { ...transfer(1, 2), raceCredits: [] }, { ...transfer(1, 2), raceCredits: undefined }]) {
+    const [race] = planTransferRaces(before, after, [event]);
+    assert.deepEqual(race.before, after);
+    assert.deepEqual(race.people, after);
+  }
+  const [unchanged] = planTransferRaces(after, after, [transfer(1, 2)]);
+  assert.deepEqual(unchanged.before, unchanged.people);
+});
+
+test("concurrent downward corrections apply before a genuine scored move", () => {
+  const [race] = planTransferRaces([driver(1, 8), driver(2, 3)], [driver(1, 2), driver(2, 4)], [transfer(1, 2)]);
+  assert.equal(count(race.before, 1), 2);
+  assert.equal(count(race.before, 2), 3);
+  assert.equal(count(race.people, 2), 4);
+  assert.deepEqual(planRaceTransition(race.before, race.people, 2).find(row => row.id === 2)?.passedIds, []);
+});
+
+test("stable user identity selects the right car when names repeat", () => {
+  const after = [{ ...driver(1, 5), name: "Alex" }, { ...driver(2, 4), name: "Alex" }];
+  const [identified] = planTransferRaces(null, after, [{ ...transfer(1, 2), who: "Alex" }]);
+  assert.equal(identified.focusId, 2);
+  const [unknown] = planTransferRaces(null, after, [{ ...transfer(1, 2), who: "Alex", assistantId: undefined }]);
+  assert.equal(unknown.focusId, undefined);
+});
+
+test("malformed or duplicate credits cannot move a car", () => {
+  const before = [driver(1, 4)], after = [driver(1, 5)];
+  for (const raceCredits of [[{ userId: 1, credit: NaN }], [{ userId: 1, credit: -1 }], [{ userId: 1, credit: 2 }], [{ userId: 1, credit: .5 }, { userId: 1, credit: .5 }]]) {
+    const [race] = planTransferRaces(before, after, [{ ...transfer(1, 1), raceCredits }]);
+    assert.deepEqual(race.before, race.people);
+  }
+});
+
+test("local preview keeps the exact current roster and credit without inventing movement", () => {
+  const people = [{ ...driver(1, 0), name: "Ethan Wood" }, driver(2, 4.5), driver(3, 7)];
+  const before = JSON.stringify(people);
+  const moment = createTvRacePreview(people, "local-race-preview:123:1", "2026-09-15T18:00:00.000Z");
+  assert.equal(moment.preview, true);
+  assert.equal(moment.raceBefore, null);
+  assert.deepEqual(moment.fieldRace, people);
+  assert.notEqual(moment.fieldRace, people, "the preview snapshots rather than owns the live roster");
+  assert.equal(moment.event.borrower, "");
+  assert.equal(moment.event.who, "");
+  assert.equal(moment.event.id, moment.key);
+  assert.equal(JSON.stringify(people), before);
+  assert.equal(moment.fieldRace.some(row => row.name === "Ethan Wood"), true);
+});
+
+test("a local preview queues behind real transfers and cannot stack on rapid clicks", () => {
+  const live = { type: "event", key: "1:transfer", preview: false };
+  const preview = createTvRacePreview([driver(1, 0)], "local-race-preview:123:1", "now");
+  const queued = [live];
+  const enqueue = (current: typeof live | null, queue: (typeof live | typeof preview)[]) =>
+    racePreviewStatus(current, queue) ? queue : [...queue, preview];
+  const first = enqueue(live, queued);
+  assert.equal(first[0], live, "a queued transfer keeps its place");
+  assert.equal(first[1], preview);
+  assert.equal(racePreviewStatus(live, first), "queued");
+  assert.equal(enqueue(live, first), first, "the functional state update catches a second rapid click");
+  assert.equal(racePreviewStatus(preview, []), "playing");
+  assert.equal(racePreviewStatus(null, []), null, "control re-enables after preview completes");
 });
 
 test("manual TV cues expire and never cross organizations", () => {

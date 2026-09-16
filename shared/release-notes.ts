@@ -28,6 +28,12 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.10", headline: "A clear, close-up TV race after every transfer — with Ethan on the track.", items: [
+    { text: "The Office TV now has a Play race button. Run a preview of the current field on demand without logging a transfer, changing scores, or interrupting a real celebration.", audience: "everyone" },
+    { text: "Every new transfer now gets a full-team TV race. The camera follows the scoring car and the rivals it is catching through a visible side-by-side pass, with a highlighted car, position change and live move captions. Tied totals finish alongside, and multiple transfers advance the race one result at a time.", audience: "everyone" },
+    { text: "Ethan Wood now has his own car on the TV track and can customize its colors or picture wrap in Advanced Settings → Personal → My TV Car. This race-only addition does not change CLR averages, account roles or transfer credit.", audience: "everyone" },
+    { text: "Editing the details of an existing transfer no longer retriggers its TV celebration. A newly logged transfer or appointment converted into a transfer still gets its race.", audience: "everyone" },
+  ] },
   { version: "4.113.9", headline: "The full transfer form when editing — and custom picture wraps for your car.", items: [
     { text: "Editing a saved transfer now opens the same Qualification and Info Gathering form used to record it. Saved answers and N/A choices are filled in, historical notes are preserved, and changes update the existing transfer's write-up score and stats without adding a transfer or changing its original date or CLR credit. A newer edit is protected from being overwritten.", audience: "everyone" },
     { text: "In Advanced Settings → Personal → My TV Car, upload a photo, logo, or pattern as a custom wrap. Preview it on your car, replace or remove it, and keep your paint and stripes. Your picture appears on the TV's 3D race car without changing scores or standings.", audience: "everyone" },

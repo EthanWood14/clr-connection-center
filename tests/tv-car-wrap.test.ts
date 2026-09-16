@@ -127,6 +127,19 @@ async function httpHarness(t: TestContext) {
   return { db, request, tokens, audits };
 }
 
+test("Ethan's race-only account can upload his own wrap without access to another car", async t => {
+  const h = await httpHarness(t);
+  h.db.exec("INSERT INTO users VALUES (1,1,'Ethan Wood','admin',0,1,NULL)");
+  const uploaded = await h.request("/api/me/tv-car/wrap", "POST", png(), 1);
+  assert.equal(uploaded.status, 201);
+  const body = await uploaded.json() as any;
+  assert.equal(isSafeTvCarWrapUrl(body.appearance.wrapUrl), true);
+  assert.equal((await h.request(body.appearance.wrapUrl, "GET", undefined, 7)).status, 404);
+  assert.equal((await h.request(body.appearance.wrapUrl, "GET", undefined, 1, 2)).status, 403);
+  assert.deepEqual(h.db.prepare("SELECT role,is_clr FROM users WHERE id=1").get(), { role: "admin", is_clr: 0 });
+  assert.equal((await h.request("/api/me/tv-car/wrap", "DELETE", undefined, 1)).status, 200);
+});
+
 test("upload persists one private sidecar wrap; color saves preserve it and deletion restores paint", async t => {
   const h = await httpHarness(t);
   const uploaded = await h.request("/api/me/tv-car/wrap", "POST", png(2, 2, { metadata: true }));
