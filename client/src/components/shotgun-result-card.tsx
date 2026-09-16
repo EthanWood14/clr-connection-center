@@ -2,6 +2,7 @@ import { Suspense, lazy, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowRightLeft, CheckCircle2, Phone } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useDialpadCall } from "@/lib/dialpad-call";
 import { stateCallStatus } from "@/lib/state-call-window";
 import { businessTodayClient } from "@/lib/business-day";
 import { useToast } from "@/hooks/use-toast";
@@ -40,21 +41,26 @@ export function shotgunOutcomeBody(values: OutcomeFormValues) {
 
 export function ShotgunCallLeadButton({ lead }: { lead: ShotgunLead }) {
   const { toast } = useToast();
+  const prepareDialpadCall = useDialpadCall();
   const callStatus = stateCallStatus(lead.stateCode);
   const prohibited = callStatus.status === "prohibited";
   const openPhone = useMutation({
     mutationFn: () => apiRequest("POST", `/api/shotgun/${lead.id}/open-phone`, {}),
-    onSuccess: () => { window.location.href = `tel:${lead.phone}`; },
-    onError: (error: any) => toast({ title: "Could not open phone", description: error.message, variant: "destructive" }),
+    onError: (error: any) => toast({ title: "Could not open Dialpad", description: error.message, variant: "destructive" }),
   });
+  const callVerifiedLead = () => {
+    const dialpad = prepareDialpadCall(lead.phone);
+    if (!dialpad) return;
+    void openPhone.mutateAsync().then(() => dialpad.complete()).catch(() => dialpad.cancel());
+  };
   if (!lead.phone) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button size="sm" variant={prohibited ? "destructive" : "outline"} disabled={prohibited} className="gap-1.5" data-testid={`shotgun-call-${lead.id}`}>
+          <Button size="sm" variant={prohibited ? "destructive" : "outline"} disabled={prohibited || openPhone.isPending} className="gap-1.5" data-testid={`shotgun-call-${lead.id}`}>
             <Phone className="h-4 w-4" />
-            {prohibited ? "Outside calling hours" : callStatus.status === "allowed" ? "Verify & open phone" : "Verify before calling"}
+            {prohibited ? "Outside calling hours" : callStatus.status === "allowed" ? "Call in Dialpad" : "Verify before calling"}
           </Button>
         </AlertDialogTrigger>
         <AlertDialogContent>
@@ -72,7 +78,7 @@ export function ShotgunCallLeadButton({ lead }: { lead: ShotgunLead }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Go back</AlertDialogCancel>
-            <AlertDialogAction disabled={openPhone.isPending} onClick={() => openPhone.mutate()}>{openPhone.isPending ? "Opening…" : "Verified — open phone"}</AlertDialogAction>
+            <AlertDialogAction disabled={openPhone.isPending} onClick={callVerifiedLead}>{openPhone.isPending ? "Opening…" : "Verified — open Dialpad"}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

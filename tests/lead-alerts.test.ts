@@ -110,7 +110,15 @@ test("original-assignment reminders match Shotgun cadence without auto-accept or
   assert.match(popup, /window\.addEventListener\("pointerdown", unlockAudio\)/);
   assert.match(popup, /window\.removeEventListener\("pointerdown", unlockAudio\)/);
   assert.doesNotMatch(popup, /<Dialog|autoFocus|\.focus\(/);
-  assert.equal((popup.match(/claim\.mutate\(/g) ?? []).length, 2, "only the two explicit buttons claim");
+  assert.equal((popup.match(/claim\.mutate(?:Async)?\(/g) ?? []).length, 2, "only the two explicit buttons claim");
+  assert.match(popup, /onClick=\{\(\) => claim\.mutate\(lead\.externalId, \{ onSuccess: dismiss \}\)\}/);
+  const callStart = popup.indexOf("const callLead = () => {");
+  assert.ok(callStart >= 0);
+  const callHandler = popup.slice(callStart, popup.indexOf("  return (", callStart));
+  assert.match(callHandler, /claim\.mutateAsync\(lead\.externalId\)/);
+  assert.match(popup, /onClick=\{callLead\}/);
+  assert.equal((popup.match(/\bcallLead\b/g) ?? []).length, 2,
+    "the async claim handler is only declared and bound to its button, never invoked by polling or an effect");
 });
 
 test("account or org switches hide the prior queue and reset all in-memory acknowledgements", () => {

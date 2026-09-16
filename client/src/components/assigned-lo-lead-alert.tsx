@@ -4,6 +4,7 @@ import { ArrowUpRight, BellRing, Clock3, Phone, X, Zap } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useDialpadCall } from "@/lib/dialpad-call";
 import { activeLeadAlerts, collectLeadAlerts, feedWithFloor, leadAlertStorageKey, parseSeenLeadAlerts, renewAssignedLeadAlerts, leadAlertIsActionable, LEAD_ALERT_CHIME_INTERVAL_MS, LEAD_ALERT_SNOOZE_MS, type LoLeadAlert, type LoLeadFeed } from "@/lib/lead-alerts";
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, loNewLeadSecondsLeft } from "@shared/lo-new-leads";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
@@ -20,6 +21,7 @@ import { Button } from "@/components/ui/button";
  */
 export function AssignedLoLeadAlert() {
   const { user } = useAuth();
+  const prepareDialpadCall = useDialpadCall();
   const dailyBlocked = useContext(DailyReportGateActive);
   const eodBlocked = useContext(EodLockGateActive);
   const blocked = dailyBlocked || eodBlocked;
@@ -140,7 +142,17 @@ export function AssignedLoLeadAlert() {
   const left = loNewLeadSecondsLeft(escalateAt, clockNow);
   const mm = Math.floor(left / 60);
   const ss = String(Math.floor(left % 60)).padStart(2, "0");
-  const tel = lead.phone ? `tel:${String(lead.phone).replace(/[^\d+]/g, "")}` : null;
+  const callLead = () => {
+    const dialpad = prepareDialpadCall(lead.phone || "");
+    if (!dialpad) return;
+    // The promise survives the card disappearing after the successful refetch;
+    // per-mutation onSuccess callbacks can be dropped when a card unmounts.
+    void claim.mutateAsync(lead.externalId).then(() => {
+      if (identity.current !== storageKey) { dialpad.cancel(); return; }
+      dialpad.complete();
+      dismiss();
+    }).catch(() => dialpad.cancel());
+  };
   return (
     <section className={lead.openToFloor
       ? "pointer-events-auto rounded-2xl border-2 border-sky-500 bg-background p-4 shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4"
@@ -159,10 +171,10 @@ export function AssignedLoLeadAlert() {
         </Button>
       </div>
       {!lead.openToFloor && <p className="mt-3 rounded-lg border border-orange-400/40 bg-orange-400/10 px-3 py-2 text-sm font-semibold text-orange-100">This lead is for your assigned LO. Confirm now to keep it — viewing this alert does not claim it.</p>}
-      {tel && (
+      {lead.phone && (
         <Button type="button" disabled={claim.isPending || left <= 0} data-testid="assigned-lo-lead-call" className="mt-3 flex h-auto w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-base font-bold text-white hover:bg-emerald-700"
-          onClick={() => claim.mutate(lead.externalId, { onSuccess: () => { if (identity.current !== storageKey) return; window.location.href = tel; dismiss(); } })}>
-          <Phone className="h-5 w-5" /> {claim.isPending ? "Claiming…" : `Call ${lead.phone}`}
+          onClick={callLead}>
+          <Phone className="h-5 w-5" /> {claim.isPending ? "Claiming…" : `Call in Dialpad · ${lead.phone}`}
         </Button>
       )}
       {/* The last thirty seconds are a warning, not a countdown: louder, so

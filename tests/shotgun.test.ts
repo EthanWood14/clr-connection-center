@@ -235,7 +235,10 @@ test("call launch requires compliance acknowledgement and state-hours protection
   assert.match(resultCard, /Outside calling hours/);
   assert.match(resultCard, /Do Not Call requirements/);
   assert.match(resultCard, /C3 cannot perform those checks automatically/);
-  assert.match(resultCard, /Verified — open phone/);
+  assert.match(resultCard, /Verified — open Dialpad/);
+  assert.match(resultCard, /const prepareDialpadCall = useDialpadCall\(\)/);
+  assert.match(resultCard, /prepareDialpadCall\(lead\.phone\)[\s\S]*?openPhone\.mutateAsync\(\)\.then\(\(\) => dialpad\.complete\(\)\)\.catch\(\(\) => dialpad\.cancel\(\)\)/);
+  assert.doesNotMatch(resultCard, /tel:|window\.location/);
   assert.match(resultCard, /\/open-phone/);
   const launch = routes.slice(routes.indexOf('app.post("/api/shotgun/:id/open-phone"'), routes.indexOf('app.patch("/api/shotgun/:id/result"'));
   assert.match(launch, /lead.status !== "claimed"/);

@@ -31,6 +31,7 @@ export function playShotgunChime(ctxRef: { current: AudioContext | null }) {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Clock3, Mail, MapPin, Phone, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useDialpadCall } from "@/lib/dialpad-call";
 import { useAuth } from "@/lib/auth";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGateActive } from "@/components/eod-lock-gate";
@@ -39,6 +40,7 @@ import type { ShotgunPayload } from "@/pages/shotgun";
 
 export function ShotgunOfferAlert() {
   const { user } = useAuth();
+  const prepareDialpadCall = useDialpadCall();
   const eligible = !!user?.isClr;
   const dailyBlocked = useContext(DailyReportGateActive);
   const eodBlocked = useContext(EodLockGateActive);
@@ -102,6 +104,12 @@ export function ShotgunOfferAlert() {
   }, [offered?.id, offered?.offerExpiresAt]);
   const left = offered?.offerExpiresAt ? Math.max(0, (new Date(offered.offerExpiresAt).getTime() - clockNow) / 1000) : 0;
   if (!offered) return null;
+  const callOfferedLead = () => {
+    const dialpad = prepareDialpadCall(offered.phone);
+    if (!dialpad) return;
+    // Secure the offer first, even if the success refetch removes this card.
+    void confirm.mutateAsync(offered.id).then(() => dialpad.complete()).catch(() => dialpad.cancel());
+  };
   return (
     <section aria-label="Shotgun lead offer" data-testid="shotgun-offer-popup" className="pointer-events-auto relative rounded-2xl border-2 border-orange-400 bg-slate-950 p-4 text-white shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4">
       <div className="flex items-center justify-between gap-2">
@@ -112,8 +120,8 @@ export function ShotgunOfferAlert() {
       <div className="my-3 max-h-40 space-y-1 overflow-y-auto rounded-xl bg-white/10 p-3 text-sm">
         <p className="break-words text-lg font-bold">{offered.leadName}</p>
         {offered.phone && <p className="flex items-center gap-2"><Phone className="h-4 w-4 shrink-0" /><button type="button" disabled={confirm.isPending || deny.isPending || left <= 0}
-          onClick={() => { const tel = `tel:${String(offered.phone).replace(/[^\d+]/g, "")}`; confirm.mutate(offered.id, { onSuccess: () => { window.location.href = tel; } }); }}
-          className="underline decoration-orange-300 underline-offset-2 hover:text-orange-200 disabled:opacity-50" data-testid="shotgun-offer-call">{confirm.isPending ? "Confirming…" : offered.phone}</button></p>}
+          onClick={callOfferedLead}
+          className="underline decoration-orange-300 underline-offset-2 hover:text-orange-200 disabled:opacity-50" data-testid="shotgun-offer-call">{confirm.isPending ? "Confirming…" : `Call in Dialpad · ${offered.phone}`}</button></p>}
         {offered.email && <p className="flex items-center gap-2 break-all"><Mail className="h-4 w-4 shrink-0" />{offered.email}</p>}
         {offered.stateCode && <p className="flex items-center gap-2"><MapPin className="h-4 w-4 shrink-0" />{offered.stateCode}</p>}
         {offered.source && <p className="break-words text-orange-100">Source: {offered.source}</p>}

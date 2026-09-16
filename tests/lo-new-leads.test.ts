@@ -97,10 +97,13 @@ test("the feed says where each lead's claim stands, and the claim route refuses 
   assert.match(route, /res\.status\(409\)/);
 });
 
-test("both cards are tap-to-call, and the new-lead card claims and counts down", () => {
+test("both cards secure their lead before opening Dialpad, and the new-lead card counts down", () => {
   const card = read("client/src/components/assigned-lo-lead-alert.tsx");
-  assert.match(card, /claim\.mutate\(lead\.externalId, \{ onSuccess: \(\) => \{ if \(identity\.current !== storageKey\) return; window\.location\.href = tel; dismiss\(\);/);
-  assert.doesNotMatch(card, /href=\{tel\}/);
+  assert.match(card, /const prepareDialpadCall = useDialpadCall\(\)/);
+  assert.match(card, /prepareDialpadCall\(lead\.phone \|\| ""\)[\s\S]*?claim\.mutateAsync\(lead\.externalId\)\.then\(\(\) =>/);
+  assert.match(card, /if \(identity\.current !== storageKey\) \{ dialpad\.cancel\(\); return; \}/);
+  assert.match(card, /dialpad\.complete\(\);\s*dismiss\(\);[\s\S]*?\.catch\(\(\) => dialpad\.cancel\(\)\)/);
+  assert.doesNotMatch(card, /tel:|window\.location/);
   assert.match(card, /data-testid="assigned-lo-lead-call"/);
   assert.match(card, /data-testid="assigned-lo-lead-claim"/);
   assert.match(card, /Goes to Shotgun in/);
@@ -108,8 +111,9 @@ test("both cards are tap-to-call, and the new-lead card claims and counts down",
   assert.match(card, /refetchIntervalInBackground: true/);
   const offer = read("client/src/components/shotgun-offer-alert.tsx");
   assert.match(offer, /data-testid="shotgun-offer-call"/);
-  assert.match(offer, /confirm\.mutate\(offered\.id, \{ onSuccess: \(\) => \{ window\.location\.href = tel;/);
-  assert.doesNotMatch(offer, /<a href=\{`tel:/);
+  assert.match(offer, /const prepareDialpadCall = useDialpadCall\(\)/);
+  assert.match(offer, /prepareDialpadCall\(offered\.phone\)[\s\S]*?confirm\.mutateAsync\(offered\.id\)\.then\(\(\) => dialpad\.complete\(\)\)\.catch\(\(\) => dialpad\.cancel\(\)\)/);
+  assert.doesNotMatch(offer, /tel:|window\.location/);
   assert.match(offer, /refetchIntervalInBackground: true/);
 });
 

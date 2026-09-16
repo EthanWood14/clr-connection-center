@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.113.15", headline: "New-lead and Shotgun calls open Dialpad directly.", items: [
+    { text: "Call buttons in new-lead alerts, Shotgun offers and claimed Shotgun leads now use Dialpad's launcher instead of your computer's generic phone handler. C3 stays open so you can finish the lead's result.", audience: "everyone" },
+    { text: "The lead is secured before its number is sent to Dialpad. Failed claims never launch a call, existing verification checks stay in place, and an Open Dialpad retry link appears if the browser blocks the launch tab.", audience: "everyone" },
+  ] },
   { version: "4.113.14", headline: "A fresh Transfer Scorecard every two hours.", items: [
     { text: "Managers receive a today-so-far Transfer Scorecard at 8 AM, 10 AM, noon, 2 PM, 4 PM and 6 PM Pacific, Monday through Friday. Each snapshot is time-stamped, including the first report before activity begins.", audience: "manager" },
     { text: "Configured manager-email recipients are included alongside active managers. The separate mid-week and end-of-week summaries continue unchanged.", audience: "manager" },
