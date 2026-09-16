@@ -44,8 +44,11 @@ test("only live-ready CLRs enter the fair assignment rotation", () => {
     "UNIQUE(lead_id,user_id) means a second lap has to refresh the row, not insert");
 });
 
-test("offers last exactly 20 seconds and expiry moves rather than duplicates", () => {
-  assert.match(routes, /const SHOTGUN_OFFER_MS = 20_000/);
+test("offers last exactly 10 seconds and expiry moves rather than duplicates", () => {
+  // Ten, not twenty (owner, 16 Sep 2026): the card is full-screen with a
+  // chime, so somebody at their desk answers in the first few seconds, and a
+  // miss no longer costs them their place in the rotation.
+  assert.match(routes, /const SHOTGUN_OFFER_MS = 10_000/);
   const advance = routes.slice(routes.indexOf("function advanceShotgun"), routes.indexOf("const shotgunTimer"));
   assert.match(advance, /status='offered' AND offer_expires_at<=\?/);
   assert.match(advance, /response='expired'/);
@@ -179,14 +182,32 @@ test("a new lead alerts every CLR by email and push when only zero to two are re
   assert.match(publish, /if \(readyCount <= 2\) notifyShotgunLowCoverage/);
 });
 
-test("a missed offer takes the CLR out of the rotation and tells them", () => {
+// "Don't take ppl out of the shotgun if they ghosted for 20 seconds." —
+// Ethan, 16 Sep 2026. Missing an offer moves the lead on and nothing else:
+// stepping away for ten seconds is not going home, and the old rule emptied
+// the rotation over a morning until a manager pressed Ready for everyone.
+test("a missed offer moves the lead on and leaves the CLR in the rotation", () => {
   const advance = routes.slice(routes.indexOf("function advanceShotgun"), routes.indexOf("const shotgunTimer"));
-  // Being Ready means answering in 20 seconds; a lapsed offer proves you are
-  // not at your desk, so the sweep flips is_ready off...
-  assert.match(advance, /DO UPDATE SET is_ready=0/);
-  // ...and says so, in-app and by push, with the way back in.
+  const expiry = advance.slice(0, advance.indexOf("const walked ="));
+  assert.doesNotMatch(expiry, /is_ready=0/, "a miss must never opt the CLR out");
+  assert.doesNotMatch(advance, /Press Ready on the Shotgun page to rejoin/);
+  // They are still told, so a lead vanishing off their screen is explained.
   assert.match(advance, /shotgun_missed/);
-  assert.match(advance, /Press Ready on the Shotgun page to rejoin/);
+  assert.match(advance, /You are still in the rotation/);
+  // The only thing that removes somebody is C3 actually being shut.
+  assert.match(routes, /r\.is_ready=1 AND r\.heartbeat_at>=\?/);
+});
+
+// "Don't give the option to leave the shotgun if they're on C3."
+test("a CLR cannot take themselves out while C3 is open", () => {
+  const readiness = routes.slice(routes.indexOf('app.post("/api/shotgun/readiness"'), routes.indexOf('app.post("/api/shotgun/publish"'));
+  assert.match(readiness, /While C3 is open you stay in the Shotgun rotation/);
+  assert.match(readiness, /res\.status\(409\)/);
+  assert.match(readiness, /SHOTGUN_READY_TTL_MS/, "a stale heartbeat still means they are gone for the day");
+  // Turning yourself back ON is always allowed, and the page offers only that.
+  assert.match(page, /onClick=\{\(\) => readiness\.mutate\(true\)\}/);
+  assert.match(page, /data-testid="shotgun-ready-state"/);
+  assert.doesNotMatch(page, /readiness\.mutate\(!payload\.isReady\)/);
 });
 
 test("denying an offer passes the lead on without punishing the CLR", () => {
@@ -389,8 +410,10 @@ test("the button is offered to managers only", () => {
   assert.ok(guarded.length > 0, "the button must sit behind payload.canManage");
   assert.match(guarded.slice(0, 600), /button-shotgun-ready-all/);
   assert.match(guarded.slice(0, 600), /Put everyone in/);
-  // The CLR's own Ready button is untouched — this is in addition to it.
-  assert.match(page, /\{payload\.isClr && <Button size="lg" disabled=\{readiness\.isPending\}/);
+  // The CLR's own control is still there, in addition to this one — but since
+  // 16 Sep 2026 it only turns readiness ON: while C3 is open they stay in.
+  assert.match(page, /\{payload\.isClr && \(payload\.isReady/);
+  assert.match(page, /readiness\.mutate\(true\)/);
 });
 
 test("the upsert keeps a live heartbeat and does not invent one", () => {

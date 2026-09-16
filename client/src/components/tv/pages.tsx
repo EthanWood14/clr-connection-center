@@ -24,7 +24,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { CalendarClock, CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, Trophy, Users } from "lucide-react";
+import { CalendarClock, CalendarDays, ClipboardCheck, ClipboardList, Inbox, Layers, Phone, Radio, TrendingUp, Trophy, Users } from "lucide-react";
 import { formatTransferCount } from "@shared/transfer-credit";
 
 // ── local twins of the tv.tsx pieces ────────────────────────────────────────
@@ -387,6 +387,97 @@ export function TransfersPage({ window: win, people, team, excluded, reduced }: 
 // ── write-up ────────────────────────────────────────────────────────────────
 /** `pct` is null when there was nothing to score — not zero. */
 export interface TvWriteUpPerson { id: number; name: string; pct: number | null; transfers: number }
+
+export interface TvPaceWeek {
+  weekStart: string; label: string; clrs: number; clrDays: number;
+  transfers: number; perClrPerDay: number | null; partial: boolean;
+}
+
+/**
+ * Transfers per CLR per day worked, ten weeks of it, as columns.
+ *
+ * The only shape of this number that survives a roster going from twelve
+ * people to seven: totals move with headcount, and "per week" pretends
+ * everybody worked five days. The denominator here is days people were
+ * actually at the desk, and the week in progress is marked as such rather
+ * than being left to look like a collapse — it is a short week, not a bad one.
+ *
+ * Columns, not rows, because ten weeks read left to right as a trend from the
+ * back of the room and as a list they read as nothing at all.
+ */
+export function WeeklyPacePage({ weeks, average, reduced }: {
+  weeks: TvPaceWeek[];
+  average: number | null;
+  reduced: boolean;
+}) {
+  const shown = (weeks ?? []).filter((w) => w && w.perClrPerDay != null);
+  const peak = Math.max(1, ...shown.map((w) => w.perClrPerDay ?? 0));
+  const best = shown.filter((w) => !w.partial).reduce<TvPaceWeek | null>(
+    (top, w) => (!top || (w.perClrPerDay ?? 0) > (top.perClrPerDay ?? 0) ? w : top), null);
+  const fmt = (n: number | null) => (n == null ? "—" : n.toFixed(2));
+
+  return (
+    <div className={PAGE} data-testid="tv-page-weekly-pace">
+      <div className="mb-8 flex items-end justify-between gap-8">
+        <div className="min-w-0">
+          <Eyebrow>Transfers per CLR · per day worked</Eyebrow>
+          <h2 className={TITLE}>Our pace, {shown.length} weeks</h2>
+        </div>
+        {average != null && (
+          <div className="flex shrink-0 items-center gap-3 rounded-full border border-amber-300/40 bg-amber-400/10 px-6 py-3 text-[clamp(1.1rem,1.8vw,1.9rem)] text-amber-300">
+            <TrendingUp className="h-8 w-8 shrink-0" />
+            <span className="whitespace-nowrap">{average.toFixed(2)} a day · last 4 weeks</span>
+          </div>
+        )}
+      </div>
+
+      <motion.ol
+        variants={stagger} initial="hidden" animate="show"
+        className="flex min-h-0 flex-1 items-end justify-between gap-[clamp(0.5rem,1vw,1.5rem)]"
+        data-testid="tv-pace-columns"
+      >
+        {shown.map((w) => {
+          const value = w.perClrPerDay ?? 0;
+          const height = Math.max(6, (value / peak) * 100);
+          return (
+            <motion.li key={w.weekStart} variants={rise(reduced)} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-3">
+              <span className={w.partial
+                ? "text-[clamp(1.1rem,2.1vw,2.2rem)] font-black leading-none text-amber-300"
+                : "text-[clamp(1.1rem,2.1vw,2.2rem)] font-black leading-none text-white"}>{fmt(w.perClrPerDay)}</span>
+              <motion.div
+                initial={{ height: reduced ? `${height}%` : 0 }}
+                animate={{ height: `${height}%` }}
+                transition={{ delay: 0.25, type: "spring", stiffness: 90, damping: 18 }}
+                className={`w-full rounded-t-2xl ${w.partial ? GOLD_BAR : COOL_BAR}`}
+                style={{ minHeight: "0.75rem" }}
+              />
+              <span className="text-[clamp(0.85rem,1.3vw,1.4rem)] font-semibold leading-none text-white/60">{w.label}</span>
+              <span className="text-[clamp(0.7rem,1.05vw,1.1rem)] leading-none text-white/35">
+                {w.partial ? "so far" : `${w.clrs} on`}
+              </span>
+            </motion.li>
+          );
+        })}
+        {!shown.length && <li className={EMPTY}>No weeks to show yet.</li>}
+      </motion.ol>
+
+      <motion.div
+        initial={{ opacity: 0, y: reduced ? 0 : 18 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.55, type: "spring", stiffness: 140, damping: 20 }}
+        className="mt-6 flex shrink-0 items-center justify-between gap-10 rounded-3xl border border-sky-300/25 bg-sky-400/[0.07] px-10 py-5"
+      >
+        <p className="text-[clamp(1rem,1.5vw,1.6rem)] leading-snug text-white/55">
+          Days actually worked, not headcount. Today counts as half a day.
+        </p>
+        {best && (
+          <p className="shrink-0 text-[clamp(1.1rem,1.7vw,1.9rem)] text-white/75">
+            Best week <span className="font-black text-sky-300">{best.label}</span> · {fmt(best.perClrPerDay)}
+          </p>
+        )}
+      </motion.div>
+    </div>
+  );
+}
 
 /**
  * How complete this week's transfer write-ups are, per person.

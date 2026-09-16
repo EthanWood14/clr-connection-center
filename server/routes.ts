@@ -40,7 +40,7 @@ import {
   starvedWindowStart, orderStarved, selectUpcomingAppointments,
   orderByRecentlyActive, orderAssignmentPeople,
   LEAD_SOURCE_TRUSTED_FROM, ACTIVE_WINDOW_LABEL, ACTIVE_WINDOW_SECONDS, STARVED_WINDOW_DAYS,
-  UPCOMING_DAYS, UPCOMING_APPOINTMENT_TYPE,
+  UPCOMING_DAYS, UPCOMING_APPOINTMENT_TYPE, TV_PACE_WEEKS,
 } from "./tv-pages";
 import {
   scoreTransferPriority, resolveInvestmentRouting, INVESTMENT_PROPERTY_INPUT_AVAILABLE,
@@ -134,6 +134,7 @@ import {
 } from "./leadvault-people";
 import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLeadsByLo } from "./leadvault-newest-leads";
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadIsFresh } from "@shared/lo-new-leads";
+import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/weekly-pace";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
@@ -8362,10 +8363,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Shotgun leads ─────────────────────────────────────────────────────────
-  // Managers publish once; C3 offers the lead to one actively-ready CLR for 15
-  // seconds. Expiry is advanced transactionally so concurrent pollers or app
-  // instances cannot create two owners.
-  const SHOTGUN_OFFER_MS = 20_000;
+  // Managers publish once; C3 offers the lead to one actively-ready CLR for the
+  // window below. Expiry is advanced transactionally so concurrent pollers or
+  // app instances cannot create two owners.
+  //
+  // Ten seconds, not twenty (Ethan, 16 Sep 2026). The card is full-screen with
+  // a chime; somebody at their desk answers it in the first few seconds, and
+  // every second past that is a second the lead spends on a person who is not
+  // going to take it. Missing one no longer costs the CLR their place in the
+  // rotation, so a short window is cheap.
+  const SHOTGUN_OFFER_MS = 10_000;
   const SHOTGUN_OFFER_SECONDS = Math.round(SHOTGUN_OFFER_MS / 1000);
   // How long before the same CLR may be shown the same lead again. The rotation
   // cycles indefinitely rather than going dormant after one lap, so without a
@@ -8514,14 +8521,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           WHERE lead_id=? AND user_id=? AND response='pending'`).run(nowIso, row.id, row.current_assignee_id);
         db.prepare(`UPDATE shotgun_offer_events SET response='expired',responded_at=?
           WHERE lead_id=? AND user_id=? AND response='pending'`).run(nowIso, row.id, row.current_assignee_id);
-        // Missing an offer takes you out of the rotation. Being Ready means "I
-        // will answer in 20 seconds"; letting one lapse says you are not really
-        // at your desk, and leaving you Ready would keep burning 20 seconds of
-        // every hot lead's life on you. Explicitly DENYING an offer does not do
-        // this — a fast "pass" is exactly the behaviour Shotgun wants.
-        db.prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,0,NULL,?)
-          ON CONFLICT(org_id,user_id) DO UPDATE SET is_ready=0,updated_at=excluded.updated_at`)
-          .run(row.org_id, row.current_assignee_id, nowIso);
+        // Missing an offer used to take the CLR out of the rotation. It no
+        // longer does (Ethan, 16 Sep 2026): somebody who stepped away for ten
+        // seconds is not somebody who has gone home, and being dropped meant
+        // the floor quietly emptied over a morning until a manager pressed
+        // Ready for everyone. The lead moves on immediately either way, the
+        // relap cooldown stops it coming straight back to the same person, and
+        // a stale heartbeat still removes anybody whose C3 is actually shut.
         missed.push({ leadId: Number(row.id), userId: Number(row.current_assignee_id), orgId: Number(row.org_id), leadName: String(row.lead_name) });
         leadIds.push(Number(row.id));
       }
@@ -8529,10 +8535,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     })();
     for (const m of missed) {
       try {
-        storage.createNotification({ userId: m.userId, type: "shotgun_missed", title: "Missed Shotgun lead — you're out of the rotation",
-          message: `The offer for ${m.leadName} expired after ${SHOTGUN_OFFER_SECONDS} seconds and went to the next CLR. You won't be offered leads until you press Ready again on the Shotgun page.`, isRead: false } as any);
+        storage.createNotification({ userId: m.userId, type: "shotgun_missed", title: `Shotgun lead moved on — ${m.leadName}`,
+          message: `The offer expired after ${SHOTGUN_OFFER_SECONDS} seconds and went to the next CLR. You are still in the rotation and the next lead will come to you.`, isRead: false } as any);
       } catch {}
-      sendPushToUser(m.userId, { title: "Missed Shotgun lead", body: `${m.leadName} moved on. Press Ready on the Shotgun page to rejoin the rotation.`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+      sendPushToUser(m.userId, { title: "Shotgun lead moved on", body: `${m.leadName} went to the next CLR. You are still in the rotation.`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
     }
     // A claimed lead nobody confirmed they were still on. Three minutes after
     // the claim the holder is asked, on every page, whether they are still
@@ -8667,7 +8673,25 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
     // An explicit toggle. This is the authority, and it lives on the server so
     // it holds across every device the CLR is signed in on.
+    //
+    // A CLR may no longer take THEMSELVES out while C3 is open (Ethan, 16 Sep
+    // 2026). Having C3 up is what being in the rotation means, and an opt-out
+    // button on the busiest screen in the building was a way to stop receiving
+    // leads that looked like a preference rather than a decision. Somebody who
+    // should not be offered leads at all is set shotgun_opted_out; somebody
+    // who is done for the day closes C3 and the heartbeat goes stale on its
+    // own. Turning yourself back ON is always allowed.
     const ready = req.body?.ready === true;
+    if (!ready) {
+      const live = shotgunDb().prepare(`SELECT heartbeat_at FROM shotgun_readiness WHERE org_id=? AND user_id=?`).get(orgId, userId) as any;
+      const fresh = String(live?.heartbeat_at ?? "") >= new Date(Date.now() - SHOTGUN_READY_TTL_MS).toISOString();
+      if (fresh) {
+        return res.status(409).json({
+          error: "While C3 is open you stay in the Shotgun rotation. Close C3 when you are done for the day, or ask a manager to take you off it.",
+          isReady: true,
+        });
+      }
+    }
     shotgunDb().prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,updated_at) VALUES (?,?,?,?,?)
       ON CONFLICT(org_id,user_id) DO UPDATE SET is_ready=excluded.is_ready,heartbeat_at=excluded.heartbeat_at,updated_at=excluded.updated_at`)
       .run(orgId, userId, ready ? 1 : 0, ready ? now : null, now);
@@ -23371,6 +23395,53 @@ ${note}` : daysLine;
           windows: { today: w.today, weekStart: w.weekStart, monthStart: w.monthStart },
           people, excluded, team: counts(team),
         };
+      });
+
+      // ── the floor's pace, week by week ──────────────────────────────────
+      section("weeklyPace", () => {
+        // Transfers per CLR per DAY WORKED, ten weeks (shared/weekly-pace.ts).
+        // Totals cannot be compared across a changing roster — twelve people
+        // in late August, seven now — and per-week silently assumes everybody
+        // worked five days. The people who have since gone quiet are counted
+        // for the weeks they were here, and today counts as half a day.
+        const from = addIsoDays(mondayOf(w.today), -7 * (TV_PACE_WEEKS + 1));
+        // The CLR roster this measures: not the TV roster above, because that
+        // one is active-only and this has to keep somebody who left in the
+        // weeks they were still working. Elleine carries exclude_from_stats
+        // and stays out, which is what was asked for.
+        const paceUsers = sqlite.prepare(
+          `SELECT id FROM users
+            WHERE org_id=? AND is_clr=1 AND COALESCE(exclude_from_stats,0)=0 AND archived_at IS NULL
+              AND name NOT LIKE 'Demo%' AND name NOT LIKE 'Manager Test%' AND name NOT LIKE 'C3 Auto%'
+              AND (portal IS NULL OR portal='c3')`,
+        ).all(orgId) as any[];
+        const paceIds = paceUsers.map((r) => Number(r.id)).filter(Boolean);
+        if (!paceIds.length) return undefined;
+        const marks = paceIds.map(() => "?").join(",");
+        // A day worked: an outcome, an EOD, Dialpad calls, Dialpad texts, or a
+        // call log. Any one of them means they were at the desk that day.
+        const days = sqlite.prepare(
+          `SELECT user_id, d FROM (
+             SELECT DISTINCT assistant_id AS user_id, date AS d FROM lead_outcomes WHERE org_id=?
+             UNION SELECT DISTINCT e.assistant_id, e.report_date FROM eod_reports e JOIN users u ON u.id=e.assistant_id AND u.org_id=?
+             UNION SELECT DISTINCT user_id, stat_date FROM dialpad_daily_stats WHERE org_id=? AND user_id IS NOT NULL AND calls>0
+             UNION SELECT DISTINCT user_id, message_date FROM dialpad_sms_events WHERE org_id=? AND user_id IS NOT NULL
+             UNION SELECT DISTINCT assistant_id, log_date FROM daily_call_logs WHERE org_id=?
+           ) WHERE user_id IN (${marks}) AND d <= ?`,
+        ).all(orgId, orgId, orgId, orgId, orgId, ...paceIds, w.today) as any[];
+        const credits = sqlite.prepare(
+          `SELECT tc.user_id AS user_id, tc.date AS d, SUM(tc.credit) AS credit
+             FROM (${TRANSFER_CREDIT_SQL}) tc
+            WHERE tc.org_id=? AND tc.user_id IN (${marks}) AND tc.date >= ? AND tc.date <= ?
+            GROUP BY tc.user_id, tc.date`,
+        ).all(orgId, ...paceIds, from, w.today) as any[];
+        const weeks = weeklyPace({
+          days: days.map((r) => ({ userId: Number(r.user_id), date: String(r.d) })),
+          credits: credits.map((r) => ({ userId: Number(r.user_id), date: String(r.d), credit: Number(r.credit) || 0 })),
+          today: w.today,
+          weeks: TV_PACE_WEEKS,
+        });
+        return { weeks, average: completedAverage(weeks), rampDays: PACE_RAMP_DAYS };
       });
 
       // ── who the floor owes work to ───────────────────────────────────────

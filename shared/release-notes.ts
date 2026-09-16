@@ -84,6 +84,16 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     ],
   },
   {
+    version: "4.114.0",
+    headline: "The wall now shows our pace over ten weeks, and Shotgun stops punishing a missed offer.",
+    items: [
+      { text: "Office TV: a new page charts transfers per CLR per day worked for the last ten weeks, so the trend survives a roster that changes size. The week in progress is marked in gold and today counts as half a day, and the headline is the average of the last four finished weeks.", audience: "everyone" },
+      { text: "Missing a Shotgun offer no longer takes you out of the rotation. The lead moves straight to the next CLR, you are told it moved, and the next one still comes to you. Only closing C3 takes you out.", audience: "everyone" },
+      { text: "You can no longer take yourself out of the Shotgun rotation while C3 is open — the badge just says you are in it. Close C3 when you are done for the day, or ask a manager.", audience: "everyone" },
+      { text: "The Shotgun confirm window is ten seconds, down from twenty. The card is full-screen with a chime, and a lead spending twenty seconds on somebody who is not going to take it is twenty seconds nobody is calling it.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.113.1",
     headline: "Proof that a CLR taken off the Shotgun rotation is really never offered a lead.",
     items: [

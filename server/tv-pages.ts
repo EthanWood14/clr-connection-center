@@ -217,6 +217,9 @@ export function orderAssignmentPeople<T extends AssignmentPerson>(rows: T[]): T[
 /** The fortnight the starved page measures. */
 export const STARVED_WINDOW_DAYS = 14;
 
+/** How many weeks of pace the wall shows. Ten fits a 1080p screen as columns. */
+export const TV_PACE_WEEKS = 10;
+
 /**
  * The first date a transfer counts toward the starved window.
  *

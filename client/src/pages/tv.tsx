@@ -37,7 +37,7 @@ import { appendTvMoments, createTvRacePreview, planTransferRaces, racePreviewSta
 import {
   PAN_BOX, usePan,
   TransfersPage, WriteUpPage, AssignmentsPage, EodPage, PhoneTimePage, LeadSourcePage, OnPhoneNowPage,
-  StarvedPage, UpcomingPage, LoSplitPage,
+  StarvedPage, UpcomingPage, LoSplitPage, WeeklyPacePage,
 } from "@/components/tv/pages";
 import { type Overtake, type RankRow } from "@shared/tv-overtake";
 import { APP_VERSION } from "@shared/version";
@@ -147,7 +147,8 @@ const KIND: Record<Kind, { label: string; hue: string; ring: string; Icon: typeo
 type PageId =
   | "scorecard" | "team" | "latest" | "tip"
   | "transfersWeek" | "transfersMonth" | "writeup" | "assignments" | "eod"
-  | "phoneTime" | "leadSource" | "onPhoneNow" | "starved" | "upcoming" | "loSplit";
+  | "phoneTime" | "leadSource" | "onPhoneNow" | "starved" | "upcoming" | "loSplit"
+  | "weeklyPace";
 
 /**
  * The deck, and when each page is allowed on it.
@@ -185,6 +186,11 @@ const DECK: Slot[] = [
   // that one raises: who is actually doing the feeding.
   { id: "loSplit",        dwellMs: 13_000 },
   { id: "transfersMonth", dwellMs: 12_000 },
+  // Straight after the month, because it is the same question asked across a
+  // changing roster: not how many, but how many each, per day at the desk.
+  // Fourteen seconds — ten columns is a trend to read, not a number to glance
+  // at, and it is the only page on the wall that shows more than this week.
+  { id: "weeklyPace",     dwellMs: 14_000 },
   { id: "tip",            dwellMs: 12_000 },
 ];
 
@@ -1060,6 +1066,13 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
                 days={board?.starved?.days ?? 14}
                 los={board?.starved?.los ?? []}
                 loas={board?.starved?.loas ?? []}
+              />
+            )}
+            {page === "weeklyPace" && (
+              <WeeklyPacePage
+                reduced={reduced}
+                weeks={board?.weeklyPace?.weeks ?? []}
+                average={board?.weeklyPace?.average ?? null}
               />
             )}
             {page === "loSplit" && (

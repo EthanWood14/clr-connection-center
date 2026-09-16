@@ -133,7 +133,7 @@ export default function Shotgun() {
   const [source, setSource] = useState("");
   const [managerNotes, setManagerNotes] = useState("");
   const { data, isLoading } = useQuery<ShotgunPayload>({ queryKey: ["/api/shotgun"], refetchInterval: 5_000, staleTime: 0 });
-  const payload = data ?? { canManage: false, canPublish: false, isClr: false, isReady: false, offerSeconds: 20, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
+  const payload = data ?? { canManage: false, canPublish: false, isClr: false, isReady: false, offerSeconds: 10, serverNow: new Date().toISOString(), leads: [], readyUsers: [] };
   /**
    * Put every CLR back in the rotation.
    *
@@ -236,10 +236,16 @@ export default function Shotgun() {
       <div className="mx-auto max-w-7xl space-y-5">
         <header className="overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-rose-950 to-orange-600 p-6 text-white shadow-xl sm:p-8">
           <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center">
-            <div><Badge className="mb-3 border-white/20 bg-white/10 text-white"><Zap className="mr-1 h-3 w-3" /> 20-second lead routing</Badge><h1 className="flex items-center gap-3 text-3xl font-black sm:text-4xl"><Radio className="h-9 w-9 text-orange-300" /> Shotgun</h1><p className="mt-2 max-w-2xl text-sm text-white/70">One lead. One ready CLR. Twenty seconds to confirm—then C3 automatically moves it to the next person.</p></div>
+            <div><Badge className="mb-3 border-white/20 bg-white/10 text-white"><Zap className="mr-1 h-3 w-3" /> {payload.offerSeconds}-second lead routing</Badge><h1 className="flex items-center gap-3 text-3xl font-black sm:text-4xl"><Radio className="h-9 w-9 text-orange-300" /> Shotgun</h1><p className="mt-2 max-w-2xl text-sm text-white/70">One lead. One ready CLR. {payload.offerSeconds} seconds to confirm—then C3 automatically moves it to the next person. Missing one does not take you out of the rotation.</p></div>
             <div className="flex flex-wrap items-center gap-2">
             {payload.canManage && <Button size="lg" variant="outline" disabled={readyAll.isPending} onClick={() => readyAll.mutate()} className="gap-2 border-white/30 bg-white/10 text-white hover:bg-white/20" data-testid="button-shotgun-ready-all">{readyAll.isPending ? <><RefreshCw className="h-5 w-5 animate-spin" /> Adding…</> : <><UserPlus className="h-5 w-5" /> Put everyone in</>}</Button>}
-            {payload.isClr && <Button size="lg" disabled={readiness.isPending} onClick={() => readiness.mutate(!payload.isReady)} className={payload.isReady ? "gap-2 border border-emerald-300 bg-emerald-500 text-white hover:bg-emerald-600" : "gap-2 bg-white text-slate-950 hover:bg-orange-100"}>{payload.isReady ? <><ShieldCheck className="h-5 w-5" /> READY — receiving leads</> : <><Radio className="h-5 w-5" /> Press Ready</>}</Button>}
+            {/* While C3 is open a CLR is in the rotation, so there is nothing
+                to toggle — the badge states it instead of offering a way out
+                (owner, 16 Sep 2026). Somebody not yet Ready still gets the
+                button, because turning yourself back ON is always allowed. */}
+            {payload.isClr && (payload.isReady
+              ? <span className="inline-flex items-center gap-2 rounded-md border border-emerald-300 bg-emerald-500 px-5 py-2.5 text-base font-semibold text-white" data-testid="shotgun-ready-state"><ShieldCheck className="h-5 w-5" /> READY — receiving leads</span>
+              : <Button size="lg" disabled={readiness.isPending} onClick={() => readiness.mutate(true)} className="gap-2 bg-white text-slate-950 hover:bg-orange-100"><Radio className="h-5 w-5" /> Press Ready</Button>)}
             </div>
           </div>
         </header>

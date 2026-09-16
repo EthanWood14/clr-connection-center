@@ -52,7 +52,7 @@ export function ShotgunOfferAlert() {
     queryKey: ["/api/shotgun"],
     enabled: eligible && !blocked,
     refetchInterval: (query) => (query.state.data as ShotgunPayload | undefined)?.isReady ? 2_000 : 15_000,
-    // An offer lasts twenty seconds and the CLR is usually in Bonzo, not on
+    // An offer lasts ten seconds and the CLR is usually in Bonzo, not on
     // this tab. Polling only while C3 was in front left the chime silent
     // until they happened to come back; the push covered it, this makes the
     // card and chime keep up too.
