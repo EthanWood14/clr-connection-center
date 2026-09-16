@@ -8,7 +8,7 @@ import { createTvCarModel } from "./car-model";
 import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
 import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
 
-type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
+type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; /** How long the scene runs before it stops drawing. The wall's corner race asks for two minutes; a transfer's moment holds the screen for twelve seconds. */ runSeconds?: number; /** How long the camera flight is stretched over. The same thirty-odd angles, walked slowly. */ cameraSeconds?: number; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
 
 /** Procedural scene with optional same-origin, access-controlled car pictures. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
@@ -250,7 +250,12 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   draw=(now:number)=>{
     if(disposed)return;
     if(start===undefined)start=now;
-    const elapsed=options.reduced?4.6:Math.min(11.8,(now-start)/1000);
+    // The cars keep lapping for the whole run; the camera walks its flight
+    // over cameraSeconds. Separating them is what lets the corner race be a
+    // two-minute shot without the cars crawling round in slow motion.
+    const runFor=options.runSeconds??11.8, flightFor=options.cameraSeconds??12;
+    const elapsed=options.reduced?4.6:Math.min(runFor,(now-start)/1000);
+    const cameraTime=options.reduced?12:Math.min(12,elapsed*12/flightFor);
     if(!options.reduced && now-previous<32){frame=requestAnimationFrame(draw);return;}
     previous=now;
     const motionTime=options.reduced?4.6:elapsed;
@@ -267,7 +272,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       boost.visible=!options.reduced&&transition.scored&&position.progress>.15&&position.progress<.85;
       for(const wheel of wheels)wheel.rotation.x=dynamics.wheelAngle;
     }
-    const shot=raceCameraPose(subjects,options.reduced?12:elapsed,lead,camera.aspect,framingRadius,options.reduced);
+    const shot=raceCameraPose(subjects,cameraTime,lead,camera.aspect,framingRadius,options.reduced);
     if(camera.fov!==shot.fov){camera.fov=shot.fov;camera.updateProjectionMatrix();}
     camera.position.set(shot.position.x,shot.position.y,shot.position.z);
     camera.lookAt(shot.target.x,shot.target.y,shot.target.z);
@@ -299,7 +304,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       tag.line.style.left=`${label.x}px`;tag.line.style.top=`${label.y}px`;
       tag.line.style.width=`${Math.hypot(dx,dy)}px`;tag.line.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`;
     }
-    if(!options.reduced&&elapsed<11.8)frame=requestAnimationFrame(draw);
+    if(!options.reduced&&elapsed<runFor)frame=requestAnimationFrame(draw);
   };
   // A late picture also updates a reduced-motion (single-frame) TV without
   // starting another animation loop or changing its fixed race pose.

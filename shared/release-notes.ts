@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.115.2",
+    headline: "The corner race is one two-minute shot now, not the same twelve seconds over and over.",
+    items: [
+      { text: "Office TV: the live corner used to restart every twelve seconds, which nagged at the room. It is now a single unbroken two-minute flight through its thirty-odd angles before it starts again, while the cars lap at their own speed throughout. The twelve-second race a transfer earns is unchanged.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.115.1",
     headline: "The corner race says who is winning, and the camera flies through thirty angles instead of eight.",
     items: [

@@ -26,6 +26,9 @@ import { preloadFieldRace } from "./field-race";
  *     back to the top three as text and stops trying. A black rectangle on
  *     the wall all day is worse than no rectangle.
  */
+/** One shot in the corner lasts this long before the flight starts again. */
+export const CORNER_RACE_SECONDS = 120;
+
 export function CornerRace({ people, reduced, paused = false }: {
   people: RankRow[];
   reduced: boolean;
@@ -56,6 +59,13 @@ export function CornerRace({ people, reduced, paused = false }: {
       try {
         cleanup = mountRaceScene(host.current, {
           drivers, before: null, reduced,
+          // Two minutes of one continuous shot, the whole flight walked slowly
+          // through its thirty-odd angles, then a reset. Restarting every
+          // twelve seconds is what made the corner nag at the room (Ethan,
+          // 16 Sep 2026: "it needs 30 camera angles over 2 minutes before it
+          // resets"). The cars lap at their own speed throughout.
+          runSeconds: CORNER_RACE_SECONDS,
+          cameraSeconds: CORNER_RACE_SECONDS,
           // Written straight to the node rather than through state: it ticks
           // five times a second for twelve seconds and nothing renders off
           // it. It is how anyone can tell from the page itself whether the
@@ -64,10 +74,10 @@ export function CornerRace({ people, reduced, paused = false }: {
           onFailure: () => { if (!cancelled) setFailed(true); },
         });
       } catch { if (!cancelled) setFailed(true); return; }
-      // The scene stops drawing at 11.8s. Start the next lap as it ends: a
-      // longer wait leaves a dead rectangle on the wall, and a WebGL canvas
-      // that has stopped is not guaranteed to keep showing its last frame.
-      timer = window.setTimeout(() => { if (!cancelled) setRun((n) => n + 1); }, reduced ? 60_000 : 12_200);
+      // Start the next shot the moment this one ends: a WebGL canvas that has
+      // stopped drawing is not guaranteed to keep showing its last frame.
+      timer = window.setTimeout(() => { if (!cancelled) setRun((n) => n + 1); },
+        reduced ? 10 * 60_000 : CORNER_RACE_SECONDS * 1000 + 400);
     }).catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; window.clearTimeout(timer); cleanup?.(); };
     // `grid` is the dependency, not `drivers`: same standings, same race.

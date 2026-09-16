@@ -296,5 +296,9 @@ test("reduced motion uses a fixed pose, redraws on resize, and never starts a co
   const scene = readFileSync(new URL("../client/src/components/tv/race-scene.ts", import.meta.url), "utf8");
   assert.match(scene, /const elapsed\s*=\s*options\.reduced\s*\?\s*[\d.]+\s*:/);
   assert.match(scene, /if\s*\(options\.reduced\s*&&\s*draw\)\s*draw\(performance\.now\(\)\)/);
-  assert.match(scene, /if\s*\(!options\.reduced\s*&&\s*elapsed\s*<\s*[\d.]+\)\s*frame\s*=\s*requestAnimationFrame\(draw\)/);
+  // The run length is a value now, not a literal: the corner race asks for
+  // two minutes of one shot while a transfer moment still holds 11.8s.
+  assert.match(scene, /if\s*\(!options\.reduced\s*&&\s*elapsed\s*<\s*(?:[\d.]+|runFor)\)\s*frame\s*=\s*requestAnimationFrame\(draw\)/);
+  assert.match(scene, /const runFor=options\.runSeconds\?\?11\.8, flightFor=options\.cameraSeconds\?\?12;/,
+    "a caller that asks for neither gets exactly the old twelve-second scene");
 });

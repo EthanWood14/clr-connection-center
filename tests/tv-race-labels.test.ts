@@ -159,7 +159,11 @@ test("the scene speeds up travel and wheels while preserving a static reduced-mo
     "wheel travel uses the same boosted track speed and static reduced-motion mode");
   assert.match(scene, /wheel\.rotation\.x\s*=\s*dynamics\.wheelAngle/);
   assert.match(scene, /const motionTime\s*=\s*options\.reduced\s*\?\s*[\d.]+\s*:\s*elapsed/);
-  assert.match(scene, /const shot=raceCameraPose\(subjects,options\.reduced\?12:elapsed,lead,camera\.aspect,framingRadius,options\.reduced\)/,
+  // The camera walks cameraTime: that IS elapsed for a transfer's moment, and
+  // elapsed stretched over two minutes for the wall's corner race. The cars
+  // keep lapping at `lead` either way, so the pass is never lost.
+  assert.match(scene, /const cameraTime=options\.reduced\?12:Math\.min\(12,elapsed\*12\/flightFor\)/);
+  assert.match(scene, /const shot=raceCameraPose\(subjects,cameraTime,lead,camera\.aspect,framingRadius,options\.reduced\)/,
     "the camera follows full angular travel and the scorer's actual rivals instead of losing the pass");
   assert.match(scene, /camera\.lookAt\(shot\.target\.x,shot\.target\.y,shot\.target\.z\)/);
 });
