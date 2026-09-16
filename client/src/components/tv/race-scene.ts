@@ -4,6 +4,7 @@ import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid"
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
 import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
 import { RACE_CAMERA_FOV, raceBroadcastShot, raceCameraPose, raceCameraRadius, raceCameraStartAngle, raceCameraSubjects } from "@shared/tv-race-camera";
+import { cornerCameraPose } from "@shared/tv-corner-camera";
 import { createTvCarModel } from "./car-model";
 import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
 import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
@@ -219,7 +220,18 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   });
 
   // Every driver is named. Screen-space placement keeps nearby nameplates readable.
-  const named=options.spotlight?racers.filter(r=>r.driver.id===options.focusId):racers;
+  // Spotlight names the car being followed AND the two nearest it on track:
+  // one plate says who you are watching, three say who they are racing
+  // (owner, 16 Sep 2026 — "the name on more cars than the one in first").
+  // Every car, all the time, is what made the panel unreadable.
+  const spotlightNames=3;
+  const named=options.spotlight?(()=>{
+    const focus=racers.find(r=>r.driver.id===options.focusId)??racers[0];
+    if(!focus)return racers.slice(0,spotlightNames);
+    const others=racers.filter(r=>r!==focus)
+      .sort((a,b)=>Math.abs(a.driver.distance-focus.driver.distance)-Math.abs(b.driver.distance-focus.driver.distance));
+    return [focus,...others.slice(0,spotlightNames-1)];
+  })():racers;
   const tags=named.map(r=>{
     const element=document.createElement("div");
     element.style.cssText="position:absolute;pointer-events:none;padding:5px 8px;border-left:3px solid;background:#101a25ed;color:white;font:700 clamp(11px,1vw,17px) system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 3px 12px #0004;";
@@ -267,10 +279,12 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const motionTime=options.reduced?4.6:elapsed;
     const speed=options.reduced?RACE_BASE_ANGULAR_SPEED:RACE_BASE_ANGULAR_SPEED*RACE_SPEED_MULTIPLIER;
     const lead=startAngle+motionTime*speed;
+    let focusPose:{angle:number;lane:number}|undefined;
     for(const {driver,root,wheels,boost,chassis,frontSteering} of racers) {
       const transition=transitions.get(driver.id)!;
       const position=interpolateRaceTransition(transition,options.reduced?12:elapsed);
       const point=raceTrackPoint(lead-position.distance/42,position.lane);
+      if(options.spotlight&&driver.id===(options.focusId??racers[0]?.driver.id))focusPose={angle:lead-position.distance/42,lane:position.lane};
       const dynamics=sampleRaceDynamics({transition,elapsed,driverId:driver.id,speed,reduced:options.reduced});
       root.position.set(point.x,point.y,point.z);root.rotation.set(0,point.yaw+dynamics.yawOffset,Math.atan(.075));
       chassis.rotation.set(dynamics.pitch,0,dynamics.roll);chassis.position.y=dynamics.heave;
@@ -278,7 +292,9 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       boost.visible=!options.reduced&&transition.scored&&position.progress>.15&&position.progress<.85;
       for(const wheel of wheels)wheel.rotation.x=dynamics.wheelAngle;
     }
-    const shot=raceCameraPose(subjects,cameraTime,lead,camera.aspect,framingRadius,options.reduced);
+    const shot=options.spotlight&&focusPose
+      ? cornerCameraPose(elapsed,focusPose)
+      : raceCameraPose(subjects,cameraTime,lead,camera.aspect,framingRadius,options.reduced);
     if(camera.fov!==shot.fov){camera.fov=shot.fov;camera.updateProjectionMatrix();}
     camera.position.set(shot.position.x,shot.position.y,shot.position.z);
     camera.lookAt(shot.target.x,shot.target.y,shot.target.z);
@@ -302,7 +318,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       // In the corner the name is an occasional caption, not a permanent
       // label: four seconds on, sixteen off, so the panel is cars almost all
       // of the time and still tells you who you are watching.
-      const named_now=!options.spotlight||(elapsed%20)<4;
+      const named_now=!options.spotlight||(elapsed%18)<7;
       const visible=named_now&&vector.z>-1&&vector.z<1&&Math.abs(vector.x)<1&&Math.abs(vector.y)<.95;
       element.style.display=line.style.display=visible?'block':'none';
       if(visible)anchors.push({id:racer.driver.id,x:(vector.x*.5+.5)*host.clientWidth,y:(-vector.y*.5+.5)*host.clientHeight,width,height});

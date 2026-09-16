@@ -68,7 +68,12 @@ test("the live corner race sits IN the strip, never over a page, and yields the 
   assert.match(tv, /className="relative z-10 flex h-\[20vh\]/);
   assert.match(tv, /<CornerRace people=\{raceStandings\} reduced=\{reduced\} paused=\{!!current\} \/>/);
   const corner = read("client/src/components/tv/corner-race.tsx");
-  assert.match(corner, /if \(paused \|\| failed \|\| !people\.length\) return;/, "one WebGL context on this screen at a time");
+  // The scene is NOT torn down when a moment cuts in: that restarted the
+  // three-minute shot from zero every few minutes and made the corner read
+  // as a short loop. The full-screen race covers it anyway.
+  assert.match(corner, /if \(failed \|\| !people\.length\) return;/);
+  assert.match(corner, /\}, \[grid, reduced, run, failed\]\);/, "and a quiet poll must not restart it either");
+  assert.match(corner, /paused \? " opacity-0" : ""/, "it dims under the full-screen race rather than unmounting");
   assert.match(corner, /setRun\(\(n\) => n \+ 1\)/, "it runs again rather than freezing at the line");
   assert.match(corner, /onFailure: \(\) => \{ if \(!cancelled\) setFailed\(true\); \}/);
   assert.match(corner, /data-corner-race-state=\{failed \? "fallback" : "live"\}/, "a dead scene falls back to text, not a black box");
@@ -80,8 +85,12 @@ test("the corner holds one car close up and names it only now and then", () => {
   const corner = read("client/src/components/tv/corner-race.tsx");
   assert.match(corner, /spotlight: true,/);
   assert.match(corner, /focusId: drivers\[run % drivers\.length\]\?\.id,/, "each shot follows the next driver down the order");
-  assert.match(corner, /runSeconds: CORNER_RACE_SECONDS,\s*\n\s*cameraSeconds: CORNER_RACE_SECONDS,/);
-  assert.match(corner, /export const CORNER_RACE_SECONDS = 120;/);
+  // No cameraSeconds: the corner is not a stretched version of the transfer
+  // race's single flight any more, it has its own thirty-shot list.
+  assert.match(corner, /runSeconds: CORNER_RACE_SECONDS,/);
+  assert.doesNotMatch(corner, /cameraSeconds/);
+  // Three minutes, which IS the shot list: thirty shots of six seconds.
+  assert.match(corner, /export const CORNER_RACE_SECONDS = CORNER_CAMERA_SECONDS;/);
   const scene = read("client/src/components/tv/race-scene.ts");
   // Spotlight frames ONE car: the rival-widening that makes a transfer's race
   // readable would pull the lens off everybody on a panel this size.

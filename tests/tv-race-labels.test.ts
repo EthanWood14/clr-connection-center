@@ -148,11 +148,15 @@ test("every racer gets their full name, stable identity, and an owned connector 
   // The full-screen race names everybody; the wall's corner panel names only
   // the car it is following, because a dozen plates on a small panel is
   // unreadable (owner, 16 Sep 2026). Both come off the same list.
-  assert.match(scene, /const named=options\.spotlight\?racers\.filter\(r=>r\.driver\.id===options\.focusId\):racers;/,
-    "nameplates are limited to one car ONLY in spotlight mode");
+  // Spotlight names the car being followed and the two nearest it — one
+  // plate is not enough to see who is racing whom, and a plate on every
+  // car is what made the panel unreadable (owner, 16 Sep 2026).
+  assert.match(scene, /const spotlightNames=3;/);
+  assert.match(scene, /const focus=racers\.find\(r=>r\.driver\.id===options\.focusId\)\?\?racers\[0\];/);
+  assert.match(scene, /return \[focus,\.\.\.others\.slice\(0,spotlightNames-1\)\];/);
   assert.match(scene, /const tags=named\.map\(/);
-  assert.match(scene, /const named_now=!options\.spotlight\|\|\(elapsed%20\)<4;/,
-    "and in that mode the name is an occasional caption, not a permanent label");
+  assert.match(scene, /const named_now=!options\.spotlight\|\|\(elapsed%18\)<7;/,
+    "and in that mode the names are an occasional caption, not permanent labels");
   assert.match(scene, /element\.textContent\s*=\s*r\.driver\.id===options\.focusId\?`▶ \$\{r\.driver\.name\}`:r\.driver\.name\s*;/, "the focus marker retains every driver's full name");
   assert.match(scene, /element\.dataset\.driverId\s*=\s*String\(r\.driver\.id\)/);
   assert.match(scene, /tagElements\.push\(line,\s*element\)/, "both DOM nodes belong to scene cleanup");
@@ -170,7 +174,10 @@ test("the scene speeds up travel and wheels while preserving a static reduced-mo
   // elapsed stretched over two minutes for the wall's corner race. The cars
   // keep lapping at `lead` either way, so the pass is never lost.
   assert.match(scene, /const cameraTime=options\.reduced\?12:Math\.min\(12,elapsed\*12\/flightFor\)/);
-  assert.match(scene, /const shot=raceCameraPose\(subjects,cameraTime,lead,camera\.aspect,framingRadius,options\.reduced\)/,
+  // The corner cuts between its own thirty shots; the transfer race keeps
+  // the single flight, and that is the branch this pins.
+  assert.match(scene, /const shot=options\.spotlight&&focusPose/);
+  assert.match(scene, /: raceCameraPose\(subjects,cameraTime,lead,camera\.aspect,framingRadius,options\.reduced\);/,
     "the camera follows full angular travel and the scorer's actual rivals instead of losing the pass");
   assert.match(scene, /camera\.lookAt\(shot\.target\.x,shot\.target\.y,shot\.target\.z\)/);
 });

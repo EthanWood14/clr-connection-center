@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.116.0",
+    headline: "The corner race is a three-minute broadcast: thirty camera positions, and three names on screen.",
+    items: [
+      { text: "Office TV: the corner now cuts through thirty camera positions over three minutes — behind the car, on its roof, directly overhead, alongside, head-on, and cameras bolted to the apex, the outside line and the grass that simply watch the cars sweep past. It used to be one slow sweep.", audience: "everyone" },
+      { text: "Three names on screen at a time instead of one: the car being followed and the two nearest it, so you can see who is racing whom. They show for seven seconds in every eighteen.", audience: "everyone" },
+      { text: "The corner no longer restarts every time something cuts in over the wall. A transfer, a new lead or the hourly race used to reset its shot back to the beginning, which is why it looked like a short loop.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.115.3",
     headline: "The corner race follows one car up close instead of labelling all of them.",
     items: [

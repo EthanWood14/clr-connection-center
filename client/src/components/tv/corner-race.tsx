@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { raceGrid } from "@shared/tv-race-grid";
 import { formatTransferCount } from "@shared/transfer-credit";
 import type { RankRow } from "@shared/tv-overtake";
+import { CORNER_CAMERA_SECONDS } from "@shared/tv-corner-camera";
 import { preloadFieldRace } from "./field-race";
 
 /**
@@ -26,8 +27,11 @@ import { preloadFieldRace } from "./field-race";
  *     back to the top three as text and stops trying. A black rectangle on
  *     the wall all day is worse than no rectangle.
  */
-/** One shot in the corner lasts this long before the flight starts again. */
-export const CORNER_RACE_SECONDS = 120;
+/**
+ * How long the corner runs before it starts over: three minutes, which is
+ * exactly the thirty six-second shots in shared/tv-corner-camera.ts.
+ */
+export const CORNER_RACE_SECONDS = CORNER_CAMERA_SECONDS;
 
 export function CornerRace({ people, reduced, paused = false }: {
   people: RankRow[];
@@ -50,7 +54,13 @@ export function CornerRace({ people, reduced, paused = false }: {
   const top = drivers.slice(0, 3);
 
   useEffect(() => {
-    if (paused || failed || !people.length) return;
+    // NOT gated on `paused`. Tearing the scene down every time a moment cut
+    // in — a transfer, a new lead, the hourly race — restarted the three
+    // minutes from zero, so the corner never got past its opening shots and
+    // read as a twenty-second loop (owner, 16 Sep 2026: "the shot is still
+    // 20 seconds"). The full-screen race covers the whole wall while it
+    // plays, so the corner is not visible under it anyway.
+    if (failed || !people.length) return;
     let cancelled = false;
     let cleanup: (() => void) | undefined;
     let timer = 0;
@@ -65,7 +75,6 @@ export function CornerRace({ people, reduced, paused = false }: {
           // 16 Sep 2026: "it needs 30 camera angles over 2 minutes before it
           // resets"). The cars lap at their own speed throughout.
           runSeconds: CORNER_RACE_SECONDS,
-          cameraSeconds: CORNER_RACE_SECONDS,
           // One car, close up, with its name shown now and then rather than a
           // nameplate on every car at once — twelve labels on a panel this
           // size was unreadable (Ethan, 16 Sep 2026). Each two-minute shot
@@ -89,15 +98,19 @@ export function CornerRace({ people, reduced, paused = false }: {
     return () => { cancelled = true; window.clearTimeout(timer); cleanup?.(); };
     // `grid` is the dependency, not `drivers`: same standings, same race.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grid, reduced, run, paused, failed, people.length]);
+    // `grid` covers the standings; `people.length` was a second, noisier way
+    // of saying the same thing and restarted the shot whenever the feed fell
+    // back to a roster one name shorter.
+  }, [grid, reduced, run, failed]);
 
-  if (paused) return null;
+  // `paused` no longer unmounts the scene; it only dims the panel while the
+  // full-screen race owns the wall.
   const leader = drivers[0];
   const second = drivers.find((d) => d.rank > 1);
   const margin = leader && second ? leader.transfersToday - second.transfersToday : 0;
   return (
     <section
-      className="ml-auto flex w-[38vw] shrink-0 items-stretch gap-3 overflow-hidden rounded-xl border border-white/15 bg-[#0d1b26]"
+      className={`ml-auto flex w-[38vw] shrink-0 items-stretch gap-3 overflow-hidden rounded-xl border border-white/15 bg-[#0d1b26]${paused ? " opacity-0" : ""}`}
       data-testid="tv-corner-race"
       data-corner-race-state={failed ? "fallback" : "live"}
       aria-label="Today's race, running live"
