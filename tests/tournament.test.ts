@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  LAST_TOURNAMENT_DATE, TOURNAMENT_ENABLED, TOURNAMENT_END, TOURNAMENT_START, TOURNAMENT_TZ, outcomeCreatedMs, todayInTz, tournamentPhase, tournamentStandings, tournamentWindow, wallClockToMs,
+  LAST_TOURNAMENT_DATE, TOURNAMENT_ENABLED, TOURNAMENT_END, TOURNAMENT_START, TOURNAMENT_TZ, isTournamentExcluded, outcomeCreatedMs, todayInTz, tournamentPhase, tournamentStandings, tournamentWindow, wallClockToMs,
 } from "../shared/tournament";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -106,19 +106,38 @@ test("the server pulls the day either side and the board is a Dashboard tab and 
   assert.match(page, /serverTime - dataUpdatedAt/, "the countdown runs on the server clock");
 });
 
-// "Get rid of it, it shouldn't be back… keep the code tho, for future." —
-// Ethan, 15 Sep 2026. The switch is off; the code stays; /tournament shows
-// the last board as a record.
-test("with no tournament on, the tab and the sidebar link are gone and the page shows the last board", () => {
-  assert.equal(TOURNAMENT_ENABLED, false);
+// 17 Sep 2026: tournament back on — home tab (CLRs + managers), Elleine excluded.
+test("tournament is on for home pages, with Elleine excluded from the board and UI", () => {
+  assert.equal(TOURNAMENT_ENABLED, true);
   assert.equal(LAST_TOURNAMENT_DATE, "2026-09-14");
+  assert.equal(isTournamentExcluded("Elleine Asuncion"), true);
+  assert.equal(isTournamentExcluded("Ana"), false);
+  const people = [
+    { id: 1, name: "Ana" },
+    { id: 2, name: "Elleine Asuncion" },
+    { id: 3, name: "Cy" },
+  ];
+  const w = tournamentWindow("2026-09-14");
+  const at = (hhmm: string) => new Date(wallClockToMs("2026-09-14", hhmm)).toISOString();
+  const s = tournamentStandings([
+    { id: 1, assistant_id: 2, outcome_type: "transfer", created_at: at("13:00"), borrower_name: "Helper" },
+    { id: 2, assistant_id: 1, outcome_type: "transfer", created_at: at("13:05"), borrower_name: "Ana" },
+  ], people, w);
+  assert.ok(!s.some((r) => /elleine/i.test(r.name)), "Elleine must not appear on the board");
+  assert.deepEqual(s.map((r) => [r.name, r.credit]), [["Ana", 1], ["Cy", 0]]);
+
   const dashboard = read("client/src/pages/dashboard.tsx");
-  assert.match(dashboard, /\{TOURNAMENT_ENABLED && \(\s*\n\s*<TabsTrigger value="tournament"/);
-  assert.match(dashboard, /\{TOURNAMENT_ENABLED && \(\s*\n\s*<TabsContent value="tournament"/);
-  assert.match(dashboard, /TOURNAMENT_ENABLED \? "w-full sm:w-auto grid grid-cols-5 sm:inline-flex" : "w-full sm:w-auto grid grid-cols-4 sm:inline-flex"/);
+  assert.match(dashboard, /showTournament && \(\s*\n\s*<TabsTrigger value="tournament"/);
+  assert.match(dashboard, /showTournament && \(\s*\n\s*<TabsContent value="tournament"/);
+  assert.match(dashboard, /canSeeTournamentHome\(user\?\.name\)/);
+  const manager = read("client/src/pages/manager-dashboard.tsx");
+  assert.match(manager, /<TournamentBoard \/>/);
+  assert.match(manager, /canSeeTournamentHome\(user\?\.name\)/);
   const sidebar = read("client/src/components/app-sidebar.tsx");
   assert.match(sidebar, /\.\.\.\(TOURNAMENT_ENABLED \? \[\{ title: "Transfer Tournament"/);
+  assert.match(sidebar, /referenceItemsForUser/);
   const page = read("client/src/pages/tournament.tsx");
   assert.match(page, /if \(!TOURNAMENT_ENABLED\) \{/);
+  assert.match(page, /isTournamentExcluded\(user\?\.name\)/);
   assert.match(page, /<TournamentBoard fullscreen date=\{LAST_TOURNAMENT_DATE\} \/>/);
 });
