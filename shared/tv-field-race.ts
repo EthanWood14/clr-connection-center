@@ -1,4 +1,5 @@
 import type { RankRow } from "./tv-overtake";
+import { buildDayRaceTimeline, dayRaceStartingGrid, filterDayRaceField, type DayRaceHourCredit } from "./tv-day-race";
 
 /** Every real transfer gets a race; event IDs still own polling/reload deduplication. */
 export function showsFieldRace(eventId: string): boolean {
@@ -50,6 +51,33 @@ export function createTvRacePreview(people: RankRow[], key: string, at: string) 
     event: { id: key, kind: "transfer" as const, at, borrower: "", who: "", lo: null, detail: null },
   };
 }
+
+/**
+ * Play-button day replay: one frame per non-empty office hour, Elleine off the
+ * field. Falls back to a still of today's grid when no hourly credits exist.
+ */
+export function createTvDayRacePreview(
+  people: RankRow[],
+  hourCredits: readonly DayRaceHourCredit[],
+  key: string,
+  at: string,
+) {
+  const field = filterDayRaceField(people);
+  const frames = buildDayRaceTimeline(field, hourCredits);
+  if (!frames.length) {
+    return { ...createTvRacePreview(field, key, at) };
+  }
+  return {
+    type: "event" as const,
+    key,
+    preview: true,
+    dayFrames: frames,
+    raceBefore: dayRaceStartingGrid(field),
+    fieldRace: frames[0].people,
+    event: { id: key, kind: "transfer" as const, at, borrower: "", who: "", lo: null, detail: null },
+  };
+}
+
 
 /**
  * One scene per transfer, even when several arrive in the same poll. Rebuild

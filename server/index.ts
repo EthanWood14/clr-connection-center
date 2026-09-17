@@ -3,14 +3,12 @@ import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { registerRoutes, flushPendingEmails } from "./routes";
+import { installTvDayRaceFeedEnrichment } from "./tv-day-race-feed";
+import * as storageExtra from "./storage";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startRetailBonzoShotgunWatcher } from "./retail-bonzo-shotgun-watcher";
 
-// ── Session secret check ──────────────────────────────────────────────────────
-// Enforced here at startup so a misconfigured production deploy fails fast
-// instead of silently using a default secret. The fallback remains in routes.ts
-// for dev convenience.
 const DEFAULT_SESSION_SECRET = "clr-secret-2026";
 if (process.env.NODE_ENV === "production") {
   const secret = process.env.SESSION_SECRET;
@@ -23,23 +21,17 @@ if (process.env.NODE_ENV === "production") {
 
 const app = express();
 const httpServer = createServer(app);
-
-// Trust Railway's reverse proxy so req.secure works correctly for cookie settings
 app.set("trust proxy", 1);
 
-// ── Security headers ──────────────────────────────────────────────────────────
-// Dialpad sends signed events as a compact JWT, not a JSON object. Parse only
-// this endpoint as text; the route verifies the signature before using it.
 app.use("/api/webhooks/dialpad-sms", express.text({ type: ["text/plain", "application/jwt", "application/octet-stream", "application/json"], limit: "256kb" }));
 
 app.use(
   helmet({
-    contentSecurityPolicy: false, // Vite handles this
+    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   }),
 );
 
-// ── Rate limiting ─────────────────────────────────────────────────────────────
 const rateLimitMessage = { error: "Too many requests, please try again later." };
 
 const loginLimiter = rateLimit({
@@ -58,9 +50,22 @@ const registerLimiter = rateLimit({
   message: rateLimitMessage,
 });
 
+// Office TVs + many desks can share one NAT IP; 200/min was tripping
+// "Too many requests" on normal use. Keep login/register tight; loosen general.
 const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 200,
+  max: 1200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: rateLimitMessage,
+  skip: (req) => /\/api\/tv(?:\/|$)/.test(req.originalUrl || req.url || ""),
+});
+
+// TV signage polls the feed ~every 10s and pages ~every 30s. Separate budget
+// so a busy floor NAT does not freeze the wall.
+const tvApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
   standardHeaders: true,
   legacyHeaders: false,
   message: rateLimitMessage,
@@ -69,6 +74,7 @@ const generalApiLimiter = rateLimit({
 app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/register", registerLimiter);
 app.use("/api/invite/accept", registerLimiter);
+app.use("/api/tv", tvApiLimiter);
 app.use("/api", generalApiLimiter);
 
 declare module "http" {
@@ -77,7 +83,6 @@ declare module "http" {
   }
 }
 
-// Ensure all /api/* responses are never cached by Railway's CDN
 app.use("/api", (_req, res, next) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   res.set("Surrogate-Control", "no-store");
@@ -102,7 +107,6 @@ export function log(message: string, source = "express") {
     second: "2-digit",
     hour12: true,
   });
-
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
@@ -110,20 +114,12 @@ app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
     capturedJsonResponse = bodyJson;
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
-
-  // Routes whose responses contain secrets/PII — never log their bodies.
-  // /api/training-test is here because its replies are one named person's
-  // per-question certification performance, and the review and insights bodies
-  // also carry the answer key. Logged, both would sit in log retention after
-  // every page open, readable by anyone with the logs and no login at all.
   const SENSITIVE_PATH = /\/credentials$|^\/api\/auth\b|^\/api\/checkin\b|^\/api\/lap\b|^\/api\/tv(?:\/|$)|^\/api\/training-test\b|\/import$|email-decision|welcome-login/;
-  // Field names that should be redacted if they appear in any logged body.
   const SENSITIVE_KEY = /password|secret|token|api[_-]?key|apikey|credential|bonzo|mailbox|resend/i;
   const redact = (v: any): any => {
     if (!v || typeof v !== "object") return v;
@@ -134,7 +130,6 @@ app.use((req, res, next) => {
     }
     return out;
   };
-
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
@@ -142,15 +137,14 @@ app.use((req, res, next) => {
       if (capturedJsonResponse && !SENSITIVE_PATH.test(path)) {
         logLine += ` :: ${JSON.stringify(redact(capturedJsonResponse))}`;
       }
-
       log(logLine);
     }
   });
-
   next();
 });
 
 (async () => {
+  installTvDayRaceFeedEnrichment(app, () => storageExtra.getRawSqlite());
   await registerRoutes(httpServer, app);
   // Retail pool seat is never on daily CLR assignments — own always-on poll.
   startRetailBonzoShotgunWatcher();
@@ -158,19 +152,11 @@ app.use((req, res, next) => {
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
     console.error("Internal Server Error:", err);
-
-    if (res.headersSent) {
-      return next(err);
-    }
-
+    if (res.headersSent) return next(err);
     return res.status(status).json({ error: message });
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
@@ -178,17 +164,11 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(
     {
       port,
       host: "0.0.0.0",
-      // reusePort is unsupported on Windows (listen throws ENOTSUP), so only
-      // enable it elsewhere (Linux prod keeps the exact same behavior).
       ...(process.platform !== "win32" ? { reusePort: true } : {}),
     },
     () => {
@@ -196,10 +176,6 @@ app.use((req, res, next) => {
     },
   );
 
-  // Graceful shutdown: emails are held for a short delay window before sending
-  // (see sendEmail in routes.ts). On a deploy/restart, flush anything still
-  // queued so it isn't silently dropped, then exit. Registering these handlers
-  // means WE own the exit, so always call process.exit after flushing.
   let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -207,7 +183,6 @@ app.use((req, res, next) => {
     log(`received ${signal} — flushing queued emails and shutting down`, "shutdown");
     try {
       const sends = flushPendingEmails();
-      // Bound the wait so we never hang past the platform's grace period.
       await Promise.race([
         Promise.allSettled(sends),
         new Promise((resolve) => setTimeout(resolve, 5000)),
@@ -216,7 +191,6 @@ app.use((req, res, next) => {
       console.error("[shutdown] flush failed:", e?.message ?? e);
     } finally {
       httpServer.close(() => process.exit(0));
-      // Fallback in case close() hangs on lingering connections.
       setTimeout(() => process.exit(0), 3000).unref();
     }
   };
