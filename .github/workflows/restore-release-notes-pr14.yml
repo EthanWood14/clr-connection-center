@@ -1,0 +1,70 @@
+name: restore-release-notes-pr14
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/retail-meta-shotgun-immediate]
+    paths:
+      - .github/workflows/restore-release-notes-pr14.yml
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/retail-meta-shotgun-immediate
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore shared/release-notes.ts from main + 4.119.2
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git show origin/main:shared/release-notes.ts > shared/release-notes.ts
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('shared/release-notes.ts')
+          main = p.read_text()
+          if 'LOAD_FROM_MCP' in main:
+              raise SystemExit('main release-notes is corrupted')
+          entry = '''  {
+    version: "4.119.2",
+    headline: "Chris Redoble Retail leads go straight to Shotgun.",
+    items: [
+      { text: "Any new lead assigned in Bonzo to the Chris Redoble Retail pool seat now publishes to Shotgun within seconds — no three-minute claim wait. Every pipeline on that seat is included.", audience: "everyone" },
+    ],
+  },
+
+'''
+          needle = 'export const RELEASE_NOTES: ReleaseNote[] = [\n'
+          idx = main.find(needle)
+          if idx < 0:
+              raise SystemExit('RELEASE_NOTES array not found')
+          insert_at = idx + len(needle)
+          rest = main[insert_at:]
+          if rest.lstrip().startswith('{\n    version: "4.119.2"'):
+              content = main
+              print('4.119.2 already present')
+          else:
+              content = main[:insert_at] + entry + rest
+              print('prepended 4.119.2')
+          p.write_text(content)
+          print('bytes', p.stat().st_size)
+          PY
+
+      - name: Commit and push if changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add shared/release-notes.ts
+          if git diff --cached --quiet; then
+            echo 'No release-notes changes to commit'
+            exit 0
+          fi
+          git commit -m "docs(release-notes): restore notes and add 4.119.2 Chris Redoble Retail Shotgun"
+          git push origin HEAD:feature/retail-meta-shotgun-immediate
