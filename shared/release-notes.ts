@@ -1,1 +1,1 @@
-PLACEHOLDER_LOAD_FROM_/workspace/agent-tools/release-notes-updated.ts
+@/workspace/agent-tools/release-notes-updated.ts
