@@ -1,1 +1,1946 @@
-LOAD_FROM_MCP_TOOL_ARGS_FILE
+/**
+ * What changed, in each release, in language the people using C3 will
+ * recognise — not commit messages.
+ *
+ * The update popup reads from here, so shipping a version without an entry
+ * means telling everyone "something changed" and nothing more. A test asserts
+ * the CURRENT APP_VERSION has notes, which is what keeps this honest: the
+ * release fails before it reaches anyone.
+ *
+ * Guidelines that keep these useful:
+ * - Say what a person can now DO, not what was refactored.
+ * - Name the screen, so they know where to look.
+ * - Include fixes when the old behaviour was visibly wrong; skip pure plumbing.
+ * - `audience` records who a change is FOR. It no longer hides anything by role:
+ *   everyone sees every note regardless of manager status, because knowing what
+ *   changed in the tool you use should not depend on your permissions. The tag
+ *   is kept because it still documents intent, and because the portal split
+ *   below is a genuinely different axis.
+ */
+
+export type ReleaseAudience = "everyone" | "manager" | "lap";
+
+export type ReleaseNote = {
+  version: string;
+  /** One line answering "why should I refresh?" */
+  headline: string;
+  items: { text: string; audience?: ReleaseAudience }[];
+};
+
+export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "4.119.2",
+    headline: "Chris Redoble Retail leads go straight to Shotgun.",
+    items: [
+      { text: "Any new lead assigned in Bonzo to the Chris Redoble Retail pool seat now publishes to Shotgun within seconds — no three-minute claim wait. Every pipeline on that seat is included.", audience: "everyone" },
+    ],
+  },
+
+  {
+    version: "4.119.1",
+    headline: "Calling a new lead keeps it out of Shotgun.",
+    items: [
+      { text: "If you hit Call (or Got it) on a new assigned-LO lead just as the three-minute window ended, C3 could still publish that lead into Shotgun while your claim landed — so you were dialing a lead another CLR was being offered. Escalation now takes the row before creating a Shotgun lead, so a successful claim always wins.", audience: "everyone" },
+    ],
+  },
+
+  {
+    version: "4.118.0",
+    headline: "The corner race never restarts, the skyline is a city, and the garage closes after 15 minutes a day.",
+    items: [
+      { text: "Office TV: the race in the corner no longer starts over. It used to rebuild itself every few minutes, which is what made the wall blink. A transfer now moves the cars to their new places on the road they are already on, and only a new name on the board builds a fresh race.", audience: "everyone" },
+      { text: "Office TV: forty-five camera angles instead of thirty, all of them trailing the car. Four and a half minutes of them, so three minutes of watching never gets back to where it started.", audience: "everyone" },
+      { text: "Office TV: whoever is in front gets the camera turned round. There is nothing up the road ahead of the leader, so the shot swings in front of them and looks back at everybody chasing.", audience: "everyone" },
+      { text: "Office TV: the horizon is a city at dusk now, towers and lit windows, instead of a ring of green hills.", audience: "everyone" },
+      { text: "Office TV: the cars look like cars. Lacquered paint that catches the light, an engine cover and fin behind the driver, mirrors, wing endplates, a diffuser and an exhaust, and wheels you can actually see turning.", audience: "everyone" },
+      { text: "My TV Car: everyone now gets 15 minutes a day in the garage. The page shows how much you have left and locks when it runs out, until the next morning. Your saved car keeps racing either way, and you can always look at it. Time only counts while the tab is actually in front of you.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.117.0",
+    headline: "A transfer's race is smooth and eighteen seconds long, and the grandstands stay put.",
+    items: [
+      { text: "The race you get for a transfer was capped at about thirty frames a second, which is what made the camera judder. It now draws every frame the screen offers, and it runs for eighteen seconds instead of twelve — the same flight, walked rather than rushed.", audience: "everyone" },
+      { text: "The grandstands no longer dissolve. Two things were eating them: a crowd prop on the lens that fades two seconds into every run, and the scenery clipping that hides anything between the camera and the cars. Both belong to the transfer race and are off in the corner, whose cameras are placed with a clear view on purpose.", audience: "everyone" },
+      { text: "The corner no longer follows the leader the whole way. It moves down the running order every half minute, so a three-minute broadcast features six different CLRs.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.116.0",
+    headline: "The corner race is a three-minute broadcast: thirty camera positions, and three names on screen.",
+    items: [
+      { text: "Office TV: the corner now cuts through thirty camera positions over three minutes — behind the car, on its roof, directly overhead, alongside, head-on, and cameras bolted to the apex, the outside line and the grass that simply watch the cars sweep past. It used to be one slow sweep.", audience: "everyone" },
+      { text: "Three names on screen at a time instead of one: the car being followed and the two nearest it, so you can see who is racing whom. They show for seven seconds in every eighteen.", audience: "everyone" },
+      { text: "The corner no longer restarts every time something cuts in over the wall. A transfer, a new lead or the hourly race used to reset its shot back to the beginning, which is why it looked like a short loop.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.115.3",
+    headline: "The corner race follows one car up close instead of labelling all of them.",
+    items: [
+      { text: "Office TV: the live corner was putting a nameplate on every car at once, which on a panel that size was unreadable. It now holds one car close up and flashes just that name for a few seconds now and then. Each two-minute shot follows the next CLR down the order, so it works through the whole floor over a morning.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.115.2",
+    headline: "The corner race is one two-minute shot now, not the same twelve seconds over and over.",
+    items: [
+      { text: "Office TV: the live corner used to restart every twelve seconds, which nagged at the room. It is now a single unbroken two-minute flight through its thirty-odd angles before it starts again, while the cars lap at their own speed throughout. The twelve-second race a transfer earns is unchanged.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.115.1",
+    headline: "The corner race says who is winning, and the camera flies through thirty angles instead of eight.",
+    items: [
+      { text: "Office TV: the live corner was being pushed off the right of the screen by the page dots, so the bottom of the wall was an empty band. It now has its own space and shows the top three beside the cars with the leader's margin, rather than cars going round with nothing to read.", audience: "everyone" },
+      { text: "The race camera still never cuts, but it now flies through more than thirty angles across the twelve seconds instead of eight, swinging around the cars rather than gliding down one line.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.115.0",
+    headline: "The race never stops: live in the corner all day, and the whole field on the hour.",
+    items: [
+      { text: "Office TV: the race now runs all day in the corner of the bottom strip, with the field in its current order. It sits in the strip rather than over a page, so nothing it shows covers something somebody was reading.", audience: "everyone" },
+      { text: "At the top of every hour, between 8 and 6, the whole day's race takes the wall for twelve seconds — the full field as it stands, not one person's transfer. It plays once an hour however many times the board reloads.", audience: "everyone" },
+      { text: "Being well clear now looks like it. Cars used to be spaced by the biggest gap on the board, so a leader four ahead sat where a leader one ahead did; every transfer of the gap is real track now, and the tail of the field still fits on the corner.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.114.1",
+    headline: "The pace page on the TV is a readable trend line now, not ten bars of the same height.",
+    items: [
+      { text: "Office TV: \"Our pace\" is drawn as a line on a real scale, with gridlines you can read a number off and the four-week average marked across it. The first version sized ten bars against the tallest week, and since every week lands between 2.9 and 4.9 they all came out looking the same height. Week names no longer run off the edge either.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.114.0",
+    headline: "The wall now shows our pace over ten weeks, and Shotgun stops punishing a missed offer.",
+    items: [
+      { text: "Office TV: a new page charts transfers per CLR per day worked for the last ten weeks, so the trend survives a roster that changes size. The week in progress is marked in gold and today counts as half a day, and the headline is the average of the last four finished weeks.", audience: "everyone" },
+      { text: "Missing a Shotgun offer no longer takes you out of the rotation. The lead moves straight to the next CLR, you are told it moved, and the next one still comes to you. Only closing C3 takes you out.", audience: "everyone" },
+      { text: "You can no longer take yourself out of the Shotgun rotation while C3 is open — the badge just says you are in it. Close C3 when you are done for the day, or ask a manager.", audience: "everyone" },
+      { text: "The Shotgun confirm window is ten seconds, down from twenty. The card is full-screen with a chime, and a lead spending twenty seconds on somebody who is not going to take it is twenty seconds nobody is calling it.", audience: "everyone" },
+    ],
+  },
+  { version: "4.113.15", headline: "New-lead and Shotgun calls open Dialpad directly.", items: [
+    { text: "Call buttons in new-lead alerts, Shotgun offers and claimed Shotgun leads now use Dialpad's launcher instead of your computer's generic phone handler. C3 stays open so you can finish the lead's result.", audience: "everyone" },
+    { text: "The lead is secured before its number is sent to Dialpad. Failed claims never launch a call, existing verification checks stay in place, and an Open Dialpad retry link appears if the browser blocks the launch tab.", audience: "everyone" },
+  ] },
+  { version: "4.113.14", headline: "A fresh Transfer Scorecard every two hours.", items: [
+    { text: "Managers receive a today-so-far Transfer Scorecard at 8 AM, 10 AM, noon, 2 PM, 4 PM and 6 PM Pacific, Monday through Friday. Each snapshot is time-stamped, including the first report before activity begins.", audience: "manager" },
+    { text: "Configured manager-email recipients are included alongside active managers. The separate mid-week and end-of-week summaries continue unchanged.", audience: "manager" },
+  ] },
+  { version: "4.113.13", headline: "From the grandstands to the infield: fly through the TV race.", items: [
+    { text: "The race camera starts from a fan's grandstand view, sweeps over the cars into a drone shot, then drops down into the infield grass. The movement is continuous, with gentle banking and a clear view of the real overtake.", audience: "everyone" },
+    { text: "A detailed grass foreground and opening grandstand frame bring the camera closer to the action. Car skins, names, exact transfer totals and ties are unchanged; reduced motion keeps a steady view.", audience: "everyone" },
+  ] },
+  { version: "4.113.12", headline: "Back at trackside: the TV race gets broadcast camera work.", items: [
+    { text: "The TV race is filmed from lower trackside angles again, with an establishing view, a closer uninterrupted battle shot, and an exit follow-through. Compact broadcast graphics leave more room for the cars and show the pass status as it actually happens.", audience: "everyone" },
+    { text: "Cars visibly steer into the corner and passing lane, with restrained suspension and body movement. Names, custom skins, real transfer totals, ties, and earned overtakes are preserved; reduced-motion displays keep a still view.", audience: "everyone" },
+  ] },
+  { version: "4.113.11", headline: "Build your own pixel car skin in the WCL garage.", items: [
+    { text: "Open Advanced Settings → Personal → My TV Car for the new Pixel skin studio. Paint the top, sides, nose, rear, and wings with a 16-color palette, pencil, fill, eraser, mirror painting, and undo/redo. Rotate a live 3D preview of the same car used on the TV track.", audience: "everyone" },
+    { text: "Start from racing stripes, checkerboard, or flames, then make the design your own. Import/export WCL car-skin PNG templates or editable skin files. Saving puts the skin on your TV car without changing transfers, speed, rankings, or your saved picture wrap.", audience: "everyone" },
+  ] },
+  { version: "4.113.10", headline: "A clear, close-up TV race after every transfer — with Ethan on the track.", items: [
+    { text: "The Office TV now has a Play race button. Run a preview of the current field on demand without logging a transfer, changing scores, or interrupting a real celebration.", audience: "everyone" },
+    { text: "Every new transfer now gets a full-team TV race. The camera follows the scoring car and the rivals it is catching through a visible side-by-side pass, with a highlighted car, position change and live move captions. Tied totals finish alongside, and multiple transfers advance the race one result at a time.", audience: "everyone" },
+    { text: "Ethan Wood now has his own car on the TV track and can customize its colors or picture wrap in Advanced Settings → Personal → My TV Car. This race-only addition does not change CLR averages, account roles or transfer credit.", audience: "everyone" },
+    { text: "Editing the details of an existing transfer no longer retriggers its TV celebration. A newly logged transfer or appointment converted into a transfer still gets its race.", audience: "everyone" },
+  ] },
+  { version: "4.113.9", headline: "The full transfer form when editing — and custom picture wraps for your car.", items: [
+    { text: "Editing a saved transfer now opens the same Qualification and Info Gathering form used to record it. Saved answers and N/A choices are filled in, historical notes are preserved, and changes update the existing transfer's write-up score and stats without adding a transfer or changing its original date or CLR credit. A newer edit is protected from being overwritten.", audience: "everyone" },
+    { text: "In Advanced Settings → Personal → My TV Car, upload a photo, logo, or pattern as a custom wrap. Preview it on your car, replace or remove it, and keep your paint and stripes. Your picture appears on the TV's 3D race car without changing scores or standings.", audience: "everyone" },
+  ] },
+  { version: "4.113.8", headline: "Your TV car, your colors — and harder-to-miss assigned leads.", items: [
+    { text: "CLRs can open Advanced Settings → Personal → My TV Car to choose body and accent colors plus classic, twin-stripe, or solid paint. Preview and save your design for the TV race; scores, speed and standings do not change.", audience: "everyone" },
+    { text: "New leads for your assigned LOs now show a prominent repeating alert with the Shotgun chime. A 10-second snooze replaces permanent dismissal, and unresolved alerts return after reload. Claiming or calling stops the reminders. The assigned CLR's 45-second head start and three-minute claim deadline are also enforced on the server.", audience: "everyone" },
+  ] },
+  { version: "4.113.7", headline: "Faster TV racing, every car named, and real overtakes.", items: [{ text: "Cars run five times faster with name tags on every visible car. When transfer standings change, scorers pull out and pass the people they overtook; catching a tie brings cars alongside instead. Actual scores and ties stay unchanged, and reduced-motion displays keep a still view.", audience: "everyone" }] },
+  { version: "4.113.6", headline: "The TV race is now rendered in real 3D.", items: [{ text: "A rebuilt trackside race uses modeled cars, spinning wheels, lighting, shadows, a banked stadium corner and a close camera pass. The running-order tower preserves actual transfer credits and ties. The scene preloads only on the TV, respects reduced motion, and retains standings when 3D is unavailable.", audience: "everyone" }] },
+  { version: "4.113.5", headline: "Watch the team race from the grandstand.", items: [{ text: "The TV race now brings cars around a sweeping corner toward a trackside spectator camera, with cheering fans, flags, raised car bodies and live standings. Transfer totals still determine the order.", audience: "everyone" }] },
+  {
+    version: "4.113.4",
+    headline: "The TV shows which LOA receives Chris's transfers.",
+    items: [{ text: "Who is feeding the LOs & LOAs now splits Chris Redoble's transfers by the recorded LOA, while retaining all other LOs and Elleine's share. Transfers without a recorded LOA stay visible in an explicit unassigned row; totals are unchanged.", audience: "everyone" }, { text: "The full-team race now uses one perspective track with raised cars, a moving camera, real transfer gaps and side-by-side ties, plus a full race-order panel.", audience: "everyone" }],
+  },
+  {
+    version: "4.113.3",
+    headline: "The TV can play a one-time team race on request.",
+    items: [{ text: "A short-lived operator playback cue can show the full-team race without logging a transfer or changing any statistics.", audience: "manager" }],
+  },
+  {
+    version: "4.113.2",
+    headline: "Calling a live lead claims it first.",
+    items: [
+      { text: "Call on a new-lead alert now claims the lead before opening your phone app, so it does not go to another CLR while you dial. Shotgun offer phone buttons also confirm first. If somebody else already has it, the call does not open and C3 shows the error.", audience: "everyone" },
+      { text: "On roughly 15% of transfers, the Office TV follows the celebration with a full-team race: every CLR on the board has a moving car and their daily transfer count. Reduced-motion screens show a still version.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.113.1",
+    headline: "Proof that a CLR taken off the Shotgun rotation is really never offered a lead.",
+    items: [
+      { text: "No change on screen. The rotation is now tested against a copy of the real user table, including the off-the-rotation switch, so \"Elleine is not offered leads\" is checked on every build rather than trusted.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.113.0",
+    headline: "An unclaimed new lead now goes to the whole floor after 45 seconds instead of sitting with one person for three minutes.",
+    items: [
+      { text: "New leads: the CLR assigned to that loan officer still gets it first, alone, for forty-five seconds. After that the card appears for every CLR with C3 open, marked \"Unclaimed lead — anyone can take it\", until the three minutes are up and it goes to Shotgun. Yesterday one person was the only one who could see each lead, so a lead landing mid-call simply timed out.", audience: "everyone" },
+      { text: "Transfer Scorecard: Lead grab % joins Lead grab, so every CLR is measured. Lead grab is how fast they took the leads they took; Lead grab % is how many of the leads they were shown they took at all.", audience: "manager" },
+      { text: "Elleine is off the Shotgun rotation and will not be offered leads or shown the floor-wide card. Anyone can be taken off or put back the same way.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.112.0",
+    headline: "Everyone's Dialpad texts count again, and the scorecard times how fast a CLR grabs their own LO's new lead.",
+    items: [
+      { text: "Dialpad texts were credited through a hand-made agent list that only ever had two people on it, so DP Texts and Messages showed Matt Lane and Chris Bermudez and nobody else — Skyler, Jacqueline, Justin, Linda and Adrienne all read zero despite sending hundreds. Texts are now matched to the sender by name, the same way calls always were, and the back catalogue has been re-credited.", audience: "manager" },
+      { text: "New Transfer Scorecard stat, Lead grab: the average time from a new lead landing on one of your assigned loan officers to you claiming it. Only leads taken inside the three-minute window count — one that ran out into Shotgun is not counted here. Lower is better.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.111.0",
+    headline: "Dialpad texts land on the right day, and the scorecard shows how often each CLR answers a Shotgun offer.",
+    items: [
+      { text: "Transfer Scorecard: Dialpad texts were filed by the UTC date, so every text sent after 5 PM was counted on the NEXT day and \"Today\" was short by the whole evening. Texts now belong to their Pacific day, and past texts have been re-filed the same way, so DP Texts and Messages agree with what the floor actually sent.", audience: "manager" },
+      { text: "Two new Transfer Scorecard stats: SG Accept (of the Shotgun offers shown to a CLR in the range, the share they accepted) and SG Respond (the share they answered at all — accepted or passed — before the twenty seconds ran out). Hover a cell for the counts. A dash means they were offered nothing.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.110.0",
+    headline: "Transfer Tournament wrapped — Elleine Asuncion took it with 12.",
+    items: [
+      { text: "Yesterday's Transfer Tournament is over: Elleine Asuncion won with 12 transfers between 12:30 and 5:30, ahead of Matthew Rosas (7) and Skyler Griffin (5). The Tournament tab is off the Dashboard and out of the sidebar; the final board stays at /tournament for the record.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.109.0",
+    headline: "Transfer Tournament: who logs the most transfers between 12:30 and 5:30 today.",
+    items: [
+      { text: "New Tournament tab on the Dashboard (and a full-screen board at /tournament for the wall): every CLR ranked by transfers logged between 12:30 and 5:30 PM Pacific today, with a countdown to the start, a live clock to the finish, a podium for the top three, and each transfer listed by time and borrower. It updates every ten seconds.", audience: "everyone" },
+      { text: "Scoring matches the leaderboard: a transfer counts the moment it is logged in C3, and a Shotgun transfer is half to whoever put it up and half to whoever took it. A tie goes to whoever scored first.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.108.0",
+    headline: "Log the whole transfer or appointment from the Shotgun result — and a 30-second warning before a claimed lead goes back.",
+    items: [
+      { text: "Shotgun result: choosing \"Yes — log a transfer or appointment\" now opens the full Outcomes form right there — loan officer, Direct or Appointment, lead source, the qualification checklist, borrower details, appointment date and time, Bulk Texter and helper questions, and the Bonzo write-up. Saving it creates the real transfer or appointment and finishes the lead in one go, with the borrower's name and phone already filled in.", audience: "everyone" },
+      { text: "A claimed Shotgun lead is never released without warning. Thirty seconds before the three-minute mark the \"Still on this lead?\" card appears with the seconds counting down; \"I'm here — keep it\" keeps it. No answer by three minutes and it goes back to the rotation, as before.", audience: "everyone" },
+      { text: "The new-lead card for your assigned loan officer turns into a warning in its last thirty seconds: \"Going to Shotgun in 30s — claim it now to keep it.\"", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.107.0",
+    headline: "Hawaii is back — Chris Redoble and Nathan Coutino route there again.",
+    items: [
+      { text: "Hawaii is no longer a no-licence state. It was made one on 1 September, which took both Hawaii-licensed loan officers out of routing; Christopher Redoble and Nathan Coutino have their Hawaii licence back on their profiles and Hawaii leads go to them again. Illinois, Massachusetts and New York stay no-licence.", audience: "everyone" },
+      { text: "On the licensing map Hawaii is painted by its LO count again rather than flat red.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.106.0",
+    headline: "Completing an appointment as a transfer no longer wipes the form mid-way.",
+    items: [
+      { text: "On Upcoming Appointments, \"Complete as transfer\" opens the full transfer form prefilled from the appointment. Anything you typed into it could vanish part-way through — the page quietly refreshed itself (switching back from Bonzo was enough) and the form reset to the prefill. It now keeps what you have typed until you save or close it.", audience: "everyone" },
+      { text: "The same guard is on the Edit Appointment and Edit Outcome dialogs: a list refresh behind an open dialog no longer re-seeds it.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.105.0",
+    headline: "Log a transfer straight from the Bonzo page.",
+    items: [
+      { text: "The Chrome extension has a second button on every Bonzo prospect: \"📋 Log result in C3\". It opens a panel with everything Input Results asks — result, loan officer (your assigned ones first), lead source, the qualification questions and the full lead card — and logs it exactly as C3 would: Bonzo notes, LAP, the TV and the reports all see it the same way. No switching tabs mid-call.", audience: "everyone" },
+      { text: "Reload the extension to pick it up: it is version 1.4.0, and the Shotgun page has a fresh download. Borrower name and number are re-read from Bonzo by C3 when you submit, so they cannot be mistyped.", audience: "everyone" },
+      { text: "The questions in the panel come from C3 itself, so a change to the lead card in C3 shows up in the extension the next time it opens — nothing to reinstall for that.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.104.0",
+    headline: "CLRs: notifications are required now — one click turns them on.",
+    items: [
+      { text: "New leads for your LOs and Shotgun offers reach you by notification when C3 is not the tab in front — which is most of the day. So for CLRs the \"Turn on notifications\" prompt stays until it is on: \"Later\" only puts it off for a few hours, and there is no \"Don't ask again\". One click, allow, done.", audience: "everyone" },
+      { text: "If your browser has notifications blocked, the prompt now tells you how to unblock them (the lock icon next to the address bar → Notifications → Allow) instead of silently giving up.", audience: "everyone" },
+      { text: "Everyone who had dismissed the old prompt sees it once more. Managers and non-CLRs keep the gentler version.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.103.0",
+    headline: "A new lead for your LO now works like a Shotgun lead.",
+    items: [
+      { text: "When a lead lands on one of your assigned loan officers you get the card, a chime, a bell notification and a push — with a big Call button (tap to dial) and a \"Got it — I'm calling\" claim. You have three minutes. If nobody claims it, it goes into the Shotgun rotation, where the normal twenty-second offer moves it from CLR to CLR until somebody takes it.", audience: "everyone" },
+      { text: "The card and its chime now keep working while C3 is a background tab, and the Shotgun offer card does too — before today both went quiet the moment you were in Bonzo. The phone number on a Shotgun offer is tap-to-call as well.", audience: "everyone" },
+      { text: "A lead that goes to Shotgun this way is published under an admin account with the LO's name in the source and a note saying it went unclaimed. Managers see it on the Shotgun board like any other lead.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.102.0",
+    headline: "New-lead alerts for your assigned LOs arrive in seconds, not most of a minute.",
+    items: [
+      { text: "The bottom-left alert for a new lead on one of your assigned loan officers now shows up within about ten seconds of the lead landing in Bonzo. It used to be up to forty.", audience: "everyone" },
+      { text: "Done without adding load on LeadVault: C3 now asks it once for the whole floor's loan officers every five seconds and hands each person their slice, instead of one request per CLR.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.101.0",
+    headline: "Claimed a Shotgun lead? Three minutes later C3 checks you're still on it.",
+    items: [
+      { text: "Three minutes after you claim a Shotgun lead, a card appears on whatever page you are on: \"Still on this lead?\" with a one-minute countdown. One click keeps it. If nobody answers, the lead goes back into the rotation for the next ready CLR, and you get a notification saying so.", audience: "everyone" },
+      { text: "You are asked once per lead — after you have said you're here, the rest of the write-up is yours. Letting it lapse does not take you out of the rotation; it only returns that lead.", audience: "everyone" },
+      { text: "This closes the hole where a claimed lead could sit with someone who had stepped away while the rotation skipped them.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.100.0",
+    headline: "A manager can leave someone out of the morning check-in email for a day.",
+    items: [
+      { text: "When excusing a late ahead of time, a manager can also keep that person out of that day's check-in email entirely — not listed as late, not listed as excused, simply not in it. The excuse itself still applies to the check-in and the 90-day count as before.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.99.0",
+    headline: "An excused late is not a late — and it can be excused ahead of time.",
+    items: [
+      { text: "The morning check-in email lists an excused late under Excused, with the reason, instead of in the late list with a tag. The \"N late\" in the subject line no longer counts them.", audience: "manager" },
+      { text: "A manager can excuse a CLR's late for a day before they have checked in. The excuse attaches itself to the check-in the moment it is submitted, so the digest and the late-limit alert never see it. Until the check-in arrives the person shows as excused, not missing.", audience: "manager" },
+      { text: "If a manager excuses your late ahead of time you get a notification saying so; it does not count toward your 90-day total.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.98.0",
+    headline: "An appointment's full write-up now reaches Bonzo.",
+    items: [
+      { text: "When you log an appointment, everything you gathered on the lead card — credit, address, home value, balance and rate, cash needed, income — now lands on the borrower's Bonzo record as a note, laid out one field per line. Before, only the short Notes box went across; the transfer note already did this, the appointment note did not.", audience: "everyone" },
+      { text: "Found on Mike Kelly's 14 September appointment, which reached Bonzo as \"asked about the rate on the HELOC\" and nothing else. His record has been completed by hand.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.97.0",
+    headline: "Everyone can connect the Chrome extension now.",
+    items: [
+      { text: "The \"Get the Chrome extension\" button and the personal connection key on the Shotgun page are available to every C3 login, not only people who can publish leads. Since the extension now counts the calls you place inside Bonzo, everybody needs to be able to connect it — being logged in to C3 in the same Chrome is normally enough, and the key is the fallback if the popup says you are not connected.", audience: "everyone" },
+      { text: "Publishing to Shotgun is unchanged: it still needs publish access, granted in Settings.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.96.0",
+    headline: "Calls you place inside Bonzo are counted — and counted to you.",
+    items: [
+      { text: "The Shotgun extension now notices when you place a call from inside Bonzo and reports it to C3 under your name. Those calls never went through Dialpad, so until today they counted for nobody. They now sit in your calls on the dashboard, the EOD report (\"+ N placed inside Bonzo\" under Dialpad Calls) and everywhere else calls are shown.", audience: "everyone" },
+      { text: "Reload the extension in Chrome to pick this up: it is version 1.3.0, and the Shotgun page has a fresh download. The extension popup shows how many Bonzo calls have been counted for you today.", audience: "everyone" },
+      { text: "Managers: the exact shape Bonzo uses to place a call is being confirmed from real traffic over the first day or two. Every call-shaped request the extensions see is recorded; only the strict ones count. Ask Ethan for the observed list if the numbers look low.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.95.0",
+    headline: "The calling script has a Vintage lead option.",
+    items: [
+      { text: "Calling a lead whose inquiry is months old? The first choice on the Calling Script is now \"Vintage lead (months old)\". It swaps in an opener built for them: \"A couple of months ago you were looking at taking out some cash via a HELOC or refinancing? What made you decide not to move in that direction?\"", audience: "everyone" },
+      { text: "Whatever they answer — still want the cash, rates, later, selling, another lender, wrong person — takes you into the same branches the script already had, so the rest of the call reads exactly as before.", audience: "everyone" },
+      { text: "It was added to the live default script rather than by replacing it, so any edits made to the default are kept. Personal copies of the script are not changed — clone the default again if you want the new opener in yours.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.94.0",
+    headline: "Calls and texts are counted by the phone system now, not typed in.",
+    items: [
+      { text: "From today, your calls are what Dialpad and CallTools recorded and your texts are what Dialpad recorded. The \"Additional Calls\" and \"Additional Texts\" boxes are gone from the EOD report, the morning \"log yesterday's calls\" screen no longer appears, and the Log Calls button on the dashboard is gone — there is nothing to type.", audience: "everyone" },
+      { text: "Every screen that shows calls or messages — the dashboard, How we're doing, the leaderboard, CLR profiles, the manager digest and the EOD history — reads the counted figure. Days before today are left exactly as they were filed.", audience: "manager" },
+      { text: "Expect the numbers to be smaller than you are used to. On the 11th the team typed in 1,146 calls and 7,743 texts against 423 calls and 1,130 texts actually seen by Dialpad. The smaller number is the real one.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.93.0",
+    headline: "Your Dialpad calls show up on the EOD within a couple of minutes.",
+    items: [
+      { text: "The Dialpad calls tile on the EOD report used to update once an hour, so a call you made at 9:20 did not appear until 10:15. It now checks for new calls whenever you open the form or come back to it, and the report you file at the end of the day carries the real count for the whole shift.", audience: "everyone" },
+      { text: "Calls made after 5pm were being filed under the next day, because they were grouped by a clock several hours ahead of the office. That is fixed at the source, so the last hours of a shift land on the right day.", audience: "everyone" },
+      { text: "Past days are settled and stay exactly as they were filed. Only today is pulled live.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.92.2",
+    headline: "New lead alerts arrive in the bottom-left corner.",
+    items: [
+      { text: "While C3 is open, fresh leads for today's assigned loan officers pop up on any C3 page. Dismiss an alert or open your call list without losing your place.", audience: "everyone" },
+      { text: "Shotgun offers now appear in a bottom-left card instead of taking over the screen. The countdown, chime, confirmation and Pass action still work as before.", audience: "everyone" },
+      { text: "Repeated checks and page refreshes do not replay the same assigned-LO alert. Older leads stay in your call list without creating a backlog of pop-ups.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.92.1",
+    headline: "Correct a transfer's information after logging it.",
+    items: [
+      { text: "Use the pencil next to your outcome in Input Results to edit the borrower, phone, lead source, transfer write-up, qualification notes and next steps. The pencil stays visible now.", audience: "everyone" },
+      { text: "Saving recalculates the write-up score from the corrected information without logging another transfer. Keep qualification answers on their labeled lines so they are counted.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.92.0",
+    headline: "Your outcomes get today's date, not your laptop's idea of it.",
+    items: [
+      { text: "The date C3 puts on an outcome now comes from the timezone set on your profile instead of the clock on the device you are using. If those agree, nothing changes for you.", audience: "everyone" },
+      { text: "They did not agree for anyone working from another timezone. Elleine's whole shift was being stamped with the next day's date, so the office TV showed her at zero transfers every day and her work turned up a day late. That is fixed going forward.", audience: "manager" },
+      { text: "The 7pm rollover is unchanged — it just reads the right clock now.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.91.0",
+    headline: "Lead source is a sharper question now.",
+    items: [
+      { text: "The lead source list on Input Results and the calling script is now: Retail (iLeads), Retail (Meta), CallTools, Single Dialing (New), Single Dialing (Responded), Single Dialing (Other), and Bulk Texting.", audience: "everyone" },
+      { text: "Mojo is off the list — it had never been picked once.", audience: "everyone" },
+      { text: "Older answers still count. \"BulkTexts\" and \"Responded\" are treated as the same thing as their new names, so the office TV shows one line per source rather than two. \"Retail\" and \"Single Dialing\" from before the split stay under their own names, because nothing in those records says which half they belong to and guessing would be worse than leaving them.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.90.0",
+    headline: "A read-only numbers feed, for tooling rather than people.",
+    items: [
+      { text: "C3 can now hand its team statistics — transfers by week and by month, per CLR, with Elleine reported separately — to an outside tool over a locked-down read-only feed. Nothing in it identifies a borrower: no names, numbers, addresses or write-up text, only counts.", audience: "manager" },
+      { text: "It is off unless a token is configured, refuses anything else, is rate limited, and every read is written to the audit log.", audience: "manager" },
+      { text: "Nothing changed on any screen.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.89.0",
+    headline: "Input Results keeps what you typed.",
+    items: [
+      { text: "The Log Outcome form now saves as you go. A refresh, a stray Back, a phone locking or an update reloading the tab no longer throws away a half-finished write-up — reopen it and everything is still there, with a line at the top saying it was picked up where you left off.", audience: "everyone" },
+      { text: "There is a Start fresh button next to that line if you would rather begin again, and logging the outcome or pressing Log & next clears it — one call's details can never land on the next.", audience: "everyone" },
+      { text: "What you had typed is only offered back on the same day, and only to you.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.88.0",
+    headline: "Rhode Island is W2-only; Connecticut and Maine are fine.",
+    items: [
+      { text: "Rhode Island now shows as W2-only on the state map. Connecticut stays an ordinary state and Maine is unchanged. Nobody's licences were touched — the thirteen loan officers licensed in Rhode Island keep it.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.87.0",
+    headline: "The state map matches the licensing map.",
+    items: [
+      { text: "Louisiana and Nevada are now marked W2-only, and Arkansas is not. That brings the map in line with the WCL licensing map — nobody's licences changed, only how those states are labelled.", audience: "everyone" },
+      { text: "Maryland stays an ordinary state, as asked earlier today, and Hawaii stays on the no-licence list.", audience: "everyone" },
+      { text: "Connecticut, Rhode Island and Maine were left alone. The licensing map appears to shade them differently, but thirteen loan officers are licensed in Rhode Island and six in Maine, so the two do not agree and a wrong guess there is the expensive kind.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.86.0",
+    headline: "Maryland is an ordinary state again, and assistants get their own transfer table.",
+    items: [
+      { text: "Maryland is no longer W2-only. It shows as a normal state on the map, anyone can be listed there, and Chris has been added back to it.", audience: "everyone" },
+      { text: "Transfers by loan officer now has a second table beside it for LO assistants, with the same Elleine / everyone-else split and the same four time ranges.", audience: "manager" },
+      { text: "The two tables overlap on purpose — a transfer to an assistant is also a transfer to their loan officer — so the page says not to add them together.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.85.0",
+    headline: "Replying to a C3 email can go somewhere real.",
+    items: [
+      { text: "C3 sends from reports@westcapitallending.center, which has no mailbox — so pressing Reply or Reply-All on a digest came back as a delivery failure from Microsoft, with the whole original header block attached, to everyone on the thread. There is now a \"Replies go to\" address in Settings, and every C3 email carries it.", audience: "manager" },
+      { text: "Leave it empty and nothing changes. Set it and replies land on a real person instead of bouncing.", audience: "manager" },
+      { text: "The LAP and LOP portals already had their own reply address and keep it — their mail still reads as theirs.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.84.0",
+    headline: "The office TV now shows who is feeding the loan officers.",
+    items: [
+      { text: "New wall page, straight after \"Who needs transfers\": every loan officer's transfers this month, with gold for Elleine and blue for everyone else in one divided bar. Today, this week, this month and all time run along the bottom.", audience: "everyone" },
+      { text: "It sits next to the page that says who is short on purpose — that one names who needs feeding, this one names who is doing the feeding.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.83.0",
+    headline: "How many transfers each loan officer got — and how much of it was Elleine.",
+    items: [
+      { text: "New table on the Advanced Dashboard: transfers per loan officer for today, this week, this month and all time, counted twice over — once for Elleine, once for everyone else. Each row has a two-colour bar so you can see at a glance which LOs are being fed mostly by one person.", audience: "manager" },
+      { text: "Whole transfers to the LO who received them, split by who logged the call — a shotgun lead shared between two CLRs is still one borrower who reached that LO.", audience: "manager" },
+      { text: "The helper's name comes from the setting, so if the person in that seat changes, change the name in Settings and the table follows.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.82.0",
+    headline: "Refresh the Meta numbers without waiting half an hour.",
+    items: [
+      { text: "The Meta conversion card on the Advanced Dashboard has a Refresh button. Those numbers come from LeadVault through a thirty-minute cache, so until now neither the page's Refresh nor the minute-by-minute poll could show you something you had just changed in Bonzo. This one goes and asks.", audience: "manager" },
+      { text: "The card also says when the figures on screen were last read from LeadVault, so Refresh has something visible to change.", audience: "manager" },
+      { text: "Pressing it twice in a minute tells you it is already up to date instead of pretending to fetch, and a refresh that cannot reach LeadVault says so and keeps the last good numbers rather than blanking the card.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.81.0",
+    headline: "Settings is finally in your sidebar, and Tools is down to four.",
+    items: [
+      { text: "Settings now sits under Advanced Settings → Personal for everyone. It was in the admin-only group, so unless you are an admin the only link to your own profile, availability and notification preferences was a line in the page footer. The page always worked for you — there was just no way to find it.", audience: "everyone" },
+      { text: "Glossary and NMLS Tracker moved out of Tools into Advanced Settings → Reference, next to NMLS Licenses. Both are still open to everyone; nothing about who can use them changed.", audience: "everyone" },
+      { text: "If you have outstanding NMLS checks, the count now shows on the Advanced Settings header while it is closed, so the tracker moving does not make the work go quiet.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.80.0",
+    headline: "A shorter sidebar: Main is only what you touch on every call.",
+    items: [
+      { text: "Calling Script, EOD Report and Shotgun have moved out of Main into Advanced Settings, under a new \"Calling & Reports\" heading. EOD Report also still has its button on Home, where most people press it anyway.", audience: "everyone" },
+      { text: "How we're doing and the Advanced Dashboard moved out of Team into Advanced Settings under \"Dashboards\", with App Review beside them for managers. Team is now just Chat.", audience: "everyone" },
+      { text: "Nothing moved but the links. Every page is at the same address, so bookmarks, notifications and anything you have saved still work — and Shotgun still interrupts you wherever you are when a lead comes up.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.79.0",
+    headline: "Meta transfers now count however long they took.",
+    items: [
+      {
+        text: "On the Advanced Dashboard, a Meta lead now counts as transferred if it ever reached a loan officer, rather than only when the transfer happened after the lead came in. Both Meta numbers went up slightly.",
+        audience: "everyone",
+      },
+    ],
+  },
+  {
+    version: "4.78.0",
+    headline: "See which Meta ads actually turn into transfers.",
+    items: [
+      {
+        text: "The Advanced Dashboard now shows how many Meta leads reached a loan officer, split between the Meta leads we have been running since 2024 and the newer Retail Intake ones that started in July — so you can see at a glance which is converting better. Pick the window you want, from a week up to 90 days.",
+        audience: "everyone",
+      },
+    ],
+  },
+  {
+    version: "4.77.0",
+    headline: "Two charts on the team page, and one Shotgun lead at a time.",
+    items: [
+      { text: "How we're doing now has two charts: borrowers handed over day by day across the last twenty working days, and this week set against last week. Bars, not lines, weekends left out, and the counts on the axis — no percentages anywhere on the page.", audience: "everyone" },
+      { text: "Shotgun will not offer you a new lead, or let you accept one, while you still owe a write-up on the last one. Finish it and you are back in the rotation. The page tells you which lead is holding you up rather than leaving Ready-with-no-offers looking like a fault.", audience: "everyone" },
+      { text: "That closes a gap where you could accept, get pulled away, accept again, and end up sitting on leads nobody else could be offered.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.76.0",
+    headline: "See the lead that just landed for the LO you are about to call.",
+    items: [
+      { text: "Your Call List now shows, live, the newest lead LeadVault has taken in for each loan officer you were given today — borrower, state, lead source and how long ago it arrived, newest at the top. It refreshes on its own every twenty seconds, the way Shotgun does.", audience: "everyone" },
+      { text: "It only appears when there is something to say. No leads in the last three days for anyone on your list and the panel stays off the page.", audience: "everyone" },
+      { text: "A loan officer with no Bonzo login saved in C3 cannot be looked up, and the panel says how many of yours are in that state rather than leaving you to wonder why one is blank.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.75.0",
+    headline: "A plain-English team page, and answers count wherever you typed them.",
+    items: [
+      { text: "New page under Team: How we're doing. The week in sentences — how many borrowers we got onto the phone with a loan officer, whether that is more or fewer than last week, how the month is going, and who did it. Every number carries a line saying what it means.", audience: "everyone" },
+      { text: "The dashboard you already know is now called the Advanced Dashboard, and it says \"Advanced view\" instead of \"Manager view\" — it has been open to the whole team for a while and the badge did not say so. Nothing on it changed, and your old link still works.", audience: "everyone" },
+      { text: "If you answered a lead-capture question in the Other Notes box instead of the boxes above it, it now counts. Your write-up score and the write-up page both read both boxes. On production that is 44 transfers that were being marked down for answers that were sitting right there.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.74.0",
+    headline: "Info Gathering is on the page, not behind a button.",
+    items: [
+      { text: "On Input Results, the Info Gathering boxes for a transfer are now open on the page instead of collapsed behind a bar you had to press. The header still tells you how many of them you have filled in.", audience: "everyone" },
+      { text: "Why it changed: the box that stayed open was Other Notes, right underneath, so the whole intake was being typed there in prose. Written that way the loan officer still reads it, but nothing else can — not the write-up, not the completeness score, not any report that asks how often we captured a credit score.", audience: "everyone" },
+      { text: "Other Notes now sits directly under the boxes and asks for anything they did not cover, rather than reading like the place to write the call up.", audience: "everyone" },
+      { text: "In the LAP portal, a file created from a C3 transfer is stamped with a line saying where it came from. That line was sitting in the deal sheet, so every file looked like it had a sheet already, and Send email would have gone out with that one sentence as the whole write-up. Those files now read as not started, and starting one keeps the stamp underneath.", audience: "lap" },
+    ],
+  },
+  {
+    version: "4.73.0",
+    headline: "The deal sheet is on the file where you can see it.",
+    items: [
+      { text: "The deal sheet now sits on each file in Input Results, open, with a Start the sheet button and a count of how much is filled in. It used to be a box called “Operational notes” hidden inside Edit details — nobody fills in a form they cannot see.", audience: "lap" },
+      { text: "Fixes a real gap in yesterday's Send email button: the twenty-two fields were pre-filled in the notes thread, which is a different place from the one the email reads. You could fill in the whole sheet and Send would still say it was empty. Now there is one sheet, in one place, and it is the one that gets sent.", audience: "lap" },
+      { text: "A filled sheet reads back as a list rather than a block of text, so you can check it before sending, and anything typed underneath it is kept.", audience: "lap" },
+    ],
+  },
+  {
+    version: "4.72.0",
+    headline: "Send a file's documents and its deal sheet to the LO, in one press.",
+    items: [
+      { text: "New Send email button on every file in Input Results. It emails that file's documents as attachments with the deal sheet as the message, to the file's loan officer and the LAP notes recipient. It asks to confirm first, because it leaves the building.", audience: "lap" },
+      { text: "The deal sheet is now Chris's real fields — estimated value, proposed loan amount, rates, points, FICO estimated and actual, credit pull, product, whether it was pitched, the 1003 and LendingPad questions, and the notes. The old list was a placeholder waiting for the real one.", audience: "lap" },
+      { text: "It arrives as a sheet rather than a wall of text, so the loan officer can find the FICO without reading a paragraph. Anything typed underneath — a note in your own words, a pasted email chain — comes through untouched below it.", audience: "lap" },
+      { text: "It will not send an empty sheet or a file with no documents on it yet, and it tells you which. A sheet with nothing filled in is worse than no email at all.", audience: "lap" },
+    ],
+  },
+  {
+    version: "4.71.4",
+    headline: "The Bonzo note on an LOA transfer now says what actually happened.",
+    items: [
+      { text: "Leads transferred to one of Chris's assistants moved into Hot Transfer in the last release, but the note left on the borrower in Bonzo still said the stage had been left alone — the opposite of what had just happened, on the one record the LOA goes to check. It now says the stage was moved and that only the owner is left as-is.", audience: "manager" },
+    ],
+  },
+  { version: "4.71.3", headline: "Chris Redoble's LOA handoffs move to Hot Transfer.", items: [{ text: "Logging a connected transfer to Chris now moves the existing Bonzo lead to his configured Hot Transfer stage even when an LOA handles the handoff. Advanced and disqualified stages remain protected." }] },
+  { version: "4.71.2", headline: "Clearer Shotgun completion.", items: [{ text: "Choose whether a transfer happened, then use Finish lead to save and clear the reminder. Save for later keeps it assigned. Saving status and errors now appear directly in the form." }] },
+  { version: "4.71.1", headline: "A shorter everyday sidebar.", items: [
+    { text: "Seating Map, Team Stats, Office TV, EOD Analytics, NMLS Licenses, My Report, and Weekly Schedule now live under Advanced Settings." },
+  ] },
+  {
+    version: "4.71.0",
+    headline: "Someone who works both as an LO and an LOA is counted once, for their whole workload.",
+    items: [
+      { text: "A person who carries their own pipeline AND works another officer's desk was stored as two separate records, so Placed only ever saw half of what they were carrying — which made them look like one of the lighter desks and paid full credit for sending them even more.", audience: "manager" },
+      { text: "Their two roles now add up to one workload, ranked once. Ryan is a live example: 27 through the desk and 24 of his own is 51, not 24.", audience: "manager" },
+      { text: "Who is one person and who is two has to be set deliberately — nothing is guessed from names, because the desk records hold first names only and there is more than one Ryan in C3. Until a pairing is set, nothing changes for anybody.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.70.0",
+    headline: "Managers can put the whole team in the Shotgun rotation in one press.",
+    items: [
+      { text: "New “Put everyone in” button at the top of Shotgun, for managers and admins. It opts every active CLR into the rotation, so nobody has to be chased one at a time after a round of opt-outs.", audience: "manager" },
+      { text: "It tells you the truth about what it did: how many are in, and how many of those are actually at their desk right now. The rest join the second they open C3.", audience: "manager" },
+      { text: "It cannot fake anyone being there. Being in the rotation and being live are two different things, and the button only sets the first — otherwise a lead would be offered to a closed laptop and sit there for the full twenty seconds while somebody who wanted it watched.", audience: "manager" },
+      { text: "Any lead already waiting in the queue gets another go at finding somebody the moment you press it.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.69.1",
+    headline: "The manager dashboard loads again.",
+    items: [
+      { text: "The dashboard went blank for about an hour this afternoon. The new transfers-per-day-worked figure asked the EOD reports table for a company id it does not have, and the error took the whole page down rather than just that one number.", audience: "everyone" },
+      { text: "Fixed, and fenced: if that figure ever fails again the dashboard loses one number instead of everything.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.69.0",
+    headline: "Reassign Prospect: pick people from a list instead of typing addresses.",
+    items: [
+      { text: "Both address boxes on Reassign Prospect are now dropdowns of names. Typing the address was the one step of that job with no safety net — everything else is checked, and then it all rested on spelling somebody's address right.", audience: "everyone" },
+      { text: "The list comes from LeadVault and keeps itself up to date, so somebody who joined today is there without anyone editing C3. Whoever you already picked on one side is left out of the other, because moving a prospect to the person who already has it is not a move.", audience: "everyone" },
+      { text: "If LeadVault cannot be reached the tool still works, falling back to C3's own loan officer list — and says so on screen, in amber, so you know to check the address before moving anything.", audience: "manager" },
+    ],
+  },
+  { version: "4.68.1", headline: "Transfers per day worked and clearer activity charts.", items: [{ text: "MTD now shows transfers divided by days with recorded work, excluding days off." }, { text: "Activity by CLR has wider cells, clear dates, and fixed names while scrolling." }] },
+  {
+    version: "4.68.0",
+    headline: "Anyone can clear an NMLS check nobody has done in 35 days.",
+    items: [
+      { text: "After 35 days without being verified, a licence check stops being one person's job. It appears for everyone under “overdue — anyone can help”, and whoever gets to it first can confirm it.", audience: "everyone" },
+      { text: "Fixes the reason that was impossible before: an unconfirmed check used to vanish from the tracker the moment a new round started, so the licences that had gone longest unverified were on nobody's screen. Thirteen of them had been sitting unseen for sixty-nine days.", audience: "everyone" },
+      { text: "Confirming now works on those older checks too. The button used to look at the current round only, so pressing it on a carried-over check did nothing at all.", audience: "everyone" },
+      { text: "Your own outstanding checks follow you between rounds instead of disappearing, oldest first.", audience: "everyone" },
+      { text: "Being chased about your own check still starts at 7 days — that setting is unchanged. The 35 days is only about when everyone else may pitch in.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.67.0",
+    headline: "Labor Day is no longer treated as a working day.",
+    items: [
+      { text: "Monday 7 September was a holiday and C3 counted it as an ordinary weekday everywhere. It chased people for a report they were never going to file, divided the month's pace by a day nobody worked, and read a day the office was shut as a day somebody did not turn up. It no longer does any of that.", audience: "everyone" },
+      { text: "Your monthly pace and your transfer minimum are both worked out from 21 working days in September rather than 22, so neither asks for a day's output nobody was here for.", audience: "everyone" },
+      { text: "An EOD report due “the next business day” now skips the holiday too — Friday the 4th's report was due Tuesday the 8th, not Monday.", audience: "everyone" },
+      { text: "Office closures live in one list now, so adding the next one changes every screen at once instead of most of them. Tell Ethan which days the office is closed and they go in.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.66.0",
+    headline: "NMLS Licenses is in the sidebar at last, and anyone can refresh it.",
+    items: [
+      { text: "New under Tools: NMLS Licenses. Every loan officer's licence status in one list, with a link straight to their public profile. The page has existed since it was built but was linked from nowhere — you could only reach it by typing the address.", audience: "everyone" },
+      { text: "Refresh All is no longer admin-only. Anyone can re-check every licence against the public register, because it reads public information — the reason it was locked was the cost of the scan, not who was allowed to see it.", audience: "everyone" },
+      { text: "To keep that cost sane, the scan runs once every five minutes for the whole team rather than once per person. Press it while somebody else is running one and you are told when you can try again.", audience: "everyone" },
+      { text: "NMLS Tracker is unchanged and was already open to everyone.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.65.0",
+    headline: "A dead mailbox can no longer cost everyone else the email.",
+    items: [
+      { text: "C3 already refused to write to addresses that could never work — our own web host, reserved domains. It now also stops writing to an ordinary-looking address that has bounced three or more times and never once arrived: someone who left, a closed mailbox, an address typed wrong when the account was made.", audience: "manager" },
+      { text: "One successful delivery clears an address completely. That matters because the mail provider reports one result per message, not per person — so when a group email fails, everyone on it is recorded as failed. Without that rule, two bad sends could have quietly removed the whole team from their own notifications.", audience: "manager" },
+      { text: "Checked against the real send history before shipping: exactly one address would be set aside, and all sixteen people who had been marked failed alongside it are kept.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.64.2",
+    headline: "Transfer Write-Ups moves into Advanced Settings.",
+    items: [
+      { text: "Transfer Write-Ups now lives under Advanced Settings → Personal, next to Time Clock, rather than in the everyday Personal list. It is a page you go and look at when a write-up is in question, not one you open daily.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.64.1",
+    headline: "Reassign Prospect moved to Tools, and CLRs can use it.",
+    items: [
+      { text: "Reassign Prospect now sits under Tools in the sidebar, next to State Lookup, instead of being buried in Advanced Settings.", audience: "everyone" },
+      { text: "CLRs can use it, not just managers — you are usually the first to spot a prospect sitting in the wrong person's book while working a list. Same two clicks, and every move is still recorded.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.64.0",
+    headline: "Move a Bonzo prospect between two people, knowing only the phone number.",
+    items: [
+      { text: "New Reassign Prospect page for managers. Type the phone number, who has it now, and who should have it — C3 finds the record in Bonzo and moves it. No hunting for the prospect first.", audience: "manager" },
+      { text: "It asks who has it now for a reason: several prospects often share one phone, so the number alone cannot say which record you mean. Saying who holds it picks the right one out of the pile, and if nobody on that number is theirs it stops and tells you who does have them.", audience: "manager" },
+      { text: "Two clicks, never one. Check shows you the exact prospect that will move and everyone else on that number; Move it does that one record. If somebody moves the prospect in between, the move is refused rather than undoing their work.", audience: "manager" },
+      { text: "Use email addresses, not names. Bonzo display names are not always the person they look like, so a name could move the wrong book.", audience: "manager" },
+      { text: "One at a time, on purpose — and every move is recorded in the audit trail, including the ones Bonzo refuses.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.63.0",
+    headline: "Read what was actually written on any transfer, and a shotgun transfer now counts half each.",
+    items: [
+      { text: "New Transfer Write-Ups page. Every transfer, with everything that was entered on it — the answers, the blanks, and the notes in the CLR's own words. Until now you could see that somebody's write-ups scored 76% and never see what they wrote. Open a row to read it; search covers the text, not just the names.", audience: "everyone" },
+      { text: "A CLR sees their own write-ups on that page and managers see everybody's. Blank qualification answers are called out in red; a section marked n/a is shown as not applicable rather than as a gap, so the page and the percentage always agree.", audience: "everyone" },
+      { text: "A transfer taken off a Shotgun lead now counts as half for whoever put the lead up and half for whoever closed it — everywhere, pay included. Counts can now read 4.5, and that is the real number.", audience: "everyone" },
+      { text: "The half only goes to another CLR. Leads put up by a manager or an admin still count as a whole transfer for the CLR who closed them, because managers are not on transfer comp and half the pay would otherwise go nowhere.", audience: "manager" },
+      { text: "The Reporting page's per-CLR transfer total was the last one still counting whole rows, so it disagreed with the wall boards and with people's pay. It now matches everything else.", audience: "manager" },
+      { text: "The transfer number on a filed EOD report is worked out when it is filed rather than when the page was opened. A shotgun half created later by the other CLR used to be missing from the manager digest and EOD Analytics permanently.", audience: "manager" },
+      { text: "Correction to the last release: a repeating task with pay attached now pays EVERY occurrence — a monthly $5 task pays $5 a month. The previous note said it paid only once.", audience: "manager" },
+      { text: "Money in the comp summary emails always shows cents now, so the same table no longer mixes \"$245\" and \"$222.50\".", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.62.0",
+    headline: "A call SOP, a test that asks what you would do, and pay you can attach to a task.",
+    items: [
+      { text: "New Call SOP page: how a call is actually run, start to finish, in seven phases \u2014 before you dial, opening, taking the sheet, when they push back, handing it to the loan officer, after the call, and never. It is the standing procedure rather than the ten-day plan, and it is printable.", audience: "everyone" },
+      { text: "Every step of the SOP is tied to a line in the training plan. Edit the plan and the SOP page flags any step whose basis has gone, so the two cannot quietly disagree.", audience: "manager" },
+      { text: "The certification test now asks what you would DO. A borrower offers to send details later; the loan officer is not licensed in that state; the sheet is half filled and they are about to hang up. Still sixty questions and still ninety percent to pass.", audience: "everyone" },
+      { text: "New results page: see which questions you missed, with your answer, the right one, and why. Managers also get a ranking of the questions the whole team gets wrong most \u2014 which says where the training is thin rather than where one person is.", audience: "everyone" },
+      { text: "Managers can attach pay to a task. When the assignee completes it, a comp request is filed for them automatically \u2014 pending, like any other, and still approved by a person.", audience: "manager" },
+      { text: "Task pay is capped at $500 and needs a reason. A CLR can never attach or raise it, a manager cannot attach it to their own task, and a repeating task pays only the occurrence it was attached to \u2014 so one checkbox cannot quietly bill every day.", audience: "manager" },
+      { text: "A task pay request cannot be edited, deleted or marked unpaid by the person being paid. If the pay does not file, whoever completed the task is told why instead of it failing silently.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.61.1",
+    headline: "The Shotgun button works on the conversation screen.",
+    items: [
+      { text: "The orange Shotgun button never appeared while you were reading a conversation — only on a prospect's own page. Since the conversation screen is where most of the work happens, that was most of the time. It appears there now.", audience: "everyone" },
+      { text: "Reload the extension in Chrome to pick this up: it is version 1.2.0. The extension page has a fresh download.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.61.0",
+    headline: "Investment leads have to reach the right assistant again.",
+    items: [
+      { text: "An investment or second home has to reach Justin, Mateo or John. Among those three the lightest-loaded scores full marks and the busiest scores 60, so following the rule well and following it badly are different numbers.", audience: "manager" },
+      { text: "Anything else scores nothing: another assistant, no assistant recorded, or a different loan officer. Being lightly loaded does not help somebody who was not one of the three.", audience: "manager" },
+      { text: "Ordinary transfers to that desk are unchanged and still judged across all eight assistants, so the same person can be worth full marks on an ordinary lead and nothing on an investment.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.60.0",
+    headline: "Placed now judges which assistant took it.",
+    items: [
+      { text: "A transfer to a loan officer the floor has been told to feed is no longer judged on how busy that officer is \u2014 it is judged on which of their assistants took it. The assistant carrying the least scores full marks, the one carrying the most scores 60, and nothing on that desk can score below 60.", audience: "manager" },
+      { text: "Sending to a desk you were told to send to is not a bad placement, so it can never read as one. Leaving the assistant blank is not punished either \u2014 it simply sits at the 60 mark.", audience: "manager" },
+      { text: "An investment or second home also sits at 60 or above wherever it went, because that one is routed by rule rather than chosen.", audience: "manager" },
+      { text: "Everything else is unchanged: transfers to officers with no assistants, and to officers nobody has been told to feed, are still judged on how badly that officer needed the work.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.59.2",
+    headline: "Historical CLR trends include former teammates.",
+    items: [
+      { text: "Former CLRs with activity in the selected period now appear in the CLR trend comparison and its team calculations." },
+      { text: "CLRs count in averages after 10 completed business workdays. They carry a First month badge until 20 workdays." },
+    ],
+  },
+  {
+    version: "4.59.1",
+    headline: "A clearer end-of-day report.",
+    items: [
+      { text: "EOD now walks through LO coverage, imported activity, and the daily checklist in separate sections, with a completion indicator and easier-to-find submission controls." },
+      { text: "Optional activity entries are grouped together, and date labels clearly describe the day you are reporting." },
+    ],
+  },
+  {
+    version: "4.59.0",
+    headline: "Dialpad texts are now tracked automatically in C3.",
+    items: [
+      { text: "The Transfer Scorecard now shows each CLR's Dialpad outbound texts; message content is never stored.", audience: "manager" },
+      { text: "C>T% and appointment fall-throughs were removed from the Transfer Scorecard to keep it focused on the core activity numbers.", audience: "manager" },
+      { text: "The EOD page now shows automatic Dialpad calls and texts separately from any additional activity entered by hand." },
+    ],
+  },
+  {
+    version: "4.58.1",
+    headline: "Appointments can now be completed with the full transfer form.",
+    items: [
+      { text: "From an appointment's Complete menu, choose Fill Out Full Transfer Form to record all transfer details, qualification answers, notes, and Bonzo confirmation." },
+      { text: "The form starts with the appointment's CLR, loan officer, borrower, phone number, and notes, and updates that appointment instead of creating a duplicate." },
+      { text: "Quick Transfer remains available when the existing appointment details are already complete." },
+    ],
+  },
+  {
+    version: "4.58.0",
+    headline: "A new Placed number on the Transfer Scorecard.",
+    items: [
+      { text: "The Transfer Scorecard has a new Placed number: not how many transfers somebody made, but where they went. Each one is judged on how busy that loan officer was the morning it landed, so feeding the people who need the work reads high and feeding the busiest desk reads low.", audience: "manager" },
+      { text: "An investment or second home scores full marks when it went to Justin, Mateo or John, and nothing when it went anywhere else \u2014 including when no assistant was recorded, since there is then nothing to show the routing was followed.", audience: "manager" },
+      { text: "A dash rather than a number means there was too little to judge fairly, or that the routing rule could not run. Hovering a Placed cell explains which, and how many of the transfers behind it were routing rather than ordinary placement.", audience: "manager" },
+      { text: "Whether the assistant was filled in changes nothing on an ordinary transfer, so the number cannot reward paperwork over placement.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.57.3",
+    headline: "The office TV needs its display link again.",
+    items: [
+      { text: "The wall was briefly reachable at a plain /tv address with no display link. That address also handed out what the board shows \u2014 CLR names with their numbers, borrower first names, and the times of upcoming appointments \u2014 to anyone who typed it. The board is back to opening only through its display link.", audience: "everyone" },
+      { text: "If a screen in the office was set to the short address it will need pointing back at its display link. Managers can copy one from Settings.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.57.2",
+    headline: "The public Office TV opens all the way through.",
+    items: [
+      { text: "westcapitallending.center/tv now opens the live wallboard directly without a sign-in or a display-link warning.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.57.1",
+    headline: "The Office TV now has one public address.",
+    items: [
+      { text: "Anyone can now open the live office wallboard at westcapitallending.center/tv, with no sign-in or display link required. Existing TV links still work, and the public board limits borrower references to first names.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.57.0",
+    headline: "A tidier wall, and the boards read most to least.",
+    items: [
+      { text: "The bottom of the office TV is now just new leads arriving from LeadVault. The not-ranked line has gone, and the strip keeps its height whether or not a lead has landed.", audience: "everyone" },
+      { text: "New leads from LeadVault now actually reach the wall. They slide in along the bottom as they arrive, showing a first name, where the lead came from, and the state.", audience: "everyone" },
+      { text: "Where they came from used to show two periods at once on the wall, so the number and the dates disagreed. It now names one stretch of days, and says so when the range is shorter than you asked for because lead source was not being recorded yet.", audience: "everyone" },
+      { text: "Daily assignments and who is on the phones now lead with the most, matching every other board on the wall instead of running alphabetically.", audience: "everyone" },
+      { text: "Who needs transfers most, and what is coming up, deliberately keep their own order: one leads with the person who has had the fewest, the other runs by time.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.56.0",
+    headline: "What's coming up, and a tidier bottom of the wall.",
+    items: [
+      { text: "The office TV has a new page listing the appointments coming up over the next week — who booked it, which loan officer it is with, and when. It pans when there are more than fit.", audience: "everyone" },
+      { text: "Anyone kept out of the rankings, and new leads arriving from LeadVault, now sit in a small strip along the bottom of the wall instead of floating on top of whatever page is showing.", audience: "everyone" },
+      { text: "A meeting moved from the Outcomes page used to keep its old time in a second place, which could leave the upcoming list, the end-of-day summary and the reminders naming a time nobody was keeping. Those all agree now.", audience: "everyone" },
+      { text: "Month-end pace on the Transfer Scorecard no longer counts Sundays as working days, so the projection divides by days people actually work. The tier lines will trip slightly earlier than before.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.55.0",
+    headline: "Moved meetings say so, and tasks reach the person who got them.",
+    items: [
+      { text: "A meeting that gets moved now goes up on the office TV as REBOOKED, with the new time. Until now the board either said nothing or announced it a second time as a fresh booking, because nothing in C3 ever recorded that a meeting had been moved rather than made.", audience: "everyone" },
+      { text: "A transfer that went through an assistant now names them on the wall alongside the loan officer, so the person who actually took it is on the screen.", audience: "everyone" },
+      { text: "Whoever a task is assigned to now gets an email about it, when it is given to them and again if it is handed to someone else. Assigning a task to yourself does not email you, and a repeating task does not email its owner every morning.", audience: "everyone" },
+      { text: "Task deadlines in emails and phone alerts were being written in the server's own clock rather than yours, so a 5pm Friday deadline could arrive reading as midnight. They now show in the assignee's time.", audience: "everyone" },
+      { text: "Editing an appointment on the Outcomes page used to leave the meeting time behind on the old slot, so the Upcoming Appointments list, the end-of-day summary and the reminders could all still be naming a time nobody was keeping. An edit there now moves the meeting properly.", audience: "everyone" },
+      { text: "New leads arriving in LeadVault will slide up along the bottom of the office TV. The wall is ready for them; LeadVault still has to be pointed at it before any appear.", audience: "manager" },
+      { text: "Twenty-eight more quotes on the wall, this time with who said them.", audience: "everyone" },
+      { text: "A blank or unrecognised timezone saved against somebody's profile could take down the tasks page and the check-in board for everyone. It is now checked when it is saved, and anything already stored that C3 cannot read falls back to office time instead of breaking the page.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.54.0",
+    headline: "Appointment times were seven hours out.",
+    items: [
+      { text: "Appointment times on the office TV were showing seven hours early. They are stored as the time somebody typed, with no timezone, and the board was reading them as if they were UTC. A 2:30 appointment was going up as 7:30 in the morning.", audience: "everyone" },
+      { text: "Anyone kept out of the stats now sits in the bottom right corner with their count for the day, instead of in the rankings. The chart stays a like-for-like comparison and the team total still adds up.", audience: "manager" },
+      { text: "The end-of-day board shows today rather than yesterday. It only takes the wall between 3.30 and 6pm, which is when people are filing, so who still owes one is the useful question.", audience: "manager" },
+      { text: "The write-up page is now titled Most thorough transfers, for the people at the top of it.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.53.0",
+    headline: "The whole leaderboard, and tap to skip.",
+    items: [
+      { text: "The office TV now shows everyone on the leaderboard instead of stopping at eight, panning slowly down the list and back when there are more people than fit. Anyone with no activity today who also has not checked in is left off, so a holiday is not an empty row.", audience: "everyone" },
+      { text: "Click or tap the screen to skip to the next page.", audience: "everyone" },
+      { text: "Elleine now appears on the board with everyone else. Anyone kept out of the stats still shows up the moment they put work on the board, so the team total and the names under it finally agree.", audience: "manager" },
+      { text: "Fixed two pages that could show an error instead of their content, and made a page change no longer wait on the outgoing page finishing its animation.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.52.1",
+    headline: "The loan officers who need transfers most.",
+    items: [
+      { text: "A new page on the office TV ranks every active loan officer by how few transfers they have had in the last fortnight, with the ones flagged as needing work marked clearly. Loan officer assistants are listed beside them. Flagged people are highlighted but not moved to the top, so the list still answers the question it asks.", audience: "everyone" },
+      { text: "Fixed a page that could show up blank: one slot had made it onto the rotation without anything to draw it.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.52.0",
+    headline: "Seven new pages on the wall, and fairer month numbers.",
+    items: [
+      { text: "The office TV gains seven pages: transfers for the week and the month, write-up percentage per person, today’s assigned loan officers, the end-of-day board, time on the phone, lead sources, and who has been active on CallTools in the last fifteen minutes.", audience: "everyone" },
+      { text: "The end-of-day board only takes the wall between 3.30 and 6pm, when reports are actually being filed. The assignment list holds the rest of the day. A page whose data is missing is dropped rather than shown blank.", audience: "manager" },
+      { text: "The transfer pages now explain their own arithmetic. The team total counts people the name list leaves out, so a quiet line names them and their count instead of leaving two numbers that do not add up.", audience: "manager" },
+      { text: "Month-over-month figures on the dashboard compare the same stretch of the previous month. They used to measure this month so far against the previous month in full, so early in a month every number looked like a collapse.", audience: "manager" },
+      { text: "The month-to-date scorecard shows the pace each person is on for the full month, badged at 75, 100, 150 and 200.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.51.0",
+    headline: "Cartoon out, month to date in.",
+    items: [
+      { text: "The cartoon is gone from the office TV. No more anvil landing on the word, no banana peel, no alarm clock. A moment is now the big word, the colour, one clean hit and the names underneath.", audience: "everyone" },
+      { text: "The Transfer Scorecard on the manager dashboard has a month to date view. It runs from the 1st and grows through the month, so it is labelled for what it is rather than pretending to be a fixed window.", audience: "manager" },
+      { text: "The time since each person last transferred or was last on a call now spells itself out on the TV, reading last transfer 38m ago rather than just transfer 38m.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.50.0",
+    headline: "How long since, on every row.",
+    items: [
+      { text: "Each row on the office TV scorecard now shows how long since that person last transferred and how long since they were last on a call. It goes a dim amber once someone has been quiet for a while, so a stretch of silence is visible without being shouted about.", audience: "everyone" },
+      { text: "Call times come from CallTools, which records every call. Dialpad only sends a daily total, so it cannot say how long ago the last one was and is left out rather than showing a stale number as if it were fresh.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.49.0",
+    headline: "Pass someone on the board and the race is on.",
+    items: [
+      { text: "When one CLR moves ahead of another on the board, two race cars come on and the one climbing takes the lead as the chequered flag waves. Nobody is mocked: both cars stay in the race, and the one that got passed says nice one.", audience: "everyone" },
+      { text: "It only fires on a real move. Somebody rising because the person above them was corrected downward does not count, ties never count, and the first transfer of the morning does not race past everyone still on zero.", audience: "manager" },
+      { text: "Weekly transfer targets are set for the whole team, so the scorecard bars now fill against a real number instead of reading no goal.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.48.0",
+    headline: "You can actually see the cartoon now.",
+    items: [
+      { text: "The cartoon props on the TV are actually visible now. They were drawn in the darkest colour of each palette on a near-black screen, so the anvil, the dust, the hole, the ladder, the chair and the tumbleweed were all technically playing and none of them could be seen. Everything is now a light shape with a dark outline, sized to read from across the floor.", audience: "everyone" },
+      { text: "The training quote between animations is now one of fifty lines written to stand on their own. The board used to quote the manual directly, which meant lines that referred to a session you were not in.", audience: "everyone" },
+      { text: "Anyone with a display link can preview a single animation by putting its name after the demo switch in the address, instead of waiting for the whole reel to come round.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.47.0",
+    headline: "The TV moments become a cartoon.",
+    items: [
+      { text: "The office TV moments are now full cartoon gags. Everything lands on one shared floor line, the giant word behaves like a character rather than a label, and every one of them holds dead still for a beat before one last thing happens.", audience: "everyone" },
+      { text: "A transfer drops in, cracks the floor, and gets an ACME anvil dropped on it, which it then presses back off. A booked meeting gets stamped onto a calendar page, and the stamp comes back down a second later and topples over. A moved meeting slips on a banana peel, slides clean off the screen, and gets hauled back by a vaudeville hook.", audience: "everyone" },
+      { text: "The two rough ones stay kind. A fall-through swaggers in like a win, then drops through a hole in the floor and climbs back out with a hat on and a tumbleweed rolling past. A no-show passes straight through an empty chair while an alarm clock walks in and knocks the chair over anyway. The joke is always on the furniture, never on the person.", audience: "everyone" },
+      { text: "Under all of it, a very small line of text in a very flat voice.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.46.0",
+    headline: "The Bonzo shotgun button stops vanishing without a word.",
+    items: [
+      { text: "The Bonzo shotgun button no longer disappears. It now always shows itself, greyed out and reading ‘Open a Bonzo prospect’ when you are on a list or a dashboard, so you can tell at a glance that the extension is alive and working.", audience: "everyone" },
+      { text: "It also recognises more of the addresses Bonzo uses for a prospect, so a change on their side stops making the button vanish with nothing to explain it.", audience: "everyone" },
+      { text: "The extension popup now shows which prospect it can see on your Bonzo tab, and says plainly that the extension key is needed rather than optional. C3 keeps your login locked to its own tabs, so the key is what lets the button talk to C3.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.45.0",
+    headline: "The whole transfer history lands in LAP, dated as it happened.",
+    items: [
+      { text: "Every C3 transfer to Chris Redoble since the start of records is now in the LAP portal as a package, dated by the day it was transferred, with the transfer linked. Nothing rings the bell for these; they simply appear in Results and Lead Notes in date order.", audience: "lap" },
+      { text: "Repeat borrowers who transferred again within a week share one package instead of getting a second one. That now holds for new transfers too.", audience: "lap" },
+      { text: "The dashboard totals count the whole history from now on, so the all-time and needs-attention numbers jump once.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.44.0",
+    headline: "Lead notes get their own page, and Chris gets every one.",
+    items: [
+      { text: "Lead Notes is now its own page in the LAP portal, in the sidebar and the phone bar. Search the borrower, pick the package, fill in the note. The same thread still shows on the package under Input Results.", audience: "lap" },
+      { text: "Every LOA lead note is emailed to Chris Redoble as well as the loan officer. Notes posted within the same half-minute arrive as one email that carries all of them, so nothing is dropped. The address lives in the LAP email settings as the lead notes recipient.", audience: "manager" },
+      { text: "An untouched template can no longer be posted: the Post button waits until at least one line is filled in, and the server refuses a blank one too.", audience: "lap" },
+      { text: "Opening a different package now clears a half-written note instead of carrying it over to the next borrower.", audience: "lap" },
+    ],
+  },
+  {
+    version: "4.43.1",
+    headline: "Preview the TV reel on demand.",
+    items: [
+      { text: "Each Office TV link in Settings now has a Preview button. It opens the wallboard and plays one of every moment with sample names — a transfer, a meeting set, a meeting moved, a fall-through, a no-show, and a milestone — so a new screen can be checked without waiting for the floor. Adding ?demo=1 in front of the # in any display link does the same.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.43.0",
+    headline: "An office TV that plays the day like a signage loop.",
+    items: [
+      { text: "New: a wallboard for a TV. Full-screen pages rotate on their own — today’s scorecard, the team total, what just happened, and a line from the training plan — sliding in and out the way a lobby screen does. No login: an admin makes a display link in Settings and opens it on any TV browser or streaming stick.", audience: "manager" },
+      { text: "It reacts, strike-screen style. A transfer slams TRANSFER! onto the wall letter by letter with rays, shockwaves, a shake and a gold storm, then the borrower’s name. A meeting set thuds on like an ink stamp; a meeting moved skids in while a clock whips to the new time. A fall-through lands, wobbles, and collapses letter by letter; a no-show shudders while an alarm clock rings and question marks rain. Milestones — 10, 25, 50 transfers in a day, a weekly goal hit, a personal best — get fireworks.", audience: "everyone" },
+      { text: "Moments queue and never talk over each other, each plays once per screen, and the board reloads itself whenever C3 updates so it is never behind the app.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.42.0",
+    headline: "Transfers per workday — the fair rate.",
+    items: [
+      { text: "CLR profiles now show transfers per normal working day: the first 20 training days and any days spent training someone else are left out of the math on both sides, so a trainer or a new hire is never measured against days they could not have been on the phones.", audience: "manager" },
+      { text: "The rate shows a dash instead of a misleading number while someone is still in training or has fewer than five qualifying workdays.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.41.0",
+    headline: "Ask C3 learned averages and trends.",
+    items: [
+      { text: "Ask things like \"what’s the average transfers per CLR this month?\" or \"is Maria trending up?\" — Ask C3 now computes per-person and team averages, medians, per-day rates, transfers per 100 calls, and week-by-week trends itself, so the numbers are exact rather than estimated.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.40.0",
+    headline: "Matt can edit the training walkthrough himself.",
+    items: [
+      { text: "The CLR Trainer Walkthrough is Matt Lane’s plan, but it was built into the app, so fixing a typo in his own document meant asking a developer. He can now edit it on the page: an Edit button, one step per line, and Save publishes it to everyone straight away.", audience: "everyone" },
+      { text: "Every save is kept. Nothing is overwritten, so an earlier version can always be put back, and each one records who saved it and when.", audience: "manager" },
+      { text: "Admins can hand this out on the Settings user list — an “Allow training edits” button next to the Shotgun one. It grants only that; it is not manager access.", audience: "manager" },
+      { text: "Everyone else still reads it exactly as before.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.39.0",
+    headline: "No EOD report by 4:15 and the alarm goes off.",
+    items: [
+      { text: "4:00pm you get a warning that names the deadline. At 4:15, if today’s report still is not in, C3 goes red and starts wailing, and there is one button: fill out your EOD report. No dismiss, no later, and the Escape key does nothing.", audience: "everyone" },
+      { text: "Whatever you were typing is saved first. If you were halfway through logging a transfer, the borrower name, the phone number and the rest are kept and named back to you on the alarm screen — losing ten minutes of work should not be the penalty for a late report.", audience: "everyone" },
+      { text: "You can silence the noise for two minutes at a time if you are on a call with a borrower. The screen keeps going and the report is still required; only the sound stops, and it comes back.", audience: "everyone" },
+      { text: "It only fires on a day a report is actually expected, and never once today’s is filed. Catching up on an older missing report gets the ordinary lock screen, not the alarm.", audience: "everyone" },
+      { text: "The old 4:30, 5:00 and 5:30 steps are gone. Each was gentler than the 4:15 alarm, so they made the ladder get easier as you climbed it.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.38.0",
+    headline: "Ask C3: ask questions about your data in plain English.",
+    items: [
+      { text: "A sparkle button now floats on every page. Ask things like \"who had the most transfers this month?\" or \"which check-ins were late yesterday?\" and Ask C3 reads the live data — leaderboard, outcomes, EOD reports, assignments, prospects — and answers with the numbers, showing its progress while it works.", audience: "everyone" },
+      { text: "Pick the brain to match the question: Sonnet for everyday lookups, Opus or Fable for deep analysis, Haiku for quick checks. Follow-up questions remember the conversation.", audience: "everyone" },
+      { text: "It is read-only and role-aware: CLRs see their own reports and check-ins, managers see the team, and credentials, GPS locations and IP addresses are never exposed to it at all.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.37.0",
+    headline: "Four states nobody can be licensed in, marked red.",
+    items: [
+      { text: "Hawaii, Illinois, Massachusetts and New York now show red on the map: no one can be licensed in them. Illinois, Massachusetts and New York already had no licensed loan officer between them; Hawaii is new.", audience: "everyone" },
+      { text: "Those four no longer show a licence count or a list of names, because there should not be one. They still carry the reminder that business purpose loans are okay everywhere — that is the lending those states still allow, since it needs no licence.", audience: "everyone" },
+      { text: "Nobody can be added to them either. The block is applied wherever licensed states are saved, including the bulk import, so it cannot be worked around from another screen.", audience: "manager" },
+      { text: "Illinois was one of the eleven W2-only states. Red wins over pink there — “nobody can be licensed” makes “W2 borrowers only” beside the point.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.36.1",
+    headline: "The check-in rules, written down where you can read them.",
+    items: [
+      { text: "The Networks panel now states both rules in one line: on an approved address a check-in is accepted and the location check is skipped; anywhere else it has to be within the office radius. That was already how it worked and was not written down anywhere.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.36.0",
+    headline: "See which networks people check in from.",
+    items: [
+      { text: "New Networks panel on the Check-In page: every address check-ins have come from, split into the office wifi and everywhere else, with how many check-ins, who, and when it was last used.", audience: "manager" },
+      { text: "An address you recognise can be marked as the office right there, and every past check-in from it immediately reads as in-office. No need to go and edit a list of numbers in Settings.", audience: "manager" },
+      { text: "It also says plainly when addresses are not being recorded at all — which they currently are not — with a button to start. Until then the panel is history only and today is not on it.", audience: "manager" },
+      { text: "An approved address that nothing has ever come from is called out, since that usually means a typo or a network that has since changed.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.35.1",
+    headline: "Two Bonzo calls that could only ever fail.",
+    items: [
+      { text: "The admin “push stage to Bonzo” tool used a request type Bonzo rejects outright, so it always failed. Corrected.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.35.0",
+    headline: "Transfers are tagged and named in Bonzo again, including Chris’s.",
+    items: [
+      { text: "A transfer to a loan officer who has an assistant now gets the clrtransfer tag and the “(LOA I CLR)” name on the borrower in Bonzo, the same as every other transfer. Those two say who sent the lead over — they were being skipped along with everything else.", audience: "everyone" },
+      { text: "The borrower’s stage and owner are still left alone for those loan officers, because the LO Assistant Portal is where that work happens.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.34.3",
+    headline: "The Bonzo note no longer repeats what you already pasted.",
+    items: [
+      { text: "If you had already pasted part of a write-up into Bonzo yourself, the automatic note could still go up repeating it. Each part is now checked against the prospect separately, and only what is genuinely missing gets posted.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.34.2",
+    headline: "A transfer that missed Bonzo can be sent again.",
+    items: [
+      { text: "Re-pushing a transfer to Bonzo now runs the same sync a fresh transfer does, so a call that was logged before today can be sent across with its notes. It will not post twice if it is already there.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.34.1",
+    headline: "Whichever box you typed the write-up into now reaches Bonzo.",
+    items: [
+      { text: "The transfer note sent to Bonzo used to carry only the Info Gathering block. Anything typed into Other Notes instead was left behind — which for most calls is where the detail actually is. Both now go.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.34.0",
+    headline: "Transfers to loan officers with an assistant now leave a note in Bonzo.",
+    items: [
+      { text: "If the loan officer you transfer to has an assistant, C3 used to write nothing to Bonzo at all \u2014 not your write-up, not even the fact that the transfer happened. It now posts your conversation notes to the borrower in Bonzo, so the loan officer can see them without anyone pasting by hand.", audience: "everyone" },
+      { text: "Nothing else about the borrower is touched for those loan officers: C3 does not reassign them, move their pipeline stage, or rename them, because the LO Assistant Portal is still where that work happens. The note says so.", audience: "manager" },
+      { text: "Every one of these syncs now records which mode it ran in, so a transfer that does not reach Bonzo can be traced instead of disappearing quietly.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.33.0",
+    headline: "Write-up scoring now matches what a call is actually worth.",
+    items: [
+      { text: "The three qualification answers \u2014 owns a home, bankruptcy in the last six months, investment or second home \u2014 now count four times any other question. They decide whether the lead is workable at all, and a write-up missing one of them was being marked down as if it had skipped a phone number.", audience: "everyone" },
+      { text: "Borrower email and the exact credit score no longer count toward the score. Both are still on the form and still worth getting; the credit band is what the loan officer prices against, so that is what is scored.", audience: "everyone" },
+      { text: "New tickboxes on Info Gathering: No co-borrower, Free and clear, and No HELOC. Tick one and that whole section stops being asked of you \u2014 a blank co-borrower box used to look exactly the same whether there was no co-borrower or nobody asked, and you were marked down either way. It also writes the fact into the notes the loan officer reads.", audience: "everyone" },
+      { text: "Ticking one of those clears the boxes it covers, so a half-typed answer cannot sit hidden behind it \u2014 it would have quietly gone missing from the handoff and could have blocked the form from submitting with an error on a box no longer on screen.", audience: "everyone" },
+      { text: "The routing note for investment and second homes \u2014 give it to LOA Justin, Mateo, or John \u2014 now sits beside the question on both the Script page and Input Results, instead of appearing only after you answer Yes. You need to know where it goes before you decide.", audience: "everyone" },
+      { text: "A CLR profile now marks the questions that count four times, so it is clear which gap is worth closing first.", audience: "manager" },
+      { text: "Because the rules changed, Write-up percentages before and after today are not measured the same way and should not be compared across that line.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.32.1",
+    headline: "W2-only states are pink on the map — and actually coloured in now.",
+    items: [
+      { text: "The eleven W2-only states are now pink instead of amber.", audience: "manager" },
+      { text: "They are also, finally, coloured on the map itself. The last release only tinted the small state tags down the right hand side — Arkansas, Georgia, Illinois, Indiana, Maryland, Mississippi, Montana, New Jersey, North Carolina, South Carolina and Vermont were left looking like every other state on the map proper. All eleven are shaded now, in both light and dark.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.32.0",
+    headline: "State Lookup shows exactly how many transfers each assistant has taken.",
+    items: [
+      { text: "Open a state and every loan officer who has assistants now lists them by name with their own transfer count beside the officer’s total, so you can see who is actually taking the work rather than guessing from the team figure.", audience: "everyone" },
+      { text: "The counts follow the 7 day / 30 day / all time switch already on the page, and the heading says which window you are looking at, so a number is never ambiguous.", audience: "everyone" },
+      { text: "Assistants who have left are still listed, crossed out — they kept the transfers they took, and hiding them would make the numbers stop adding up.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.31.0",
+    headline: "W2-only states are marked on the map, and Chris is off them for good.",
+    items: [
+      { text: "Eleven states — Arkansas, Georgia, Illinois, Indiana, Maryland, Mississippi, Montana, New Jersey, North Carolina, South Carolina and Vermont — now show in amber on the map as W2 only, with a legend so the colour explains itself. Amber rather than a darker blue on purpose: a darker blue would just look like more loan officers.", audience: "manager" },
+      { text: "Every state, not just those eleven, now carries the reminder that business purpose loans are okay everywhere — the exception people most often forget is the one that applies to all of them.", audience: "manager" },
+      { text: "Chris Redoble has been taken off the W2-only states he held (Arkansas, Maryland and North Carolina) and can no longer be added back to any of them. That block is applied wherever licensed states are saved, including the bulk import, so it cannot be worked around from another screen.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.30.0",
+    headline: "Finishing a task now means signing for it.",
+    items: [
+      { text: "Marking a task done requires a short note saying what you actually did. Ticking a box left no record anyone could check later; now there is one, with your name and the time on it.", audience: "everyone" },
+      { text: "Any task that starts with “Call” also asks how many calls you made, so the Meta Leads rounds have a real number against them rather than just a tick.", audience: "everyone" },
+      { text: "New History button on the Task Center: every completion, who did it, when, the note, and the calls reported — with a running total. You see your own; managers see everyone’s.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.29.0",
+    headline: "Write-up now sits in the Transfer Scorecard, and counts the whole form.",
+    items: [
+      { text: "The Transfer Scorecard gains a Write-up figure per CLR, graded against the others like every other number there.", audience: "manager" },
+      { text: "It now measures what it says: of every box a transfer could have had filled in, how many were. That includes the qualification answers and all twenty lead-capture questions, not just a handful of headline boxes — so expect a much lower number than before. Team-wide it is about 22%, because the capture questions are rarely answered.", audience: "manager" },
+      { text: "A box that did not apply is still never counted against anyone, and somebody with no transfers in the range shows a dash instead of a zero.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.28.0",
+    headline: "Write-up rate is now a line on the dashboard trend.",
+    items: [
+      { text: "The Team trend chart adds a gold Write-up line showing what share of each day’s transfers were filled in properly. It reads against a percentage scale on the right, so it sits alongside the transfer and appointment counts without squashing them.", audience: "manager" },
+      { text: "On a day with no transfers the line breaks instead of dropping to zero — a quiet day is not a bad one.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.27.0",
+    headline: "Transfer write-up now shows for the whole team at a glance.",
+    items: [
+      { text: "The CLR Profiles list now shows Write-up beside Transfers, Calls and Ratio, so you can see who is filling transfers in properly without opening each profile. Somebody with no transfers in the period shows a dash rather than a zero.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.26.0",
+    headline: "New: how completely transfers are written up.",
+    items: [
+      { text: "A CLR’s profile now shows what share of the information a transfer asks for actually got filled in — borrower name, phone, lead source, the call summary, and the LOA — with a bar per field so you can see which one is pulling the number down.", audience: "manager" },
+      { text: "Each transfer is only scored against the fields that applied to it. An LOA is counted solely on transfers whose loan officer has one, so nobody is marked down for a box that was never theirs to fill.", audience: "manager" },
+      { text: "Fields the form no longer asks for are left out entirely — counting them would have put a ceiling on the score that no amount of effort could lift.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.25.0",
+    headline: "The share link now pins the loan officers people actually see.",
+    items: [
+      { text: "The link was changing the wrong thing — a background tier nobody looks at — so pinning through it appeared to work and changed nothing. It now sets the same pin you use in the state view: pinned officers get the amber highlight, sort to the top, and are the list every CLR is shown when they start the day.", audience: "manager" },
+      { text: "The page also opens by telling you who is pinned right now, before you touch anything, so you are never guessing at the current state.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.24.0",
+    headline: "The call-in alarm now wakes a stalled C3 first.",
+    items: [
+      { text: "These tabs stay open all day — laptops sleep, pages get stuck, and a tab can still be running an old version. Any of those could have swallowed a call-in alarm. C3 now quietly refreshes itself the moment a call-in is raised, so the alarm fires on a fresh page every time.", audience: "everyone" },
+      { text: "It refreshes once per call-in and never again for the same one, so it can never get stuck reloading over and over. It also refreshes on its own if your tab is running an out-of-date version.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.23.0",
+    headline: "Call the whole floor in at once.",
+    items: [
+      { text: "Settings now has “Call everyone in”. It sets off the same alarm — video, siren, flashing screen — on every screen in the team at the same time, and one button stops it for everybody.", audience: "manager" },
+      { text: "It behaves like the individual version: nobody can close it themselves, anyone mid-call can silence the sound for two minutes while the screen stays up, and pressing it twice will not start a second one.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.22.0",
+    headline: "Being called in now comes with a video.",
+    items: [
+      { text: "The call-in alarm plays a clip on loop as its centrepiece. The siren drops to a low background growl while the clip is audible, so the two are not shouting over each other — and if the browser blocks the sound, the siren comes back up to full instead.", audience: "everyone" },
+      { text: "Silencing for two minutes now mutes the clip as well as the siren, so the button does what it says. The screen keeps going, and it still takes a manager to stand it down.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.21.0",
+    headline: "Hand someone a link to set loan officer priority.",
+    items: [
+      { text: "In Settings you can create a share link that lets somebody set which loan officers get leads first — no C3 login needed. Give it a label, pick how long it should last, and it copies itself to your clipboard.", audience: "manager" },
+      { text: "The page behind the link can do one thing only: move loan officers between Priority, Standard and Last resort. It shows names and priority — no phone numbers, no logins, no leads, nothing else — and it cannot touch anything outside your team.", audience: "manager" },
+      { text: "Because this decides who gets leads, each link expires on its own (a week unless you say otherwise), you can revoke any of them instantly, and every change is written to the audit trail with the name the person types in.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.20.0",
+    headline: "Managers can call someone in, and C3 will not let them miss it.",
+    items: [
+      { text: "From a CLR’s profile there is now a “Call them in” button. Their C3 takes over the whole screen, flashes red and sounds a siren until a manager marks them as checked in. They cannot close it, and it beats every other prompt in the app.", audience: "manager" },
+      { text: "If you get called in, there is one button: silence the sound for two minutes. It stops the noise only — the screen keeps going and only a manager can stand it down — so you can finish a call with a borrower and then go.", audience: "everyone" },
+      { text: "The flashing is kept to one flash a second, well under the rate that can trigger a seizure, and anyone whose device asks for reduced motion gets a steady red screen instead of a flashing one. It is every bit as hard to ignore.", audience: "everyone" },
+      { text: "You cannot call yourself in, only one alarm can be running for a person at a time, and every call-in and check-in is recorded.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.19.2",
+    headline: "Training requests can actually be submitted now.",
+    items: [
+      { text: "The Save button stayed greyed out on a training request no matter what you picked, because it was waiting on the description and amount boxes — the two things a training request fills in for you. It now unlocks as soon as you have picked a day.", audience: "everyone" },
+      { text: "Verified end to end this time: picking two days at double time files an $80 request, and asking again for a day you already claimed is refused rather than paid twice.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.19.1",
+    headline: "Fixed: the training day box wouldn’t accept a date.",
+    items: [
+      { text: "The date box on a training request cleared itself as you typed, so there was no way to put a day in at all. It now keeps what you enter, and there is an “Add day” button next to it as well. Both the comp page and the CLR profile were affected.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.19.0",
+    headline: "Trainers can claim their training days.",
+    items: [
+      { text: "Pick Training on a comp request and you get a day picker: add each day you spent training, choose “Standard” at $20 a day or “Double time” at $40, and the total works itself out. It files as an ordinary comp request and goes through the same approval as everything else.", audience: "everyone" },
+      { text: "Managers can file the same thing straight from someone’s CLR profile, for that person — no need to switch pages.", audience: "manager" },
+      { text: "A day that has already been claimed is dropped when the request is filed, and the total recalculated, so the same training day can never be paid twice. The amount is always worked out from the days themselves.", audience: "manager" },
+      { text: "Approved training pay shows up in that CLR’s earnings on their profile alongside everything else they have earned.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.18.1",
+    headline: "Input Results now uses the width it has.",
+    items: [
+      { text: "Fields that belong together sit on the same line instead of each taking a whole row — date beside who logged it, borrower beside phone, loan officer beside assistant, and the three qualification questions across one line. The window got wider last release but everything was still stacked, so it just meant more scrolling.", audience: "everyone" },
+      { text: "Info Gathering, when you open it, is two side by side rather than twenty stacked — so you can take it in at a glance.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.18.0",
+    headline: "Input Results is built around the call you actually just had.",
+    items: [
+      { text: "The window is much wider, so you can see the form instead of scrolling a narrow strip.", audience: "everyone" },
+      { text: "It opens ready for a transfer, set to Direct — that is nine out of ten calls, so that is two fewer clicks on almost every one.", audience: "everyone" },
+      { text: "Info Gathering is tucked behind one button instead of twenty boxes you scroll past every time. It tells you how many are filled, so nothing hides from you, and it is one click away when a call needs it.", audience: "everyone" },
+      { text: "New “Log & next” button: log the call and stay put, ready for the next one. It keeps the date, the result type and the loan officer, and clears the borrower, phone, notes and answers — so one call can never be recorded against another.", audience: "everyone" },
+      { text: "The header shows how many calls you have logged today and the last few names, so you can see your own work adding up without closing anything.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.17.0",
+    headline: "C3 opens fast, and your EOD report asks for itself at 4pm.",
+    items: [
+      { text: "Opening C3 was waiting on an outside service that took three and a half seconds to answer, every time \u2014 the first load of the day, any load after a five-minute gap, and every load after an update. C3 now keeps that answer ready in advance and never makes you wait for it.", audience: "everyone" },
+      { text: "The opening animation used to hold for 2.2 seconds no matter what, long after the app was ready. It now steps aside as soon as the app is up.", audience: "everyone" },
+      { text: "Moving between pages no longer blanks the whole screen. The menu and header stay put and only the page changes, with a short fade.", audience: "everyone" },
+      { text: "Your EOD report is now expected at 4:00 PM on the day it covers. From 4:00 a bar appears at the top of C3 and will not go away; at 4:30 it gets harder to ignore; at 5:00 it turns red and chimes; at 5:30 C3 locks until the report is in. Filing it makes all of that stop straight away.", audience: "everyone" },
+      { text: "This does not change what counts as a late report \u2014 that is still 4:00 PM the next business day, and nothing already submitted has been re-marked.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.16.0",
+    headline: "CLR Profiles: look back further than a month, and see why a quiet week was quiet.",
+    items: [
+      { text: "The timeframe now stretches to last month, 3 months, 6 months or all time. It still opens on this month. Longer ranges used to show an empty chart with \u201ctoo many days\u201d \u2014 now the bars simply widen to a week or a month so the shape stays readable.", audience: "manager" },
+      { text: "The chart no longer draws days that have not happened yet. Looking at this month on the 28th used to leave three empty bars on the end that read like three days of doing nothing.", audience: "manager" },
+      { text: "Quiet weekends are left off. A Saturday nobody was expected to work no longer looks like a failed day \u2014 but a weekend somebody did work still shows up.", audience: "manager" },
+      { text: "Approved time off is shaded on the chart, so an empty bar reads as \u201caway\u201d instead of \u201cwasted day\u201d.", audience: "manager" },
+      { text: "Over 3 months, 6 months or all time the chart adds a trend line, so you can see the direction rather than squinting at individual bars.", audience: "manager" },
+      { text: "Manager notes can now be pinned to the chart. A pinned note shows as a marker above its bar and reads out when you hover it \u2014 so a dip has its explanation attached instead of living somewhere else. Every note is still kept whether or not it is pinned, and no note is ever counted in any figure.", audience: "manager" },
+      { text: "A note can also be sent into that day\u2019s report emails \u2014 for instance why somebody was out \u2014 so the people reading the report get the context with the numbers. You can turn that section off in Settings like any other.", audience: "manager" },
+      { text: "Weekly goals stop being multiplied out over long ranges. Comparing a month of work against a target scaled up 26 times told you nothing.", audience: "manager" },
+      { text: "CLR Profiles load faster: the records behind the page had never been indexed, so every visit read the whole table.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.15.0",
+    headline: "The Bonzo one-click Shotgun button works again.",
+    items: [
+      { text: "Bonzo moved its app to a new web address, so the ⚡ Shotgun button silently stopped appearing on prospects — with no error anywhere, because the extension could not tell it was on a Bonzo page at all. It now recognises the new address. Reload the extension and reopen your Bonzo tabs.", audience: "manager" },
+      { text: "The link back to the prospect in a published lead’s notes was quietly falling back to just a prospect number for the same reason. Real links again.", audience: "manager" },
+      { text: "Publishing the same person twice is properly blocked now. Bonzo stores a phone as +1 followed by the number while a typed one has no +1, and Shotgun treated those as two different people — so one person could be sent to two CLRs at once.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.14.0",
+    headline: "CLR Profiles now show real phone activity, and take manager notes.",
+    items: [
+      { text: "The daily chart used to be dominated by the “Additional Calls” number a CLR types into their own EOD form — the least reliable figure on the page, and it disagreed with EOD Analytics. It now plots what the dialers actually recorded: call time, Dialpad calls, CallTools calls, conversations, transfers and appointments, with a button to switch between them.", audience: "manager" },
+      { text: "Managers can add dated notes to a CLR — what was discussed, context for a rough week. Notes are commentary only: nothing on the page counts them, so a note can never move a statistic or a bar.", audience: "manager" },
+      { text: "Off-network check-ins now require you to be within 200m of the office, using the office location C3 already had on file.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.13.0",
+    headline: "C3 opens much faster.",
+    items: [
+      { text: "Opening C3 used to download and start up the entire app — every screen, every chart, the whole portal — before showing you anything. It now loads only the screen you are on, so first entry is roughly a fifth of what it was. Pages you visit load in the background as you go.", audience: "everyone" },
+      { text: "Releases are lighter too: the parts that rarely change are kept separately, so a new version no longer makes everyone re-download everything.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.12.0",
+    headline: "Late excuses answer themselves, and off-site check-ins prove they are here.",
+    items: [
+      { text: "Clear-cut late reasons are now decided straight away instead of waiting on a manager: already had permission, or forgot to clock in, is excused; traffic or a bare “personal matter” is not. Anything less clear-cut still goes to a manager exactly as before, and if a decision looks wrong you can ask a manager to take another look.", audience: "everyone" },
+      { text: "Managers are no longer asked to approve the obvious ones — only the genuinely debatable ones, and anything an employee escalates.", audience: "manager" },
+      { text: "New optional rule for checking in away from the office: if you are not on the office network, C3 asks your device for location and needs you within 200m of the office. It stays off until an admin sets the office location in Settings, and it never applies on the office network or to the LO Assistant Portal.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.11.0",
+    headline: "C3 now reviews itself and suggests improvements.",
+    items: [
+      { text: "New App Review page for admins: every 3 days — and more thoroughly every 4 weeks — Claude looks at how C3 is actually being used and proposes specific changes, each with the numbers behind it. Approve or deny each one, with a note.", audience: "manager" },
+      { text: "Approving a suggestion records that you want it done; it never changes the app by itself. Every run shows which model produced it and roughly what it cost.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.10.1",
+    headline: "Portal accounts are no longer treated as CLRs.",
+    items: [
+      { text: "The shared LO Assistant Portal login was being counted as a CLR: it was sent EOD reminders and escalating overdue notices for reports it can never file, at an address that is not a mailbox. Portal accounts are now excluded from every CLR list — reminders, daily assignments, rosters and stats.", audience: "manager" },
+      { text: "The third overdue notice used to be titled “3th reminder”. It now reads “reminder #3”.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.10.0",
+    headline: "Paste a screenshot straight onto a comp request.",
+    items: [
+      { text: "Take a screenshot of a receipt and press Ctrl+V (Cmd+V on a Mac) anywhere on the Comp Requests page — it attaches to the request you are filling in, with a thumbnail so you can see what you grabbed. Pasting text still works normally everywhere. You can also paste onto the “Attach or paste receipt” link on a request you already filed.", audience: "everyone" },
+      { text: "Receipts that fail to upload now say so. Until today a rejected receipt was thrown away silently while the confirmation still counted it, so a request could reach the approver with no receipt at all and nobody would know.", audience: "everyone" },
+      { text: "Oversized files are now refused up front with the actual size and limit, instead of failing with an unreadable error mid-submit.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.9.0",
+    headline: "EOD reports are due at 4:00 PM the next business day.",
+    items: [
+      { text: "One deadline now decides lateness: 4:00 PM on the next working day. Filing the same evening or the next morning is on time, and Friday's report is due Monday at 4:00 PM. The old mix of a same-day 4:00 PM cutoff and a next-day allowance marked people late for filing at 4:31 PM while someone filing the following afternoon counted as on time — filing sooner can no longer score worse.", audience: "everyone" },
+      { text: "You are still asked for a missing report as soon as you next open C3, before anything else — that prompt is unchanged and comes well before the deadline.", audience: "everyone" },
+      { text: "Past reports were re-checked against the new deadline, so the EOD history reflects the current rule.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.8.1",
+    headline: "Past EOD reports re-checked against the new rule.",
+    items: [
+      { text: "Reports filed before today were still marked late under the old same-day rule. Each one has been re-checked using when it was actually filed and the filer's own timezone, so the EOD history now matches the current rule instead of showing almost everyone late.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.8.0",
+    headline: "Filing yesterday's EOD in the morning is no longer late.",
+    items: [
+      { text: "You now have until the end of the next working day to file an EOD report, so filing yesterday's first thing in the morning counts as on time. Friday's report is on time when filed Monday. Anything older than that still counts as late.", audience: "everyone" },
+      { text: "EOD reports no longer copy managers. The report goes to the person who filed it; managers see the same numbers in the daily digest and the Transfer Scorecard.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.7.0",
+    headline: "C3 now notices when an email reaches nobody.",
+    items: [
+      { text: "Every message C3 sends is now checked against the mail provider afterwards. If one is blocked or bounces — which quietly destroyed four months of manager mail — admins get an alert naming the message and the addresses, instead of silence.", audience: "manager" },
+      { text: "The activity log used to record a message as “delivered” the moment the provider accepted it, which is what made the outage invisible. It now records it as accepted, and the true outcome is filled in once known.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.6.1",
+    headline: "Manager emails are reaching managers again.",
+    items: [
+      { text: "Two manager addresses on file were never real mailboxes. They bounced back in April and our mail provider blocked them — and because it drops the entire message when one address is blocked, every manager email since then was thrown away: Transfer Scorecards, check-in digests, late-excuse requests and EOD reports. The correct addresses are now in place and the mail flows again.", audience: "manager" },
+      { text: "Corrections used to be undone: a start-up step kept rewriting the fixed addresses back to the broken ones after every release. That step is gone, so an address you change in Settings now stays changed.", audience: "manager" },
+      { text: "Scheduled daily, weekly and monthly reports had also been left with no recipients at all, and now have them back.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.6.0",
+    headline: "Lead notes and LO replies now live on each package.",
+    items: [
+      { text: "Every package in Results has a notes thread: pick your name, fill in the pre-set lead-notes format, and post — Chris gets the note by email automatically, and it stays on the package for everyone.", audience: "lap" },
+      { text: "Chris (or any admin) can reply on the same thread with Remarks, Notes, and Opportunities — the reply shows highlighted so it's easy to spot, and the portal bell announces it.", audience: "lap" },
+    ],
+  },
+  {
+    version: "4.5.0",
+    headline: "Find your leads by LOA in the portal.",
+    items: [
+      { text: "Results now has a “Connected LOA” dropdown — pick a name and see just the packages for leads that CLR connected to that LOA. Transfer Documents got the same dropdown, and each transfer now shows which LOA it was connected to.", audience: "lap" },
+      { text: "Fixed: LOA names on transfer lists were joined against the wrong table and could show the wrong person — they now come from the LOA directory itself.", audience: "lap" },
+    ],
+  },
+  {
+    version: "4.4.0",
+    headline: "C3 transfers now land in the LAP portal by themselves.",
+    items: [
+      { text: "Every new transfer to Christopher Redoble automatically becomes a package in LAP Results within a minute — named for the borrower, dated, linked to the C3 transfer, with a note saying which CLR sent it. No more creating packages by hand from the Transfer Documents page.", audience: "lap" },
+      { text: "If an LOA already started a package for that borrower in the last week, the transfer links to it instead of creating a duplicate. The portal bell announces each new package.", audience: "lap" },
+      { text: "Transfers logged before today stay as they were — only new ones auto-flow.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.3.2",
+    headline: "Fixed: the extension zip now unzips ready to load.",
+    items: [
+      { text: "If Chrome said “Manifest file is missing or unreadable”: re-download the extension from the Shotgun page — the zip no longer buries the files in a second folder, so the folder your unzip creates is the one Load unpacked wants.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.3.1",
+    headline: "The Bonzo extension now has a proper install window.",
+    items: [
+      { text: "On the Shotgun page, “Get the Chrome extension” opens a window with the download button and the four install steps — plus the key generator for browsers where the login cookie doesn't carry over.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.3.0",
+    headline: "One-click Shotgun straight from Bonzo.",
+    items: [
+      { text: "New Chrome extension: open any prospect in Bonzo and an orange ⚡ Shotgun button appears — one click sends that lead into the rotation. C3 pulls the prospect's name, phone, email, state, and source from the Bonzo API itself, so nothing is retyped and the usual duplicate and calling-hours checks still apply.", audience: "everyone" },
+      { text: "Get it on the Shotgun page: Download the extension, load it via chrome://extensions → Developer mode → Load unpacked. Being logged in to C3 in the same browser is normally all it needs; if not, \"Get my key\" mints a one-time key to paste into the extension popup.", audience: "everyone" },
+      { text: "Leads sent this way carry the Bonzo pipeline, stage, assigned user, and a link back to the prospect in the notes, and the audit trail marks them as one-click publishes.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.2.4",
+    headline: "Shotgun publishers now see the whole board for the last 10 minutes.",
+    items: [
+      { text: "If you have Shotgun publish access, the Shotgun page now shows every lead published in the last 10 minutes — not just the ones assigned to you — so you can watch a lead you fired land with a CLR. Older leads still show only if they're yours.", audience: "everyone" },
+      { text: "Publishers also see who published each lead. Requeue and cancel remain manager-only.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.2.3",
+    headline: "Admins can grant Shotgun publishing to specific people.",
+    items: [
+      { text: "Settings → user list now has an \"Allow Shotgun\" button on each non-manager. Granted users get the publish form on the Shotgun page and can send prospects into the rotation — without any other manager rights.", audience: "manager" },
+      { text: "Managers and admins can publish as always. Only an admin can grant or revoke the flag, and every change is recorded in the audit trail.", audience: "manager" },
+    ],
+  },
+  {
+    version: "4.2.2",
+    headline: "Time Clock moved into Advanced Settings.",
+    items: [
+      { text: "Time Clock now lives under Advanced Settings in the sidebar, in a Personal group. The page itself is unchanged — just its spot in the menu." },
+    ],
+  },
+  {
+    version: "4.2.1",
+    headline: "The expanded borrower profile now collects only the requested contact and loan details.",
+    items: [
+      { text: "Input Results and the live Lead Card no longer include Social Security number fields for either borrower." },
+    ],
+  },
+  {
+    version: "4.2.0",
+    headline: "Input Results now captures a complete, clearly organized borrower and loan profile.",
+    items: [
+      { text: "Transfers can now include borrower contact and date-of-birth details, an exact credit score, co-borrower details, and separate first-mortgage and HELOC terms." },
+      { text: "The form is grouped into borrower, co-borrower, property, first mortgage, HELOC, and income sections so the handoff is faster to complete and easier to read." },
+    ],
+  },
+  {
+    version: "4.1.0",
+    headline: "Recurring tasks keep every deadline, and overdue work now follows up until it is done.",
+    items: [
+      { text: "Each recurring deadline is now its own task occurrence. If Monday is missed, it stays overdue when Tuesday's occurrence appears instead of blocking the schedule or disappearing when somebody completes it late. The saved local deadline also stays at the same clock time across daylight-saving changes." },
+      { text: "An overdue task now opens a red reminder anywhere in C3, with a 30-minute snooze and a direct path to Task Center. Mandatory report screens and urgent Shotgun offers still take priority." },
+      { text: "Overdue email is now accepted by Resend before C3 records it as sent. Failures retry automatically, and unresolved occurrences send one follow-up email per day to the assigned CLR and managers." },
+    ],
+  },
+  {
+    version: "4.0.3",
+    headline: "Cookie and update dialogs now wait for each other instead of locking the browser.",
+    items: [
+      { text: "C3 now finishes the cookie notice before showing an available-update dialog, and smaller nudges wait until both are resolved. Every visible prompt stays clickable." },
+      { text: "The read-only demo no longer repeats reminders that require saving changes, such as pipeline acknowledgements, goals, or push setup." },
+    ],
+  },
+  {
+    version: "4.0.2",
+    headline: "The read-only C3 demo no longer gets trapped behind reporting screens.",
+    items: [
+      { text: "Demo CLR can now open and explore C3 without an impossible Daily Report or EOD requirement. The demo stays read-only, while required reporting remains fully enforced for real CLR accounts." },
+    ],
+  },
+  {
+    version: "4.0.1",
+    headline: "C3 no longer freezes under several startup prompts at once.",
+    items: [
+      { text: "Required Daily Report and EOD screens now always go first. Today's prioritized loan officers, the pipeline refresher, and the cookie notice wait instead of covering one another." },
+      { text: "After required reporting is complete, C3 presents the daily loan-officer priorities and other startup notices in a clear sequence so every visible button remains usable." },
+    ],
+  },
+  {
+    version: "4.0.0",
+    headline: "Welcome to C3 v4: every claimed Shotgun lead now asks for a result and can become a real transfer.",
+    items: [
+      { text: "After a CLR accepts a Shotgun lead, a result prompt follows them across C3 until they finish the lead. They can keep working and ask for a 10-minute reminder without losing the assignment." },
+      { text: "Shotgun results now include a Log as a transfer option with the receiving loan officer and Direct or Appointment transfer type. Logging it creates the same transfer record used by C3 analytics, reporting, credit, celebrations, and CRM sync." },
+      { text: "Managers can see directly on the Shotgun board when a completed lead was logged as a transfer, who received it, and which transfer type was used.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.104.0",
+    headline: "Shotgun now routes one visible offer at a time and protects the full lead workflow.",
+    items: [
+      { text: "A CLR can hold only one live Shotgun offer, so simultaneous publishes can no longer create a second hidden countdown. Ready CLRs now see offers within about two seconds, with email, state, source, and manager context on the offer." },
+      { text: "Managers now get duplicate phone/email protection, validated contact details, a required state for phone leads, a confirmed Requeue action that clears prior work without erasing history, and a safe Cancel action.", audience: "manager" },
+      { text: "Opening the phone now checks the state's calling window and requires an explicit local-time, DNC, consent, and policy acknowledgement. C3 clearly says which compliance checks still require a person." },
+      { text: "Mandatory Daily Report and EOD locks now suspend Shotgun eligibility immediately, preserving the CLR's Ready preference while preventing an offer from appearing behind a blocking screen." },
+    ],
+  },
+  {
+    version: "3.103.0",
+    headline: "Shotgun offers now chime, can be passed, and a missed one takes you out of the rotation.",
+    items: [
+      { text: "A Shotgun offer now plays a pleasant two-note chime when it lands, and repeats softly while it is on screen — you will hear it even if you are looking at another window." },
+      { text: "New Pass button on the offer: not the right lead for you? Pass and it goes to the next CLR instantly instead of burning the rest of your 20 seconds. Passing keeps you in the rotation." },
+      { text: "Letting the timer run out is different: a missed offer now takes you out of the rotation and leaves you a notification. Press Ready on the Shotgun page to rejoin. Being Ready means answering in 20 seconds — if you step away, C3 stops offering you leads instead of wasting them." },
+    ],
+  },
+  {
+    version: "3.102.0",
+    headline: "Input Results asks for credit once, and employment, credit and military are now buttons.",
+    items: [
+      { text: "Credit score was asked twice — a yes/no \"over 500?\" in Qualification plus a separate Credit score box in Info Gathering. It is one field now, with bands: 500-580, 580-620, 620-720, 720+." },
+      { text: "Employment is W2 / SE / Retired buttons, with a notes box beside it for anything that does not fit — a second job, 1099 work on the side." },
+      { text: "Military is Yes / No with its own notes box." },
+      { text: "Tapping the answer you already picked clears it, so a mistake does not mean starting the form over. The same buttons appear on the live-call Lead Card." },
+    ],
+  },
+  {
+    version: "3.101.1",
+    headline: "A denied attendance request no longer pings you.",
+    items: [
+      { text: "Attendance excuse requests that are not approved are now silent — no notification and no push. An approval still tells you, because it changes something: the late stops counting toward your rolling total." },
+      { text: "The decision and any manager note are still recorded, still audited, and still visible on the Check-Ins page." },
+    ],
+  },
+  {
+    version: "3.101.0",
+    headline: "The dashboard call chart now shows every CallTools dial, not a fraction of them.",
+    items: [
+      { text: "The team trend chart was counting only the calls C3 hears about directly — 185 on a day the team actually dialed 8,729. It now reads the complete CallTools figure, so the bars reflect real dialing volume." },
+      { text: "Manually logged calls and Dialpad are unchanged and still shown separately." },
+    ],
+  },
+  {
+    version: "3.100.0",
+    headline: "The team dashboard is open to everyone, and the Transfer Scorecard opens on today.",
+    items: [
+      { text: "Team Dashboard is now in the sidebar for everyone, not just managers — the same view managers see, with team totals, the leaderboard, transfer trends and LO breakdowns. Your own dashboard is unchanged and still your home page." },
+      { text: "The Transfer Scorecard now opens on Today instead of the last 7 days, so you see where the team stands right now." },
+    ],
+  },
+  {
+    version: "3.99.2",
+    headline: "Fixes C3 freezing on a locked screen you could not click.",
+    items: [
+      { text: "If you were missing both yesterday's call report and an EOD report, C3 showed the \"App Access Locked\" screen on top of the Daily Report box — but nothing on it responded, and the box that would have let you continue was hidden behind it. The app was simply stuck." },
+      { text: "The two now take turns: file the call report first, then the EOD prompt appears and works normally." },
+    ],
+  },
+  {
+    version: "3.99.1",
+    headline: "Transfers and appointments now reach the right loan officer in Bonzo.",
+    items: [
+      { text: "When a borrower exists in more than one LO's Bonzo book, C3 now identifies the right record by the LO's Bonzo login rather than by their display name. A transfer to Bill Neessen was landing in another LO's account because his Bonzo account is named \"Billy\" and the names did not line up." },
+      { text: "If none of the matching records belong to the LO you picked, C3 no longer guesses. It skips the sync and logs every candidate it saw, instead of writing your client into a stranger's CRM." },
+      { text: "It also checks every record sharing the phone number, not just the first three." },
+      { text: "Managers: an LO with no Bonzo username set falls back to their email. Filling in Bonzo usernames on the LO directory makes this exact." },
+    ],
+  },
+  {
+    version: "3.99.0",
+    headline: "EOD Analytics now gives managers a clearer, more complete review workspace.",
+    items: [
+      { text: "The new accountability queue names every CLR with missing or late EOD reports and shows the exact dates that need follow-up.", audience: "manager" },
+      { text: "Managers can review any historical 7-, 30-, or 90-day period, move directly between CLRs without resetting the page, and return to the whole-team view in one click.", audience: "manager" },
+      { text: "CLR patterns now have focused accountability filters and a mobile-friendly layout, while report details can be searched, filtered, sorted, and exported to CSV.", audience: "manager" },
+      { text: "Team trends now include conversation-to-transfer and conversation-to-appointment rates, plus an exact day-by-day breakdown behind the chart.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.98.3",
+    headline: "Your check-in schedule now makes the attendance commitment unmistakable.",
+    items: [
+      { text: "Check-In, Weekly Schedule, and the LO/LOA check-in portal now clearly explain that saved days and start times are the schedule you will be accountable for keeping." },
+      { text: "The notice reminds you to enter the least restrictive schedule permitted for your role and to commit only to hours you can reliably meet." },
+    ],
+  },
+  {
+    version: "3.98.2",
+    headline: "Leaving the Shotgun rotation now works, and stays that way.",
+    items: [
+      { text: "Turning off Shotgun was being undone about ten seconds later by the background check that keeps you marked online, so it was effectively impossible to leave the rotation. It now sticks." },
+      { text: "Your choice is saved to your account rather than to one browser, so opting out on your laptop no longer leaves your phone quietly putting you back in." },
+    ],
+  },
+  {
+    version: "3.98.1",
+    headline: "Shotgun paces itself, and a claimed lead is locked to the CLR who took it.",
+    items: [
+      { text: "A Shotgun lead nobody picks up now waits five minutes before coming back to the same CLR. It still cycles round the team until someone takes it — it just stops re-offering every twenty seconds." },
+      { text: "Fixes a case where a lone CLR with C3 open could be left under the offer pop-up continuously, with the rest of C3 unreachable behind it." },
+      { text: "Once a lead is confirmed it belongs to that CLR alone: nobody else can claim it, it cannot be claimed twice, and the rotation will not hand it on." },
+    ],
+  },
+  {
+    version: "3.98.0",
+    headline: "Shotgun keeps going until someone grabs the lead — and C3 stops signing you out.",
+    items: [
+      { text: "C3 was bouncing people to the login screen at random. A request that timed out or failed was being treated as \"you are signed out\", even though your session was still perfectly valid. Now only the server actually saying so signs you out, and a request that fails is retried instead." },
+      { text: "Shotgun is ON by default for every CLR. Keep C3 open and you are in the rotation — there is nothing to press. You can still opt out from the Shotgun page whenever you need to." },
+      { text: "A Shotgun lead no longer gets stranded. It used to stop for good once it had been offered to each Ready CLR once, so a lead nobody picked up just sat in the queue. It now keeps cycling round the team until somebody confirms it." },
+      { text: "You get 20 seconds to confirm a Shotgun lead, up from 15." },
+    ],
+  },
+  {
+    version: "3.97.1",
+    headline: "Shotgun now rallies the team when too few CLRs are ready.",
+    items: [
+      { text: "When a lead is published with only zero, one, or two CLRs in the Ready queue, every active CLR receives an email, push alert, and C3 notification prompting them to join Shotgun." },
+      { text: "The CLR selected for the lead still receives the separate urgent 15-second confirmation alert." },
+    ],
+  },
+  {
+    version: "3.97.0",
+    headline: "C3 introduces Shotgun—15-second live lead distribution for ready CLRs.",
+    items: [
+      { text: "Managers can publish a lead from the new Shotgun page; C3 offers it fairly to one ready CLR at a time." },
+      { text: "CLRs press Ready to enter the rotation, receive a full-screen offer, and have 15 seconds to confirm before the lead moves automatically." },
+      { text: "After claiming a lead, the CLR records whether they called and texted, writes result notes, saves progress, and marks the lead done." },
+      { text: "Managers can watch the live queue, see who is ready and who owns each lead, review completed results, and requeue active leads." },
+    ],
+  },
+  {
+    version: "3.96.1",
+    headline: "The 10:00 AM check-in email now explains excuses and reliably includes configured managers.",
+    items: [
+      { text: "Excused late arrivals and absences now show their recorded reason in the private 10:00 AM manager email." },
+      { text: "Scott Petrie and every configured manager-email recipient are now included in the 10:00 AM digest and overdue-task manager emails without requiring extra C3 permissions." },
+    ],
+  },
+  {
+    version: "3.96.0",
+    headline: "Transfer celebrations now show your totals—and race leaders across the screen.",
+    items: [
+      { text: "Every transfer celebration shows your updated daily and monthly transfer totals immediately after the transfer is saved." },
+      { text: "When your transfer puts you in first place for the day—or you extend your lead—a race car speeds across the screen with a Daily Leader banner." },
+    ],
+  },
+  {
+    version: "3.95.1",
+    headline: "Task assignments and overdue deadlines are much harder to miss.",
+    items: [
+      { text: "CLRs now receive an email, push alert, and C3 notification when a task is assigned to them." },
+      { text: "When a task becomes overdue, both the assigned CLR and every manager receive alerts and email, and Task Center displays a prominent red overdue banner." },
+    ],
+  },
+  {
+    version: "3.95.0",
+    headline: "Task Center now supports custom weekly schedules.",
+    items: [
+      { text: "Managers can choose any combination of weekdays for a recurring task, including schedules such as Monday, Wednesday, and Friday." },
+      { text: "Transfer wins now use the upgraded cinematic full-screen celebration with eight times the confetti, animated light rays, energy rings, and a larger centerpiece." },
+    ],
+  },
+  {
+    version: "3.94.2",
+    headline: "Transfer celebrations got a major visual upgrade.",
+    items: [
+      { text: "Your transfer win now fills the screen with layered confetti cannons, animated light rays, gold energy rings, a polished transfer banner, and a bigger cinematic centerpiece." },
+    ],
+  },
+  {
+    version: "3.94.1",
+    headline: "Transfer celebrations now appear for the right person.",
+    items: [
+      { text: "After you successfully log a transfer, the full-screen animation and confetti now appear immediately in your browser—and only your browser." },
+    ],
+  },
+  {
+    version: "3.94.0",
+    headline: "C3 adds a real task center, livelier transfers, and a better certification experience.",
+    items: [
+      { text: "Managers can assign one-time or recurring tasks to CLRs, set priorities and deadlines, track completion history, and automatically alert every manager when a deadline is missed." },
+      { text: "Opted-in transfer alerts now fill the screen with confetti, a victory animation, and the celebration chime instead of appearing as a small corner message." },
+      { text: "Celebrations arrive within a few seconds, queue cleanly when multiple transfers land together, and respect reduced-motion accessibility settings." },
+      { text: "The morning activity popup now asks only about the most recent completed workday—it will never demand a report for the day that just started." },
+    ],
+  },
+  {
+    version: "3.93.0",
+    headline: "The CLR certification test now feels like a game instead of a 60-question form.",
+    items: [
+      { text: "The test shows one question at a time, gives immediate right-or-wrong feedback with the explanation, celebrates streaks and checkpoints, and uses motion to keep the full 60-question run engaging." },
+      { text: "Scoring still happens securely on the server, the full answer key stays hidden, and only completed attempts enter test history." },
+    ],
+  },
+  {
+    version: "3.92.1",
+    headline: "Managers can reverse a time-off approval without deleting the request.",
+    items: [
+      { text: "An approved team time-off request now has a Deny approved time off action with confirmation, an optional note, requester notification, and a complete audit trail.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.92.0",
+    headline: "Managers can now understand EOD reporting patterns across the whole team in one place.",
+    items: [
+      { text: "EOD Analytics shows submission and on-time rates, CallTools activity, conversations, transfers, appointments, checklist patterns, and every report's notes in a manager-friendly view.", audience: "manager" },
+      { text: "Training workdays now recognize measurable work from EOD reports and Dialpad too, so calls, appointments, messages, and other real activity count even without a transfer.", audience: "manager" },
+      { text: "Chris Redoble transfers logged in C3 can be opened as LAP packages, linked to a package that was started earlier, or merged when the borrower was accidentally entered twice.", audience: "lap" },
+      { text: "LAP documents are optional: an LOA can start a borrower package before any file arrives and add any useful documents later.", audience: "lap" },
+      { text: "Transfers for a loan officer with an active LOA stay in the LAP workflow instead of also changing that borrower in Bonzo." },
+    ],
+  },
+  {
+    version: "3.91.4",
+    headline: "Every C3 workday now opens with the loan officers who need attention first.",
+    items: [
+      { text: "The first C3 screen of the day shows every loan officer marked as needing transfers, followed by your ranked daily LO assignment order." },
+      { text: "The briefing appears at the start of each C3 business day and includes a direct button to open Daily Assignments." },
+    ],
+  },
+  {
+    version: "3.91.3",
+    headline: "New CLRs are clearly marked while they complete their first 20 business workdays.",
+    items: [
+      { text: "Every C3 stats view now labels CLRs with fewer than 20 completed business workdays as In training.", audience: "manager" },
+      { text: "In-training CLRs remain visible with their full results, but they are excluded from the manager dashboard's rolling team averages until day 20.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.91.2",
+    headline: "There is no longer a limit on who can be marked as needing transfers.",
+    items: [
+      { text: "Managers can flag as many loan officers as needed from State Lookup. Every flagged LO remains highlighted and pinned to the top of the states they cover." },
+    ],
+  },
+  {
+    version: "3.91.1",
+    headline: "Managers now receive the full set of attendance and time notices by email.",
+    items: [
+      { text: "Late-excuse requests, schedule changes and time-off requests now email the configured manager recipients, in addition to their existing C3 and push notifications." },
+      { text: "Scott Petrie is included through the manager email list; this does not change his C3 permissions." },
+    ],
+  },
+  {
+    version: "3.91.0",
+    headline: "A 60-question certification test, and a shorter sidebar.",
+    items: [
+      { text: "CLR Training now has a certification test: 60 questions from Matt Lane's two-week plan, 54 correct (90%) to pass. After you submit it shows every answer with a short explanation, so the review with your trainer has something to work from." },
+      { text: "Attempts are saved, so you and your trainer can see your history. Trainers see everyone's." },
+      { text: "Forum, CLR Training and CLR Profiles moved into Advanced Settings to keep the everyday sidebar short." },
+      { text: "The app icon is transparent now, and adapts — navy on light backgrounds, white on dark. The installed-app icon keeps its tile, because iOS puts transparent icons on a black square." },
+    ],
+  },
+  {
+    version: "3.90.0",
+    headline: "The CLR Trainer Walkthrough is now a page in C3, written by Matt Lane.",
+    items: [
+      { text: "Matt Lane's two-week training plan is under CLR Training — all ten days, split morning and afternoon, with each day's end-of-day checkpoint called out. No more hunting for the document." },
+      { text: "Filter to Week 1 or Week 2, jump straight to a day, or print the whole thing for a trainee to keep at their desk." },
+    ],
+  },
+  {
+    version: "3.89.0",
+    headline: "Up to three loan officers can be flagged as needing transfers.",
+    items: [
+      { text: "Flagged LOs are highlighted and pinned to the top of every state they're licensed in on State Lookup, so you can see who to send the next transfer to without checking the counts." },
+      { text: "The current shortlist is shown at the top of the state panel, so you don't have to hunt for a highlight." },
+      { text: "Managers set the list from State Lookup — three at a time, on purpose. Flagging a fourth is refused rather than quietly dropping someone, so you choose who comes off." },
+    ],
+  },
+  {
+    version: "3.88.0",
+    headline: "C3 has its own app icon instead of the generic company W.",
+    items: [
+      { text: "The browser tab, taskbar and installed app now show the C³ mark. Your browser caches icons hard, so if you still see the old W, a hard refresh (Ctrl+Shift+R) or reopening the tab will pick it up." },
+      { text: "At small sizes the icon drops the superscript and shows the C on its own, so it stays readable in a crowded tab strip." },
+      { text: "The LO Assistant Portal keeps its own separate icon, so the two stay tellable apart when you have both open.", audience: "lap" },
+    ],
+  },
+  {
+    version: "3.87.0",
+    headline: "Everyone now sees the full list of what changed in each update.",
+    items: [
+      { text: "Update notes are no longer filtered by whether you're a manager — every person sees every change, including the ones that land on screens they don't use." },
+    ],
+  },
+  {
+    version: "3.86.0",
+    headline: "The two retail Bonzo questions on the EOD are only for when you're asked.",
+    items: [
+      { text: "The retail Bonzo questions (Meta leads, ungraduated/graduated) are not part of the standard day — they're for when a manager asks you to work it, or you ask to. Answering No is expected and is not counted against you." },
+      { text: "Managers now see who DID pick up retail Bonzo work, rather than a list of everyone who didn't.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.85.0",
+    headline: "Update notices now actually list what changed — the last version could not.",
+    items: [
+      { text: "What's new in each update is sent by the server rather than read from the tab you already have open, so the list is correct even for releases that happened after your tab loaded." },
+    ],
+  },
+  {
+    version: "3.84.0",
+    headline: "The seating map opens inside C3 instead of throwing you out to another site.",
+    items: [
+      { text: "Seating Map now loads in place, so you stay signed in and keep your spot instead of bouncing to another tab. It is still the same seating chart app, just shown inside C3." },
+      { text: "Open in new tab is still there if you want it full screen." },
+    ],
+  },
+  {
+    version: "3.83.0",
+    headline: "Update notices now tell you what actually changed.",
+    items: [
+      { text: "This popup now lists what's new in the version you're updating to, instead of just saying an update exists." },
+      { text: "Notes are written per release, so you can tell at a glance whether a refresh affects your work." },
+    ],
+  },
+  {
+    version: "3.82.0",
+    headline: "Managers can read the day's EOD reports without opening a single email.",
+    items: [
+      { text: "The EOD card on the manager dashboard now shows what each CLR reported — calls, messages, conversations, transfers, appointments, LOs covered — with their notes inline and a team total.", audience: "manager" },
+      { text: "Loan officer workload balance: the five lightest and five heaviest loaded LOs over 30 days, so transfers can be spread without checking state by state.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.81.0",
+    headline: "EOD reports are due by 4:00 PM and now ask four daily questions.",
+    items: [
+      { text: "Your EOD report is due by 4:00 PM. Filing later still works — it's just marked late." },
+      { text: "Four new questions: bulk text for all assigned LOs, responded/new contacts worked, retail Bonzo Meta leads, retail Bonzo ungraduated/graduated leads." },
+      { text: "Notes are now required. Everything else on the report is counted for you, so the note is the only part that can't be reconstructed." },
+      { text: "Managers see who filed late and which checklist items were skipped, by name.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.80.0",
+    headline: "CLR profiles show an all-time record measured against the floor.",
+    items: [
+      { text: "Profiles now carry lifetime transfers, appointments, calls and active days, compared against the team on five rates.", audience: "manager" },
+      { text: "Comparisons are per active day, not totals, so someone who started recently isn't buried by tenure. Under five active days the ranking is marked provisional.", audience: "manager" },
+    ],
+  },
+  {
+    version: "3.79.0",
+    headline: "You can book an appointment before you know which LO will take it.",
+    items: [
+      { text: 'Input Results has a "No LO yet — assign later" option on appointments. Transfers still need an LO, since a transfer goes to someone.' },
+      { text: "Unassigned appointments read as Unassigned everywhere, including the export." },
+    ],
+  },
+  {
+    version: "3.78.0",
+    headline: "State Lookup leads with the LO who has taken the fewest transfers.",
+    items: [
+      { text: "Open a state and the licensed LOs are ordered fewest-transfers-first, each showing their count, with the lightest-loaded highlighted." },
+      { text: "Switch the window between 7 days, 30 days and all time, or sort by priority tier instead." },
+    ],
+  },
+  {
+    version: "3.77.0",
+    headline: "LAP opens with one shared password instead of individual logins.",
+    items: [
+      { text: "Enter LAP with the shared access password. Your work is recorded against your device rather than your name.", audience: "lap" },
+      { text: "The transfer-documents screen is open to anyone in LAP, not just administrators.", audience: "lap" },
+    ],
+  },
+  {
+    version: "3.76.0",
+    headline: "Input Results is a single page.",
+    items: [
+      { text: "Logging an outcome is one form instead of three screens. The appointment/transfer picker sits at the top and can be changed at any point." },
+      { text: "No more Next and Back — everything you need is on the page." },
+    ],
+  },
+  {
+    version: "3.75.0",
+    headline: "LAP: documents can be submitted one at a time.",
+    items: [
+      { text: "Create a document package with whatever you have — a credit report alone is enough — and attach the AUS and formal quote when they arrive.", audience: "lap" },
+      { text: "A Transfer Documents screen lists every transfer to Chris Redoble over 3, 7 or 30 days or all time, showing which of the three documents came in.", audience: "lap" },
+    ],
+  },
+  {
+    version: "3.74.0",
+    headline: "Transfer notes arrive in Bonzo readable instead of as one block of text.",
+    items: [
+      { text: "The notes C3 posts to Bonzo now have proper headings, one field per line and the LOA routing instruction called out, rather than running together into a wall of text." },
+    ],
+  },
+];
+
+/** Notes for a version, or null when that release shipped without any. */
+export function notesFor(version: string): ReleaseNote | null {
+  return RELEASE_NOTES.find((n) => n.version === version) ?? null;
+}
+
+/**
+ * Everything a reader has missed between the build they are running and the one
+ * that is live, newest first — so someone who skipped three deploys sees all
+ * three rather than only the latest.
+ */
+export function notesBetween(fromVersion: string, toVersion: string): ReleaseNote[] {
+  const cmp = (a: string, b: string) => {
+    const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+    for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+    return 0;
+  };
+  if (cmp(fromVersion, toVersion) >= 0) return [];
+  return RELEASE_NOTES
+    .filter((n) => cmp(n.version, fromVersion) > 0 && cmp(n.version, toVersion) <= 0)
+    .sort((a, b) => cmp(b.version, a.version));
+}
+
+/**
+ * The notes a reader sees. Role is deliberately NOT a filter: a CLR seeing that
+ * managers got a new dashboard costs them one line, while hiding it means the
+ * people asking "did anything change?" are the least likely to be told.
+ *
+ * The portal split remains, because a LAP-only change genuinely has no meaning
+ * inside C3 — it names screens that do not exist there.
+ */
+export function itemsForAudience(note: ReleaseNote, portal: "c3" | "lap"): string[] {
+  return note.items
+    .filter((i) => (i.audience ?? "everyone") !== "lap" || portal === "lap")
+    .map((i) => i.text);
+}
