@@ -1,1 +1,1 @@
-file:///workspace/c3-patch/sidebar.content.txt
+PLACEHOLDER_LOAD_FROM_FILE
