@@ -1,1 +1,1 @@
-@/workspace/c3-patch/sidebar.content.txt
+PLACEHOLDER_READ_FROM_FILE
