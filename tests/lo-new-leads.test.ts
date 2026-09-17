@@ -44,9 +44,11 @@ test("the card carries the number and the claim state; a settled claim never pop
   assert.equal(open.alerts[0].phone, "+15555550100");
   assert.equal(open.alerts[0].externalId, "999");
   assert.equal(open.alerts[0].claim?.escalateAt, "2026-09-14T15:03:05.000Z");
+  // Somebody else took it before this tab ever saw it: remembered, not shown.
   const taken = collectLeadAlerts(feed({ status: "claimed", escalateAt: null, claimedBy: "Skyler Griffin", shotgunLeadId: null }), [], now);
   assert.equal(taken.alerts.length, 0);
   assert.ok(taken.seen.includes("1002:999"));
+  // A card that is up drops the moment the feed says it went to Shotgun.
   const gone = activeLeadAlerts(open.alerts, feed({ status: "escalated", escalateAt: null, claimedBy: null, shotgunLeadId: 77 }), now + 5_000);
   assert.equal(gone.length, 0);
   assert.equal(claimSettled({ status: "escalate_failed", escalateAt: null, claimedBy: null, shotgunLeadId: null }), true);
@@ -68,11 +70,17 @@ test("the server records each lead once, announces it to the assigned CLRs, and 
   assert.match(escalate, /createShotgunLeadFromFields\(orgId, Number\(publisher\.id\), publisher, \{/);
   assert.match(escalate, /source: `New lead — \$\{lead\.lo_name \|\| lead\.lo_email\}`/);
   assert.match(escalate, /\}, "lo-feed"\)/);
-  assert.match(escalate, /takeLoNewLeadForEscalation\(Number\(lead\.id\)\)/);
-  assert.match(escalate, /skipped — claimed before Shotgun/);
-  assert.match(escalate, /finishLoNewLeadEscalation\(Number\(lead\.id\), ok \? Number\(result\.body\?\.leadId\) \|\| null : null, ok \? null : String/);
-  assert.ok(escalate.indexOf("takeLoNewLeadForEscalation") < escalate.indexOf("createShotgunLeadFromFields"),
-    "must take the row before publishing Shotgun so a Call claim wins the race");
+  assert.match(escalate, /markLoNewLeadEscalated\(/);
+  // Claim-vs-Shotgun race is closed in storage: due-list takes each row before
+  // the watcher creates a Shotgun lead (see loNewLeadsDueForShotgun).
+  const storageSrc = read("server/storage.ts");
+  const dueFn = storageSrc.slice(storageSrc.indexOf("function loNewLeadsDueForShotgun"), storageSrc.indexOf("function openFloorLoNewLeads"));
+  assert.match(dueFn, /takeLoNewLeadForEscalation\(Number\(lead\.id\)\)/);
+  assert.match(dueFn, /skipped — claimed before Shotgun/);
+  assert.ok(dueFn.indexOf("takeLoNewLeadForEscalation") < dueFn.indexOf("return taken"),
+    "must take each due row before returning it to escalateUnclaimedLoLeads");
+  assert.match(storageSrc, /export function takeLoNewLeadForEscalation/);
+  assert.match(storageSrc, /export function finishLoNewLeadEscalation/);
 });
 
 test("the watcher runs on its own five-second clock and shares the popup's cache entry", () => {
@@ -83,6 +91,7 @@ test("the watcher runs on its own five-second clock and shares the popup's cache
   assert.match(routes, /const LO_NEW_LEAD_POLL_PER = 5;/);
   assert.match(watcher, /escalateUnclaimedLoLeads\(orgId\)/);
   assert.match(routes, /\}, 5_000\);\s*\n\s*loLeadWatcher\.unref/);
+  // Every feed read — a poll's or the watcher's — announces through the same hook.
   assert.match(routes, /onFresh: \(los: NewestLeadsByLo\[\]\) => \{ try \{ announceFreshLoLeads\(orgId, los\); \}/);
   assert.match(routes, /await newestLeadsForLos\(emails, \{ hours, per \}, newestLeadsDeps\(orgId\)\)/);
 });
@@ -117,6 +126,8 @@ test("both cards secure their lead before opening Dialpad, and the new-lead card
   assert.match(offer, /refetchIntervalInBackground: true/);
 });
 
+// Execute the production function against a tiny isolated database, without
+// importing storage.ts (its module initialization boots every production table).
 function claimFixture() {
   const db = new Database(":memory:");
   db.exec(`
@@ -138,7 +149,7 @@ function claimFixture() {
   let clockMs = firstSeen;
   class ClaimClock extends Date { static now() { return clockMs; } }
   const start = storage.indexOf("export function claimLoNewLead(");
-  const end = storage.indexOf("/** Unclaimed leads", start);
+  const end = storage.indexOf("export function takeLoNewLeadForEscalation", start);
   assert.ok(start >= 0 && end > start, "extract the exact production claim function");
   const source = storage.slice(start, end).replace("export function", "function");
   const compiled = ts.transpileModule(source, {
@@ -228,6 +239,7 @@ test("competing claims at the same server instant have exactly one winner", asyn
   } finally { f.db.close(); }
 });
 
+
 test("escalation take loses to a claim that landed after the due-list was read", () => {
   const db = new Database(":memory:");
   db.exec(`
@@ -235,12 +247,14 @@ test("escalation take loses to a claim that landed after the due-list was read",
       escalate_error TEXT, shotgun_lead_id INTEGER);
     INSERT INTO lo_new_leads VALUES (1,'new',NULL,NULL,NULL);
   `);
+  // Mirror production: take only succeeds while status is still 'new'.
   const take = (id: number) => {
     const res = db.prepare(`UPDATE lo_new_leads SET status='escalated', escalated_at=?, escalate_error=NULL, shotgun_lead_id=NULL
       WHERE id=? AND status='new'`).run(new Date().toISOString(), id);
     return res.changes > 0;
   };
   const claim = () => db.prepare(`UPDATE lo_new_leads SET status='claimed' WHERE id=1 AND status='new'`).run();
+  // Watcher already listed id=1 as due; CLR Call claims first.
   claim();
   assert.equal(take(1), false, "Shotgun must not take a claimed lead");
   assert.equal((db.prepare("SELECT status FROM lo_new_leads WHERE id=1").get() as any).status, "claimed");
