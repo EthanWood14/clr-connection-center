@@ -7,6 +7,7 @@ import { installTvDayRaceFeedEnrichment } from "./tv-day-race-feed";
 import * as storageExtra from "./storage";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { startRetailBonzoShotgunWatcher } from "./retail-bonzo-shotgun-watcher";
 
 const DEFAULT_SESSION_SECRET = "clr-secret-2026";
 if (process.env.NODE_ENV === "production") {
@@ -145,6 +146,8 @@ app.use((req, res, next) => {
 (async () => {
   installTvDayRaceFeedEnrichment(app, () => storageExtra.getRawSqlite());
   await registerRoutes(httpServer, app);
+  // Retail pool seat is never on daily CLR assignments — own always-on poll.
+  startRetailBonzoShotgunWatcher();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

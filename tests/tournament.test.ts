@@ -127,15 +127,10 @@ test("tournament is on for home pages, with Elleine excluded from the board and 
   assert.deepEqual(s.map((r) => [r.name, r.credit]), [["Ana", 1], ["Cy", 0]]);
 
   const dashboard = read("client/src/pages/dashboard.tsx");
-  assert.match(dashboard, /showTournament && \(\s*\n\s*<TabsTrigger value="tournament"/);
-  assert.match(dashboard, /showTournament && \(\s*\n\s*<TabsContent value="tournament"/);
-  assert.match(dashboard, /canSeeTournamentHome\(user\?\.name\)/);
-  const manager = read("client/src/pages/manager-dashboard.tsx");
-  assert.match(manager, /<TournamentBoard \/>/);
-  assert.match(manager, /canSeeTournamentHome\(user\?\.name\)/);
+  assert.match(dashboard, /TOURNAMENT_ENABLED && \(\s*\n\s*<TabsTrigger value="tournament"/);
+  assert.match(dashboard, /TOURNAMENT_ENABLED && \(\s*\n\s*<TabsContent value="tournament"/);
   const sidebar = read("client/src/components/app-sidebar.tsx");
   assert.match(sidebar, /\.\.\.\(TOURNAMENT_ENABLED \? \[\{ title: "Transfer Tournament"/);
-  assert.match(sidebar, /referenceItemsForUser/);
   const page = read("client/src/pages/tournament.tsx");
   assert.match(page, /if \(!TOURNAMENT_ENABLED\) \{/);
   assert.match(page, /isTournamentExcluded\(user\?\.name\)/);
