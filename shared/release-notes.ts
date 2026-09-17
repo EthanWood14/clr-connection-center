@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.119.1",
+    headline: "Calling a new lead keeps it out of Shotgun.",
+    items: [
+      { text: "If you hit Call (or Got it) on a new assigned-LO lead just as the three-minute window ended, C3 could still publish that lead into Shotgun while your claim landed — so you were dialing a lead another CLR was being offered. Escalation now takes the row before creating a Shotgun lead, so a successful claim always wins.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.118.0",
     headline: "The corner race never restarts, the skyline is a city, and the garage closes after 15 minutes a day.",
     items: [
