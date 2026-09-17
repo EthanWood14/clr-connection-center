@@ -28,6 +28,7 @@ import {
   type AlgorithmSettings, type InsertAlgorithmSettings,
   type AuditLog, type InsertAuditLog,
 } from "@shared/schema";
+import * as loNewLeadEscalation from "./lo-new-lead-escalation";
 
 const dbPath = process.env.DATABASE_PATH ?? "clr.db";
 
@@ -4980,11 +4981,13 @@ export function claimLoNewLead(orgId: number, externalId: string, userId: number
   return sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND external_id=?`).get(orgId, externalId);
 }
 
-/** Unclaimed leads whose window closed at or before `cutoffIso`. */
+/** Unclaimed leads whose window closed at or before `cutoffIso` — take before Shotgun publish. */
 export function loNewLeadsDueForShotgun(orgId: number, cutoffIso: string): any[] {
-  return sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND status='new' AND first_seen_at<=? ORDER BY first_seen_at, id LIMIT 50`)
-    .all(orgId, cutoffIso) as any[];
+  return loNewLeadEscalation.loNewLeadsDueForShotgun(orgId, cutoffIso);
 }
+
+export const takeLoNewLeadForEscalation = loNewLeadEscalation.takeLoNewLeadForEscalation;
+export const finishLoNewLeadEscalation = loNewLeadEscalation.finishLoNewLeadEscalation;
 
 /**
  * Unclaimed leads that are now open to the whole floor: past the assignee's
@@ -5029,9 +5032,7 @@ export function loNewLeadClaimStats(orgId: number, sinceIso: string, untilIso: s
 }
 
 export function markLoNewLeadEscalated(id: number, shotgunLeadId: number | null, error: string | null): void {
-  const now = new Date().toISOString();
-  sqlite.prepare(`UPDATE lo_new_leads SET status=?, shotgun_lead_id=?, escalated_at=?, escalate_error=? WHERE id=? AND status='new'`)
-    .run(error ? "escalate_failed" : "escalated", shotgunLeadId, now, error ? error.slice(0, 300) : null, id);
+  loNewLeadEscalation.markLoNewLeadEscalated(id, shotgunLeadId, error);
 }
 
 /** What the feed should say about each lead's claim, keyed by external id. */
