@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTransferCount } from "@shared/transfer-credit";
-import { LAST_TOURNAMENT_DATE, TOURNAMENT_ENABLED, type TournamentPhase, type TournamentStanding } from "@shared/tournament";
+import { LAST_TOURNAMENT_DATE, TOURNAMENT_ENABLED, isTournamentExcluded, type TournamentPhase, type TournamentStanding } from "@shared/tournament";
+import { useAuth } from "@/lib/auth";
 
 /**
  * The Transfer Tournament: most transfers logged 12:30–5:30 PM Pacific today.
@@ -166,6 +167,17 @@ export function TournamentBoard({ fullscreen = false, date }: { fullscreen?: boo
 }
 
 export default function TournamentPage() {
+  const { user } = useAuth();
+  // Excluded helpers (Elleine) stay off the live board and home surfaces.
+  if (TOURNAMENT_ENABLED && isTournamentExcluded(user?.name)) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-4 p-4 sm:p-6">
+        <Card className="border-dashed"><CardContent className="p-4 text-sm text-muted-foreground" data-testid="tournament-excluded">
+          You are not in this Transfer Tournament. <Link href="/" className="underline">Back to Home</Link>
+        </CardContent></Card>
+      </div>
+    );
+  }
   // No tournament on: the page is a record of the last one, not a live board.
   if (!TOURNAMENT_ENABLED) {
     return (
