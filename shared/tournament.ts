@@ -16,15 +16,30 @@
 import { transferCreditFor } from "./transfer-credit";
 
 /**
- * Whether a tournament is on. Off since 15 Sep 2026 — Ethan: "get rid of it,
- * it shouldn't be back… keep the code tho, for future." With this false the
- * Dashboard tab and the sidebar link are gone and /tournament shows the last
- * board as a record; flip it to true (and set the window below) to run
- * another one. The 14 Sep 2026 run: Elleine Asuncion won with 12.
+ * Whether a tournament is on. On for 17 Sep 2026 (12:30–5:30 PT) — Ethan:
+ * tournament on everyone's home pages including managers, excluding Elleine.
+ * With this false the Dashboard tab and the sidebar link are gone and
+ * /tournament shows the last board as a record. The 14 Sep 2026 run: Elleine
+ * Asuncion won with 12.
  */
-export const TOURNAMENT_ENABLED = false;
-/** The most recent run, shown as the record while no tournament is on. */
+export const TOURNAMENT_ENABLED = true;
+/** The most recent completed run, shown as the record while no tournament is on. */
 export const LAST_TOURNAMENT_DATE = "2026-09-14";
+
+/**
+ * Helpers who should not compete / see the home board. Match is case-insensitive
+ * on a whole word in the display name (e.g. "Elleine Asuncion").
+ */
+export const TOURNAMENT_EXCLUDED_NAME_RE = /\belleine\b/i;
+
+export function isTournamentExcluded(name: string | null | undefined): boolean {
+  return TOURNAMENT_EXCLUDED_NAME_RE.test(String(name ?? "").trim());
+}
+
+/** Home tab / sidebar: tournament is on AND this user is not excluded. */
+export function canSeeTournamentHome(name: string | null | undefined): boolean {
+  return TOURNAMENT_ENABLED && !isTournamentExcluded(name);
+}
 
 export const TOURNAMENT_TZ = "America/Los_Angeles";
 export const TOURNAMENT_START = "12:30";
@@ -132,13 +147,16 @@ const str = (v: unknown) => (v == null ? "" : String(v));
 
 /**
  * Standings for one window. Every active CLR in `people` is on the board
- * (zero is a score too); anyone else who earned credit is added by name.
+ * (zero is a score too), except TOURNAMENT_EXCLUDED names; anyone else who
+ * earned credit is added by name (also skipping excluded people).
  */
 export function tournamentStandings(
   rows: ReadonlyArray<TournamentOutcomeRow> | null | undefined,
   people: ReadonlyArray<TournamentPerson>,
   window: TournamentWindow,
 ): TournamentStanding[] {
+  const excludedIds = new Set(people.filter((p) => isTournamentExcluded(p.name)).map((p) => p.id));
+  const roster = people.filter((p) => !excludedIds.has(p.id));
   const byUser = new Map<number, TournamentStanding>();
   const ensure = (id: number, name: string) => {
     let s = byUser.get(id);
@@ -146,7 +164,7 @@ export function tournamentStandings(
     return s;
   };
   const nameOf = new Map(people.map((p) => [p.id, p.name]));
-  for (const p of people) ensure(p.id, p.name);
+  for (const p of roster) ensure(p.id, p.name);
 
   const inWindow = (rows ?? []).filter((row) => {
     if ((row.outcomeType ?? row.outcome_type) !== "transfer") return false;
@@ -160,6 +178,7 @@ export function tournamentStandings(
     const sender = Number(row.shotgunSenderId ?? row.shotgun_sender_id) || 0;
     const credited = maker > 0 && sender > 0 && maker !== sender ? [maker, sender] : [maker, sender].filter((id) => id > 0).slice(0, 1);
     for (const who of credited) {
+      if (excludedIds.has(who) || isTournamentExcluded(nameOf.get(who))) continue;
       const credit = transferCreditFor(row, who);
       if (credit <= 0) continue;
       const s = ensure(who, nameOf.get(who) ?? `CLR #${who}`);
