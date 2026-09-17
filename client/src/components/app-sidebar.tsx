@@ -1,1 +1,1 @@
-@file:///workspace/c3-patch/sidebar.content.txt
+file:///workspace/c3-patch/sidebar.content.txt
