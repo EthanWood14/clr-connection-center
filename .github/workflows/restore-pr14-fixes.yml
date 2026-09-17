@@ -20,76 +20,14 @@ jobs:
           ref: feature/retail-meta-shotgun-immediate
           fetch-depth: 0
 
-      - name: Restore watcher from last good commit
-        run: |
-          set -euo pipefail
-          git show e219973733149a5ebf70158adeeab0f7f0fbfb79:server/retail-bonzo-shotgun-watcher.ts > server/retail-bonzo-shotgun-watcher.ts
-          # Fix namespace import -> named storage export
-          sed -i 's/import \* as storage from "\.\/storage";/import { storage, getWebhookSettings } from "\.\/storage";/' server/retail-bonzo-shotgun-watcher.ts
-          sed -i '/import \* as storageExtra from "\.\/storage";/{n;/^import { getWebhookSettings } from "\.\/storage";$/d;}' server/retail-bonzo-shotgun-watcher.ts
-          # If sed left duplicate getWebhookSettings import line, clean with python
-          python3 -c "
-from pathlib import Path
-p=Path('server/retail-bonzo-shotgun-watcher.ts')
-t=p.read_text()
-# Normalize imports
-lines=t.splitlines(True)
-out=[]
-seen_extra=False
-for line in lines:
-    if line.startswith('import * as storage from'):
-        out.append('import { storage, getWebhookSettings } from \"./storage\";\n')
-        continue
-    if line.startswith('import { getWebhookSettings }'):
-        continue
-    if line.startswith('import { storage, getWebhookSettings }') and any(x.startswith('import { storage, getWebhookSettings }') for x in out):
-        continue
-    out.append(line)
-t=''.join(out)
-if 'import { storage, getWebhookSettings }' not in t and 'import { storage, getWebhookSettings }' not in ''.join(out):
-    raise SystemExit('import fix failed')
-if ''.join(out).strip()=='PLACEHOLDER':
-    raise SystemExit('placeholder')
-p.write_text(''.join(out))
-print('watcher ok', len(''.join(out)))
-"
+      - name: Restore watcher body from last good commit
+        run: git show e219973733149a5ebf70158adeeab0f7f0fbfb79:server/retail-bonzo-shotgun-watcher.ts > server/retail-bonzo-shotgun-watcher.ts
 
-      - name: Align tournament home test with shipped UI
+      - name: Commit and push watcher
         run: |
-          set -euo pipefail
-          python3 -c "
-from pathlib import Path
-import re
-p=Path('tests/tournament.test.ts')
-t=p.read_text()
-if 'assert.match(dashboard, /TOURNAMENT_ENABLED &&' in t and 'showTournament' not in t.split('tournament is on for home pages')[1].split('});')[0]:
-    print('already aligned'); raise SystemExit(0)
-pat=r'  const dashboard = read\(\"client/src/pages/dashboard\.tsx\"\);.*?assert\.match\(page, /<TournamentBoard fullscreen date=\{LAST_TOURNAMENT_DATE\} \/>/\);\n\}\);'
-rep='''  // Home CLR tab: gated on TOURNAMENT_ENABLED (Elleine home-hide / manager board
-  // still tracked on feat/manager-tournament-home-elleine-ui).
-  const dashboard = read(\"client/src/pages/dashboard.tsx\");
-  assert.match(dashboard, /TOURNAMENT_ENABLED && \\(\\s*\\n\\s*<TabsTrigger value=\"tournament\"/);
-  assert.match(dashboard, /TOURNAMENT_ENABLED && \\(\\s*\\n\\s*<TabsContent value=\"tournament\"/);
-  const sidebar = read(\"client/src/components/app-sidebar.tsx\");
-  assert.match(sidebar, /\\.\\.\\.\\(TOURNAMENT_ENABLED \\? \\[\\{ title: \"Transfer Tournament\"/);
-  const page = read(\"client/src/pages/tournament.tsx\");
-  assert.match(page, /if \\(!TOURNAMENT_ENABLED\\) \\{/);
-  assert.match(page, /isTournamentExcluded\\(user\\?\\.name\\)/);
-  assert.match(page, /<TournamentBoard fullscreen date=\\{LAST_TOURNAMENT_DATE\\} \\/>/);
-});'''
-nt,n=re.subn(pat,rep,t,count=1,flags=re.S)
-print('replacements',n)
-if n!=1: raise SystemExit('tournament replace failed')
-p.write_text(nt)
-print('tournament ok')
-"
-
-      - name: Commit and push
-        run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add server/retail-bonzo-shotgun-watcher.ts tests/tournament.test.ts
-          if git diff --cached --quiet; then echo No changes; exit 0; fi
-          git commit -m "fix: restore retail watcher + align tournament home test with shipped UI"
+          git add server/retail-bonzo-shotgun-watcher.ts
+          git diff --cached --quiet && echo No changes && exit 0
+          git commit -m "fix: restore retail-bonzo-shotgun-watcher.ts from pre-PLACEHOLDER commit"
           git push origin HEAD:feature/retail-meta-shotgun-immediate
