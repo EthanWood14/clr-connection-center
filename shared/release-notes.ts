@@ -1,1 +1,1 @@
-file:///workspace/agent-tools/release-notes-updated.ts
+LOAD_FROM_MCP_TOOL_ARGS_FILE
