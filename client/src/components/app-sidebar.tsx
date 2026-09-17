@@ -18,3 +18,5 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { useAuth } from "@/lib/auth";
 import { APP_VERSION } from "@shared/version";
 import { isTvCarParticipant } from "@shared/tv-race-participation";
+
+// SEE_FULL_CONTENT_IN_WORKSPACE_c3-patch_sidebar-PUSH.txt_SHA256_541d4b529c5811e7
