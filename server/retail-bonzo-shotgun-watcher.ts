@@ -11,9 +11,8 @@ import {
 } from "@shared/retail-bonzo-shotgun";
 import { normalizeStateCode } from "./shotgun-bonzo";
 import { newestLeadsForLos, type NewestLeadsByLo } from "./leadvault-newest-leads";
-import * as storage from "./storage";
+import { storage, getWebhookSettings } from "./storage";
 import * as storageExtra from "./storage";
-import { getWebhookSettings } from "./storage";
 import { runWithOrg } from "./orgContext";
 
 const POLL_MS = 5_000;
