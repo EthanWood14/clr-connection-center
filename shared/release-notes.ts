@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.119.2",
+    headline: "Chris Redoble Retail leads go straight to Shotgun.",
+    items: [
+      { text: "Any new lead assigned in Bonzo to the Chris Redoble Retail pool seat now publishes to Shotgun within seconds — no three-minute claim wait. Every pipeline on that seat is included.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.119.1",
     headline: "Calling a new lead keeps it out of Shotgun.",
     items: [

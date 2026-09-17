@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import { registerRoutes, flushPendingEmails } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { startRetailBonzoShotgunWatcher } from "./retail-bonzo-shotgun-watcher";
 
 // ── Session secret check ──────────────────────────────────────────────────────
 // Enforced here at startup so a misconfigured production deploy fails fast
@@ -151,6 +152,8 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+  // Retail pool seat is never on daily CLR assignments — own always-on poll.
+  startRetailBonzoShotgunWatcher();
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
