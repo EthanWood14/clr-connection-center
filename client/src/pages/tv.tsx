@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_FAIL_IF_NOT_REPLACED
+__LOAD_FROM_FILE__/workspace/tv-split.tsx
