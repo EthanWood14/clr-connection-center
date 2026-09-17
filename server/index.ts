@@ -3,6 +3,8 @@ import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { registerRoutes, flushPendingEmails } from "./routes";
+import { installTvDayRaceFeedEnrichment } from "./tv-day-race-feed";
+import * as storageExtra from "./storage";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
@@ -150,6 +152,8 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Play-race day timeline credits ride the feed JSON without touching routes.ts.
+  installTvDayRaceFeedEnrichment(app, () => storageExtra.getRawSqlite());
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
