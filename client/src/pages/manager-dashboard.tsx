@@ -450,12 +450,20 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     // one CLR and closed by another — so this cell can legitimately read 4.5 and
     // must never be rounded to a whole. See shared/transfer-credit.ts.
     { key: "transfers",    label: "Transfers", get: r => r.transfers ?? 0,         better: true,  fmt: r => formatTransferCount(r.transfers ?? 0) },
-    ...(pace ? [{ key: "transfersPerWorkedDay", label: "Transfers / day worked", better: true,
+    ...(pace ? [
+      { key: "transfersPerWorkedDay", label: "Transfers / day worked", better: true,
       get: (r: any) => r.transfersPerWorkedDay ?? null,
       fmt: (r: any) => r.transfersPerWorkedDay == null ? "—" : Number(r.transfersPerWorkedDay).toFixed(2),
-      title: "MTD transfers divided by days worked (full day=1, half day=0.5). Full days off are excluded.",
+      title: "Transfers divided by days worked (full=1, half=0.5, full day off=0 even if activity leaked).",
       cellTitle: (r: any) => `${r.transfers ?? 0} transfers / ${r.workedDays ?? 0} days worked`,
-    }] : []),
+    },
+      { key: "callsPerWorkedDay", label: "Calls / day worked", better: true,
+      get: (r: any) => r.callsPerWorkedDay ?? null,
+      fmt: (r: any) => r.callsPerWorkedDay == null ? "—" : Number(r.callsPerWorkedDay).toFixed(1),
+      title: "Calls divided by days worked (full=1, half=0.5, full day off=0 even if activity leaked).",
+      cellTitle: (r: any) => `${r.calls ?? 0} calls / ${r.workedDays ?? 0} days worked`,
+    },
+    ] : []),
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     // Share of every field a transfer could have had filled in that was.
     { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? null,     better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
@@ -663,7 +671,7 @@ function GoalBar({ label, value, goal, pct, color, weeklyGoal, weeksElapsed }: {
   const width = pct == null ? 0 : Math.min(100, pct);
   const overflow = pct != null && pct > 100;
   const tip = weeklyGoal
-    ? `${label ?? "Goal"}: ${weeklyGoal}/wk × ${weeksElapsed ?? "?"} wks elapsed = ${goal} this month`
+    ? `${label ?? "Goal"}: ${weeklyGoal}/wk × ${weeksElapsed ?? "?"} available weeks (half days & days off counted) = ${goal} this month`
     : pct == null
       ? `${label ?? "Goal"}: not set`
       : undefined;
@@ -1403,7 +1411,7 @@ export default function ManagerDashboard() {
           Per-CLR performance — month to date
         </SectionTitle>
         <p className="text-xs text-muted-foreground mb-3 -mt-1">
-          Counts cover the current calendar month so far. Each CLR’s goals are stored as <span className="font-medium brand-text-soft">weekly</span> targets and prorated by weeks elapsed{clrCards[0]?.weeksElapsed != null ? ` (${clrCards[0].weeksElapsed} wks)` : ""}. Hover a bar to see that CLR’s exact weekly goal.
+          Counts cover the current calendar month so far. Each CLR’s goals are stored as <span className="font-medium brand-text-soft">weekly</span> targets and prorated by that CLR’s available weekdays (full day off = 0, half day = 0.5){clrCards[0]?.weeksElapsed != null ? ` — e.g. ~${clrCards[0].weeksElapsed} available weeks for the first card` : ""}. Hover a bar to see that CLR’s exact weekly goal.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {visibleClrs.map(c => (

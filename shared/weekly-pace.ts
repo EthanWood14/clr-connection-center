@@ -18,8 +18,9 @@
  *  - "for this week, include today as half of a day"
  *
  * Half days (18 Sep 2026): an approved half day — or a standing half-day rule —
- * halves that person's day weight. A named person-day exclusion (Jeremy on
- * 2026-09-17) drops both the day and any transfers that day from the rate.
+ * halves that person's day weight. A full approved day off ("no day") drops the
+ * day to weight 0 even if activity leaked. A named person-day exclusion (Jeremy
+ * on 2026-09-17) likewise drops both the day and any transfers that day.
  *
  * Pure, so the wallboard and any report read the same numbers from the same
  * rules rather than two lots of SQL that drift.
@@ -91,12 +92,15 @@ export function weeklyPace(input: {
    * date. Keyed as `${userId}:${date}` → true.
    */
   halfDays?: ReadonlySet<string>;
+  /** Approved full-day time off ("no days"). Keyed as `${userId}:${date}`. */
+  fullOffDays?: ReadonlySet<string>;
   /** Person-days dropped from both denominator and numerator. */
   excludedDays?: ReadonlyArray<{ userId: number; date: string }>;
 }): PaceWeek[] {
   const { days, credits, today } = input;
   const count = Math.max(1, Math.min(52, input.weeks ?? 10));
   const halfDays = input.halfDays ?? new Set<string>();
+  const fullOffDays = input.fullOffDays ?? new Set<string>();
   const excluded = input.excludedDays ?? [];
 
   // First day of work per person, for the ramp rule.
@@ -123,14 +127,15 @@ export function weeklyPace(input: {
     const worked = new Map<number, number>();
     days.forEach((row) => {
       if (!inWeek(row.date) || !isWeekday(row.date) || !ramped(row.userId)) return;
-      const halfSet = halfDays.has(`${row.userId}:${row.date}`)
-        ? new Set([row.userId])
-        : new Set<number>();
+      const key = `${row.userId}:${row.date}`;
+      const halfSet = halfDays.has(key) ? new Set([row.userId]) : new Set<number>();
+      const fullOffSet = fullOffDays.has(key) ? new Set([row.userId]) : new Set<number>();
       const weight = paceDayWeight({
         userId: row.userId,
         date: row.date,
         today,
         halfDayUserIds: halfSet,
+        fullOffUserIds: fullOffSet,
         excluded,
         todayWeight: PACE_TODAY_WEIGHT,
       });

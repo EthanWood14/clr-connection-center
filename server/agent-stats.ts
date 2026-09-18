@@ -36,7 +36,7 @@ export type ClrPeriod = {
   complete: boolean;
 };
 
-import { sumDayPortions } from "@shared/half-day";
+import { asAvailabilityContext, sumAvailabilityPortions, type DayAvailabilityContext } from "@shared/half-day";
 
 export type OutcomeRow = {
   date: string;
@@ -77,14 +77,15 @@ export function rollUp(
   helperId: number | null,
   isComplete: (period: string) => boolean,
   /**
-   * Approved / standing half days as `${userId}:${date}`. Half days contribute
-   * 0.5 to clrDays (days worked = sum of day portions).
+   * Approved / standing half days, full-day offs, and exclusions.
+   * Accepts a halfDays Set (legacy) or a full DayAvailabilityContext.
+   * Full day off → 0; half → 0.5; otherwise → 1.
    */
-  halfDays?: ReadonlySet<string> | null,
+  halfDaysOrCtx?: ReadonlySet<string> | DayAvailabilityContext | null,
 ): ClrPeriod[] {
   type Acc = { transfers: number; helper: number; days: Map<number, Set<string>> };
   const byPeriod = new Map<string, Acc>();
-  const half = halfDays ?? null;
+  const availability = asAvailabilityContext(halfDaysOrCtx);
 
   for (const r of rows ?? []) {
     const period = bucket(String(r.date ?? ""));
@@ -107,7 +108,7 @@ export function rollUp(
     .map(([period, acc]) => {
       const clrsWorking = acc.days.size;
       const clrDays = Array.from(acc.days.entries()).reduce(
-        (n, [userId, dates]) => n + sumDayPortions(userId, dates, half),
+        (n, [userId, dates]) => n + sumAvailabilityPortions(userId, dates, availability),
         0,
       );
       const clrDaysRounded = round1(clrDays);
@@ -137,7 +138,7 @@ export function definitionsFor(helperName: string, helperExcluded: boolean) {
     transfers: "A logged outcome of type 'transfer': the CLR got the borrower onto the phone with a loan officer, or booked a time for one to call them back.",
     avgPerClr: "transfers / the number of CLRs who logged anything in the period. Moves with headcount, which has grown from 2 to 13 since April — do not read it as productivity.",
     avgPerClrDay:
-      "transfers / CLR-days, where a CLR-day is one CLR logging anything on one day (half days count as 0.5). THIS IS THE FIGURE TO COMPARE ACROSS PERIODS: it is unaffected by headcount, holidays, part-timers or a period being partly elapsed.",
+      "transfers / CLR-days, where a CLR-day is one CLR logging anything on one day (half days count as 0.5; full days off count as 0 even if activity leaked). THIS IS THE FIGURE TO COMPARE ACROSS PERIODS: it is unaffected by headcount, holidays, part-timers or a period being partly elapsed.",
     complete:
       "False when the period has not finished. An incomplete period's totals are a floor, never a trend. The most common mistake with this data is reading the current partial week as a fall.",
     helperTransfers: helperExcluded

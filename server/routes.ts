@@ -137,9 +137,10 @@ import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLead
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadIsFresh } from "@shared/lo-new-leads";
 import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/weekly-pace";
 import {
-  ensureHalfDaySchema, ensureSeededHalfDays,
+  availableWeekdayPortions, ensureHalfDaySchema, ensureSeededHalfDays,
   isHalfDayExcusedFromLate, paceHalfDayContext, parseDayPortionBody,
-  sumDayPortions, sumWorkedDayPortions,
+  prorateWeeklyGoal, sumAvailabilityPortions, sumWorkedAvailabilityPortions,
+  weeksElapsedFromPortions,
 } from "./half-day";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
@@ -14126,9 +14127,12 @@ ${note}` : daysLine;
     const callsByUserMonth = new Map<number, number>();
     for (const r of monthCallsRows) callsByUserMonth.set(r.assistant_id, Number(r.calls) || 0);
 
-    // Approximate weeks-in-month elapsed for goal proration
-    const monthDaysElapsed = Math.max(1, (Date.now() - new Date(month.startDate + "T00:00:00").getTime()) / 86400000);
-    const weeksElapsed = Math.max(1, monthDaysElapsed / 7);
+    // Per-CLR goal proration: available Mon–Fri portions in the MTD window
+    // (full day off → 0, half → 0.5), then goal = weekly × (portions / 5).
+    const goalMtdEnd = todayStr < month.endDate ? todayStr : month.endDate;
+    const goalAvailCtx = paceHalfDayContext(
+      sqlite, Number(currentOrgId() ?? 1), month.startDate, goalMtdEnd,
+    ).availability;
     const clrCards = countedClrs.map((u: any) => {
       const om = outcomesByUser[u.id] ?? {};
       const transfers = om.transfer ?? 0;
@@ -14143,10 +14147,14 @@ ${note}` : daysLine;
       const goalCallsWeekly        = Number(u.goalCallsWeekly        ?? u.goal_calls_weekly        ?? 0);
       const goalTransfersWeekly    = Number(u.goalTransfersWeekly    ?? u.goal_transfers_weekly    ?? 0);
       const goalAppointmentsWeekly = Number(u.goalAppointmentsWeekly ?? u.goal_appointments_weekly ?? 0);
-      // Month-to-date prorated goals (weekly × weeks-elapsed in current month).
-      const goalCalls     = Math.round(goalCallsWeekly        * weeksElapsed);
-      const goalTransfers = Math.round(goalTransfersWeekly    * weeksElapsed);
-      const goalAppts     = Math.round(goalAppointmentsWeekly * weeksElapsed);
+      const availablePortions = availableWeekdayPortions(
+        Number(u.id), month.startDate, goalMtdEnd, goalAvailCtx,
+      );
+      const weeksElapsed = weeksElapsedFromPortions(availablePortions);
+      // Month-to-date prorated goals (weekly × available weekday portions / 5).
+      const goalCalls     = prorateWeeklyGoal(goalCallsWeekly, availablePortions);
+      const goalTransfers = prorateWeeklyGoal(goalTransfersWeekly, availablePortions);
+      const goalAppts     = prorateWeeklyGoal(goalAppointmentsWeekly, availablePortions);
       const comp = completionByUser[u.id] ?? { assigned: 0, completed: 0 };
       const completionPct = comp.assigned > 0 ? Math.round((comp.completed / comp.assigned) * 100) : null;
       const callToTransferRatio = calls > 0 ? Math.round((transfers / calls) * 1000) / 10 : null; // %
@@ -14166,7 +14174,8 @@ ${note}` : daysLine;
         // Prorated goals matching the month-to-date counts above.
         goalCalls, goalTransfers, goalAppts,
         goalPeriod: "month-to-date" as const,
-        weeksElapsed: Math.round(weeksElapsed * 10) / 10,
+        availablePortions,
+        weeksElapsed,
         callsPct: goalCalls > 0 ? Math.min(999, Math.round((calls / goalCalls) * 100)) : null,
         transfersPct: goalTransfers > 0 ? Math.min(999, Math.round((transfers / goalTransfers) * 100)) : null,
         apptsPct: goalAppts > 0 ? Math.min(999, Math.round((appointments / goalAppts) * 100)) : null,
@@ -14807,8 +14816,8 @@ ${note}` : daysLine;
       // one number instead of everything.
       let workedDaysByUser = new Map<number, number>();
       try {
-        // Distinct (assistant, day) pairs — then sum day portions so half days
-        // count as 0.5 in Transfers / day worked (not 1.0 or 0).
+        // Distinct (assistant, day) pairs — then sum availability weights so
+        // half days = 0.5 and full days off = 0 (even if activity leaked).
         const workedRows = sqlite.prepare(`
           SELECT assistant_id, d FROM (
             SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
@@ -14825,9 +14834,9 @@ ${note}` : daysLine;
           ) WHERE d BETWEEN ? AND ?
         `).all(...Array(7).fill(workOrg), startDate, endDate) as any[];
         const halfCtx = paceHalfDayContext(sqlite, workOrg, startDate, endDate);
-        workedDaysByUser = sumWorkedDayPortions(
+        workedDaysByUser = sumWorkedAvailabilityPortions(
           workedRows.map((r) => ({ userId: Number(r.assistant_id), date: String(r.d) })),
-          halfCtx.halfDays,
+          halfCtx.availability,
         );
       } catch (e: any) {
         console.error("[manager-dashboard] worked-days rollup failed:", e?.message ?? e);
@@ -14855,6 +14864,8 @@ ${note}` : daysLine;
             workedDays: workedDaysByUser.get(Number(u.id)) ?? 0,
             transfersPerWorkedDay: (workedDaysByUser.get(Number(u.id)) ?? 0) > 0
               ? s.transfers / workedDaysByUser.get(Number(u.id))! : null,
+            callsPerWorkedDay: (workedDaysByUser.get(Number(u.id)) ?? 0) > 0
+              ? calls / workedDaysByUser.get(Number(u.id))! : null,
             textTransfers,
             appointments: s.appointments,
             fellThrough: s.fellThrough,
@@ -19973,15 +19984,15 @@ ${note}` : daysLine;
 
     const thisWeek = weekStartOf(today);
     const thisMonth = monthStartOf(today);
-    const halfDays = paceHalfDayContext(db, orgId, from, today).halfDays;
+    const availability = paceHalfDayContext(db, orgId, from, today).availability;
 
     res.json({
       generatedAt: new Date().toISOString(),
       today,
       from,
       helper: { name: helperName, resolved: helperUserId != null, excludedFromTeamFigures: helperUserId != null },
-      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, halfDays),
-      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, halfDays),
+      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, availability),
+      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, availability),
       definitions: definitionsFor(helperName, helperUserId != null),
     });
 
@@ -22739,9 +22750,9 @@ ${note}` : daysLine;
       if (d < earliest) earliest = d;
       if (d > latest) latest = d;
     }
-    const halfDays = (earliest <= latest)
-      ? paceHalfDayContext(sqlite, orgId, earliest, latest).halfDays
-      : new Set<string>();
+    const availability = (earliest <= latest)
+      ? paceHalfDayContext(sqlite, orgId, earliest, latest).availability
+      : {};
     const minIso = (a: string | null, b: string | null) => (a && b ? (a < b ? a : b) : a || b);
     const maxIso = (a: string | null, b: string | null) => (a && b ? (a > b ? a : b) : a || b);
 
@@ -22758,8 +22769,8 @@ ${note}` : daysLine;
         fellThrough: Number(o?.fell_through) || 0,
         // Distinct weekdays for the training clock / sample size.
         activeDays: dates.length,
-        // Transfers/day denominator: half days count as 0.5.
-        workedDays: sumDayPortions(id, dates, halfDays),
+        // Transfers/day denominator: half=0.5, full off=0 (even with activity).
+        workedDays: sumAvailabilityPortions(id, dates, availability),
         firstDay: minIso(o?.first_day ?? null, c?.first_day ?? null),
         lastDay: maxIso(o?.last_day ?? null, c?.last_day ?? null),
       };
@@ -22851,9 +22862,9 @@ ${note}` : daysLine;
         if (d > latest) latest = d;
       }
     });
-    const halfDays = (earliest <= latest)
-      ? paceHalfDayContext(sqlite, orgId, earliest, latest).halfDays
-      : new Set<string>();
+    const availability = (earliest <= latest)
+      ? paceHalfDayContext(sqlite, orgId, earliest, latest).availability
+      : {};
     const out = new Map<number, ClrWorkdayRate>();
     for (const u of clrRoster()) {
       const id = Number(u.id);
@@ -22862,7 +22873,7 @@ ${note}` : daysLine;
         trainerDates: trainerByUser.get(id) ?? new Set(),
         transferDates: transfersByUser.get(id) ?? [],
         userId: id,
-        halfDays,
+        availability,
       }));
     }
     return out;
@@ -23514,6 +23525,7 @@ ${note}` : daysLine;
           today: w.today,
           weeks: TV_PACE_WEEKS,
           halfDays: paceCtx.halfDays,
+          fullOffDays: paceCtx.fullOffDays,
           excludedDays: paceCtx.excludedDays,
         });
         return {
