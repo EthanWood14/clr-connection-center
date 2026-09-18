@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, Clock3, Download, Mail, Phone, Radio, RefreshCw, Send, ShieldCheck, Trash2, UserPlus, Users, Zap } from "lucide-react";
+import { ArrowRightLeft, Clock3, Download, Mail, Phone, Radio, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, UserPlus, Users, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -61,6 +61,19 @@ export type ShotgunPayload = {
    * explaining it, reads as the rotation being broken.
    */
   holding?: { id: number; leadName: string; claimedAt: string | null } | null;
+  /**
+   * Leads this CLR previously grabbed that are still live but no longer
+   * theirs — presence release, manager requeue, or offered onward. Grab back
+   * reassigns without a full floor rotation when they are on the phone.
+   */
+  reclaimable?: Array<{
+    id: number;
+    leadName: string;
+    phone: string;
+    status: string;
+    currentAssigneeId: number | null;
+    currentAssigneeName: string | null;
+  }>;
 };
 
 function statusStyle(status: ShotgunLead["status"]) {
@@ -180,7 +193,13 @@ export default function Shotgun() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: "Lead cancelled", description: "It is out of the active rotation; its history was retained." }); },
     onError: (error: any) => toast({ title: "Could not cancel lead", description: error.message, variant: "destructive" }),
   });
+  const reclaim = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/shotgun/${id}/reclaim`, { onThePhone: true }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }); toast({ title: "Lead grabbed back", description: "It is yours again — finish the call and write it up." }); },
+    onError: (error: any) => toast({ title: "Could not grab lead back", description: error.message, variant: "destructive" }),
+  });
   const myActive = useMemo(() => payload.leads.filter((lead) => lead.currentAssigneeId === user?.id && lead.status === "claimed"), [payload.leads, user?.id]);
+  const reclaimable = payload.reclaimable ?? [];
 
   if (isLoading) return <div className="mx-auto max-w-7xl p-6"><div className="h-72 animate-pulse rounded-3xl bg-muted" /></div>;
 
@@ -303,6 +322,37 @@ export default function Shotgun() {
               {extensionDialog}
             </CardContent>
           </Card>
+        )}
+
+        {reclaimable.length > 0 && (
+          <section className="space-y-3" data-testid="shotgun-reclaimable-section">
+            <h2 className="text-xl font-black">Grab back — you were on these</h2>
+            {reclaimable.map((item) => (
+              <Card key={item.id} className="border-2 border-sky-400 shadow-lg shadow-sky-500/10">
+                <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-lg font-black">{item.leadName}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {item.status === "offered" && item.currentAssigneeName
+                        ? `Offered to ${item.currentAssigneeName} — grab it back if you are still on the phone.`
+                        : "Back in the rotation — grab it back if you are still on the phone with them."}
+                    </p>
+                    {item.phone && <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold"><Phone className="h-4 w-4" />{item.phone}</p>}
+                  </div>
+                  <Button
+                    size="lg"
+                    className="gap-2 bg-sky-600 hover:bg-sky-700"
+                    disabled={reclaim.isPending}
+                    onClick={() => reclaim.mutate(item.id)}
+                    data-testid={`shotgun-grab-back-${item.id}`}
+                  >
+                    <RotateCcw className="h-5 w-5" />
+                    {reclaim.isPending ? "Grabbing…" : "I am on the phone — Grab back"}
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </section>
         )}
 
         {myActive.length > 0 && <section className="space-y-3"><h2 className="text-xl font-black">Your active leads</h2>{myActive.map((lead) => <Card key={lead.id} className="border-2 border-blue-400 shadow-lg shadow-blue-500/10"><CardContent className="p-5"><LeadHeader lead={lead} /><ShotgunResultCard lead={lead} /></CardContent></Card>)}</section>}

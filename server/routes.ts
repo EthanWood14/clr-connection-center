@@ -153,6 +153,7 @@ import {
   QUAL_QUESTIONS, INFO_FIELDS, SECTION_TOGGLES, INVESTMENT_ROUTING_HINT, OUTCOME_TYPE_OPTIONS,
 } from "@shared/lead-capture";
 import { presenceReleaseCutoff } from "@shared/shotgun-presence";
+import { canReclaimShotgunLead } from "@shared/shotgun-reclaim";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -8580,9 +8581,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     for (const w of walked) {
       try {
         storage.createNotification({ userId: w.userId, type: "shotgun_requeued", title: "Shotgun lead went back to the rotation",
-          message: `${w.leadName} was returned to the queue — you didn't confirm you were still on it within the window after claiming.`, isRead: false } as any);
+          message: `${w.leadName} was returned to the queue — you didn't confirm you were still on it within the window after claiming. If you are on the phone with them, open Shotgun and Grab back.`, isRead: false } as any);
       } catch {}
-      sendPushToUser(w.userId, { title: "Shotgun lead returned", body: `${w.leadName} went back to the rotation — no answer to "still there?".`, url: "/#/shotgun" });
+      sendPushToUser(w.userId, { title: "Shotgun lead returned", body: `${w.leadName} went back — Grab back on Shotgun if you are still on the phone with them.`, url: "/#/shotgun" });
     }
     const queued = db.prepare(`SELECT id FROM shotgun_leads WHERE status='queued' ORDER BY created_at,id LIMIT 100`).all() as any[];
     const assignments: any[] = [];
@@ -8641,9 +8642,42 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const holding = isClr ? shotgunDb().prepare(`SELECT id,lead_name,claimed_at FROM shotgun_leads
       WHERE org_id=? AND current_assignee_id=? AND status='claimed' ORDER BY claimed_at LIMIT 1`)
       .get(orgId, userId) as any : null;
+    // Leads this CLR previously confirmed that are still live but no longer
+    // theirs — presence release, manager requeue, or offered onward. Proven
+    // from append-only offer_events so a later rotation lap cannot erase the
+    // claim history in the compact shotgun_offers row.
+    const reclaimRows = isClr ? shotgunDb().prepare(`
+      SELECT l.*, creator.name AS created_by_name, assignee.name AS current_assignee_name,
+        result_outcome.transfer_type AS result_transfer_type, result_lo.full_name AS result_lo_name
+      FROM shotgun_leads l
+      INNER JOIN (
+        SELECT DISTINCT lead_id FROM shotgun_offer_events
+        WHERE org_id=? AND user_id=? AND response='confirmed'
+      ) prior ON prior.lead_id=l.id
+      LEFT JOIN users creator ON creator.id=l.created_by_user_id
+      LEFT JOIN users assignee ON assignee.id=l.current_assignee_id
+      LEFT JOIN lead_outcomes result_outcome ON result_outcome.id=l.transfer_outcome_id AND result_outcome.org_id=l.org_id
+      LEFT JOIN loan_officers result_lo ON result_lo.id=result_outcome.lo_id AND result_lo.org_id=l.org_id
+      WHERE l.org_id=? AND l.status IN ('queued','offered')
+        AND NOT (l.status='offered' AND l.current_assignee_id=?)
+      ORDER BY l.updated_at DESC LIMIT 20`).all(orgId, userId, orgId, userId) as any[] : [];
+    const seenLeadIds = new Set(rows.map((r: any) => Number(r.id)));
+    const mergedLeads = rows.slice();
+    for (const row of reclaimRows) {
+      if (!seenLeadIds.has(Number(row.id))) mergedLeads.push(row);
+    }
     res.json({ canManage, canPublish, isClr, isReady, optedOut, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
-      leads: rows.map(shotgunLeadJson), readyUsers,
-      holding: holding ? { id: Number(holding.id), leadName: String(holding.lead_name), claimedAt: holding.claimed_at ?? null } : null });
+      leads: mergedLeads.map(shotgunLeadJson), readyUsers,
+      holding: holding ? { id: Number(holding.id), leadName: String(holding.lead_name), claimedAt: holding.claimed_at ?? null } : null,
+      reclaimable: reclaimRows.map((row: any) => ({
+        id: Number(row.id),
+        leadName: String(row.lead_name ?? ""),
+        phone: String(row.phone ?? ""),
+        status: String(row.status),
+        currentAssigneeId: row.current_assignee_id == null ? null : Number(row.current_assignee_id),
+        currentAssigneeName: row.current_assignee_name ? String(row.current_assignee_name) : null,
+      })),
+    });
   });
 
   app.post("/api/shotgun/readiness", requireAuth, (req: any, res) => {
@@ -9200,6 +9234,96 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       WHERE id=? AND org_id=? AND status='claimed' AND current_assignee_id=?`).run(now, now, leadId, orgId, userId);
     if (!changed.changes) return res.status(409).json({ error: "This lead is no longer yours to keep — it may already have gone back to the rotation." });
     res.json({ ok: true, presenceConfirmedAt: now });
+  });
+
+  // Grab back a lead this CLR previously confirmed, without a floor rotation.
+  // Requires an explicit "I am on the phone with them" confirm — there is no
+  // reliable dialer signal, and inventing CallTools linkage is out of scope.
+  app.post("/api/shotgun/:id/reclaim", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const leadId = Number(req.params.id);
+    const me = storage.getUserById(userId) as any;
+    if (!shotgunUserIsClr(me)) return res.status(403).json({ error: "Only active CLRs can grab a Shotgun lead back." });
+    const onThePhone = req.body?.onThePhone === true;
+    const now = new Date().toISOString();
+    const db = shotgunDb();
+    const outcome = db.transaction(() => {
+      const lead = db.prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
+      if (!lead) return { status: 404 as const, error: "Shotgun lead not found." };
+      const previouslyConfirmed = !!db.prepare(`SELECT 1 FROM shotgun_offer_events
+        WHERE lead_id=? AND org_id=? AND user_id=? AND response='confirmed' LIMIT 1`).get(leadId, orgId, userId);
+      const holdingOther = db.prepare(`SELECT id,lead_name FROM shotgun_leads
+        WHERE org_id=? AND current_assignee_id=? AND status='claimed' AND id<>? ORDER BY claimed_at LIMIT 1`)
+        .get(orgId, userId, leadId) as any;
+      const decision = canReclaimShotgunLead({
+        status: String(lead.status),
+        currentAssigneeId: lead.current_assignee_id == null ? null : Number(lead.current_assignee_id),
+        requesterId: userId,
+        previouslyConfirmed,
+        holdingOtherClaimed: !!holdingOther,
+        onThePhone,
+      });
+      if (!decision.ok) {
+        return { status: 409 as const, error: decision.reason,
+          blockedBy: holdingOther ? { id: Number(holdingOther.id), leadName: String(holdingOther.lead_name) } : undefined };
+      }
+      // Drop any other live offer this CLR is sitting on so the one-live-offer
+      // invariant stays intact when they take this lead mid-call.
+      const otherOffers = db.prepare(`SELECT id,current_assignee_id FROM shotgun_leads
+        WHERE org_id=? AND status='offered' AND current_assignee_id=? AND id<>?`).all(orgId, userId, leadId) as any[];
+      for (const other of otherOffers) {
+        db.prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
+          WHERE id=? AND status='offered' AND current_assignee_id=?`).run(now, other.id, userId);
+        db.prepare(`UPDATE shotgun_offers SET response='reclaimed_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, other.id, userId);
+        db.prepare(`UPDATE shotgun_offer_events SET response='reclaimed_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, other.id, userId);
+      }
+      const priorAssignee = lead.current_assignee_id == null ? null : Number(lead.current_assignee_id);
+      // Snatch from another CLR's pending offer, if any.
+      if (String(lead.status) === "offered" && priorAssignee && priorAssignee !== userId) {
+        db.prepare(`UPDATE shotgun_offers SET response='reclaimed_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, priorAssignee);
+        db.prepare(`UPDATE shotgun_offer_events SET response='reclaimed_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, priorAssignee);
+      }
+      const changed = db.prepare(`UPDATE shotgun_leads SET status='claimed',current_assignee_id=?,offer_expires_at=NULL,
+          claimed_at=?,presence_confirmed_at=?,called=0,texted=0,result_notes='',transfer_outcome_id=NULL,done_at=NULL,updated_at=?
+        WHERE id=? AND org_id=? AND status IN ('queued','offered')
+          AND NOT (status='offered' AND current_assignee_id=?)`).run(userId, now, now, now, leadId, orgId, userId);
+      if (!changed.changes) return { status: 409 as const, error: "This lead moved before it could be grabbed back." };
+      // Refresh the compact offer row for cooldown/history without inventing a
+      // new UNIQUE key; append an event so reclaim is visible in the audit trail.
+      const expiresAt = now;
+      db.prepare(`INSERT INTO shotgun_offers (lead_id,org_id,user_id,offered_at,expires_at,response,responded_at)
+        VALUES (?,?,?,?,?,'reclaimed',?)
+        ON CONFLICT(lead_id,user_id) DO UPDATE SET
+          offered_at=excluded.offered_at, expires_at=excluded.expires_at,
+          response='reclaimed', responded_at=excluded.responded_at`)
+        .run(leadId, orgId, userId, now, expiresAt, now);
+      db.prepare(`INSERT INTO shotgun_offer_events (lead_id,org_id,user_id,offered_at,expires_at,response,responded_at)
+        VALUES (?,?,?,?,?,'reclaimed',?)`).run(leadId, orgId, userId, now, expiresAt, now);
+      return { status: 200 as const, priorAssignee, leadName: String(lead.lead_name ?? "") };
+    })();
+    if (outcome.status !== 200) {
+      return res.status(outcome.status).json({ error: outcome.error, blockedBy: (outcome as any).blockedBy });
+    }
+    audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: outcome.leadName || "Shotgun lead",
+      details: JSON.stringify({ action: "reclaim", onThePhone: true, priorAssigneeId: outcome.priorAssignee ?? null }) });
+    if (outcome.priorAssignee && outcome.priorAssignee !== userId) {
+      try {
+        storage.createNotification({ userId: outcome.priorAssignee, type: "shotgun_requeued",
+          title: "Shotgun offer pulled back",
+          message: `${outcome.leadName} was grabbed back by the CLR who was already on the phone with them.`, isRead: false } as any);
+      } catch {}
+      sendPushToUser(outcome.priorAssignee, { title: "Shotgun offer moved", body: `${outcome.leadName} was grabbed back by a prior claimer on the call.`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+    }
+    // Do not advanceShotgun for this lead — reclaim skips the floor rotation.
+    // Still advance so any offers we released above can find a new CLR.
+    advanceShotgun(now);
+    res.json({ ok: true, claimed: true });
   });
 
   app.post("/api/shotgun/:id/deny", requireAuth, (req: any, res) => {
