@@ -17131,7 +17131,7 @@ ${note}` : daysLine;
     const html = buildEmail({
       subject,
       preheader: `${formatTransferCount(totalTransfers)} transfers · ${rows.reduce((s, r) => s + r.appointments, 0)} appointments`,
-      body: buildScorecardDigestHtml(windowLabel, dateLabel, rows, { helperAssisted }),
+      body: buildScorecardDigestHtml(windowLabel, dateLabel, rows, { helperAssisted, helperName }),
     });
     await sendEmail({ to: managers, subject, html });
     console.log(`[scorecard-digest] org ${orgId} ${kind}: sent to ${managers.length} manager(s), ${formatTransferCount(totalTransfers)} transfers ${w.from}..${w.to}`);

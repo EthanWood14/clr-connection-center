@@ -262,14 +262,32 @@ test("Elleine (and the configured helper) is an exclude_from_stats exception for
   assert.equal(isScorecardDigestHelperException("Patricia Helper", { helperName: "Pat" }), false, "Pat must be a whole word");
 });
 
-test("digest HTML can surface the helper-assisted count under the table", () => {
+test("digest HTML puts helpers in their own bottom section while keeping team totals", () => {
   const html = buildScorecardDigestHtml("Today so far", "2026-09-18", [
-    row("Elleine Asuncion", 40, 8, 1),
-    row("Matthew Rosas", 50, 5, 0),
+    row("Elleine Asuncion", 40, 8, 1, 2),
+    row("Matthew Rosas", 50, 5, 0, 1),
   ], { helperAssisted: { name: "Elleine", count: 4 } });
+  const helperIndex = html.indexOf(">Helper</p>");
+  assert.ok(helperIndex > html.indexOf("Matthew Rosas"), "helper section is below the CLR table");
+  assert.ok(html.indexOf("Matthew Rosas") < helperIndex, "Matthew remains in the ranked CLR table");
+  assert.ok(html.indexOf("Elleine Asuncion", helperIndex) > helperIndex, "Elleine is shown in the helper section");
+  assert.doesNotMatch(html.slice(helperIndex), /<th[^>]*>#<\/th>/, "helper section has no CLR rank column");
+  assert.match(html, />90</, "team calls include helper");
+  assert.match(html, />13</, "team transfers include helper");
+  assert.match(html, />3</, "team fell-through total includes helper");
   assert.match(html, /Elleine assisted: 4/);
-  assert.ok(html.indexOf("Elleine Asuncion") < html.indexOf("Matthew Rosas"), "Elleine ranks on transfers");
   assert.ok(!buildScorecardDigestHtml("Today so far", "2026-09-18", [row("A", 1, 1, 0)]).includes("assisted:"), "omit the line when not supplied");
+});
+
+test("configured helper names are separated from CLR ranking", () => {
+  const html = buildScorecardDigestHtml("Today so far", "2026-09-18", [
+    row("Pat Helper", 30, 9, 2),
+    row("Regular CLR", 20, 1, 0),
+  ], { helperName: "Pat" });
+  const helperIndex = html.indexOf(">Helper</p>");
+  assert.ok(helperIndex > html.indexOf("Regular CLR"));
+  assert.ok(html.indexOf("Pat Helper", helperIndex) > helperIndex);
+  assert.ok(html.indexOf("Pat Helper") > helperIndex, "configured helper is not ranked with CLRs");
 });
 
 test("buildScorecardDigestRows opts the helper back in despite exclude_from_stats", () => {
@@ -285,7 +303,7 @@ test("buildScorecardDigestRows opts the helper back in despite exclude_from_stat
 test("sendScorecardDigest passes helper-assisted count into the HTML builder", () => {
   const fn = routes.slice(routes.indexOf("async function sendScorecardDigest"), routes.indexOf("function scheduleScorecardDigest"));
   assert.match(fn, /scorecardDigestHelperAssistedCount\(orgId, w\.from, w\.to\)/);
-  assert.match(fn, /buildScorecardDigestHtml\(windowLabel, dateLabel, rows, \{ helperAssisted \}\)/);
+  assert.match(fn, /buildScorecardDigestHtml\(windowLabel, dateLabel, rows, \{ helperAssisted, helperName \}\)/);
   assert.match(routes, /helper_assisted=1/);
 });
 
