@@ -104,8 +104,10 @@ test("the wall gets the pace page, fed by its own section on the TV endpoint", (
   assert.match(section, /FROM dialpad_sms_events WHERE org_id=\? AND user_id IS NOT NULL/);
   assert.match(section, /completedAverage\(weeks\)/);
   const tv = read("client/src/pages/tv.tsx");
-  assert.match(tv, /\{ id: "weeklyPace",\s+dwellMs: 14_000 \}/);
+  const kit = read("client/src/pages/tv-board-kit.tsx");
+  assert.match(kit, /\{ id: "weeklyPace",\s+dwellMs: 14_000 \}/);
   assert.match(tv, /weeks=\{board\?\.weeklyPace\?\.weeks \?\? \[\]\}/);
+  assert.match(section, /paceHalfDayContext|halfDays:/, "half days and Jeremy exclusions feed the pace");
   const pages = read("client/src/components/tv/pages.tsx");
   assert.match(pages, /data-testid="tv-page-weekly-pace"/);
   assert.match(pages, /data-testid="tv-pace-columns"/);

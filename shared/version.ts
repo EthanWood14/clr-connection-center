@@ -1,4 +1,4 @@
-﻿// Single source of truth for the app version (semver, "X.Y.Z").
+// Single source of truth for the app version (semver, "X.Y.Z").
 //
 // Bump this on every deploy. The client bakes this value into its bundle at
 // build time, and the server serves it from GET /api/version. When a new build

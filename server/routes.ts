@@ -136,6 +136,11 @@ import {
 import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLeadsByLo } from "./leadvault-newest-leads";
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadIsFresh } from "@shared/lo-new-leads";
 import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/weekly-pace";
+import {
+  ensureHalfDaySchema, ensureSeededHalfDays,
+  isHalfDayExcusedFromLate, paceHalfDayContext, parseDayPortionBody,
+  sumDayPortions, sumWorkedDayPortions,
+} from "./half-day";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
@@ -3851,6 +3856,13 @@ export function registerRoutes(httpServer: Server, app: Express) {
     storageExtra.getRawSqlite().exec(`PRAGMA optimize`);
   } catch {}
   try { storageExtra.getRawSqlite().exec(`ALTER TABLE time_off_requests ADD COLUMN approval_token TEXT`); } catch {}
+  try {
+    ensureHalfDaySchema(storageExtra.getRawSqlite());
+    const seeded = ensureSeededHalfDays(storageExtra.getRawSqlite());
+    if (seeded.inserted || seeded.matched.length) {
+      console.log("[half-day] seeds:", JSON.stringify(seeded));
+    }
+  } catch (e: any) { console.error("[half-day] seed failed:", e?.message ?? e); }
 
   // ── weekly_schedules migration ───────────────────────────────────────────────
   // Planned weekly work schedule per CLR. One row per user per week (week_start
@@ -9856,6 +9868,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // CLRs submit requests; managers/admins approve or deny. Scoped per org.
   const isYmd = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
   function mapTimeOff(r: any, nameById: Map<number, string>) {
+    const dayPortion = (String(r.day_portion ?? "full").toLowerCase() === "half") ? "half" : "full";
     return {
       id: r.id,
       userId: r.user_id,
@@ -9864,6 +9877,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       endDate: r.end_date,
       reason: r.reason ?? "",
       status: r.status,
+      dayPortion,
+      halfDay: dayPortion === "half",
       reviewedBy: r.reviewed_by ?? null,
       reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
       reviewerNote: r.reviewer_note ?? "",
@@ -9979,24 +9994,28 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     const nowIso = new Date().toISOString();
     const token = managerScheduled ? null : crypto.randomBytes(24).toString("hex");
+    const dayPortion = parseDayPortionBody(body);
+    const isHalf = dayPortion === "half";
     try {
       const db = storageExtra.getRawSqlite();
+      ensureHalfDaySchema(db);
       const status = managerScheduled ? "approved" : "pending";
-      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, reviewed_by, reviewed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(orgId, requesterId, startDate, endDate, reason, status, token, managerScheduled ? sessUserId : null, managerScheduled ? nowIso : null, nowIso, nowIso);
+      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, reviewed_by, reviewed_at, created_at, updated_at, day_portion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(orgId, requesterId, startDate, endDate, reason, status, token, managerScheduled ? sessUserId : null, managerScheduled ? nowIso : null, nowIso, nowIso, dayPortion);
       const nameById = timeOffNameMap();
       const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(info.lastInsertRowid) as any;
       const requester = (storage.getUsers() as any[]).find(u => u.id === requesterId);
       const submitter = (storage.getUsers() as any[]).find(u => u.id === sessUserId);
       const onBehalfNote = requesterId !== sessUserId ? (" (submitted by " + (submitter?.name ?? "manager") + ")") : "";
-      const reassignedAssignments = managerScheduled
+      // Half days still get LO assignments — only a full day pulls them off the rotation.
+      const reassignedAssignments = managerScheduled && !isHalf
         ? rebalanceClrVacationAssignments(orgId, requesterId, startDate, endDate)
         : 0;
       audit({
         userId: sessUserId, userName: submitter?.name ?? "Unknown", action: "create",
         entityType: "time_off", entityId: Number(info.lastInsertRowid),
         entityLabel: (requester?.name ?? "CLR") + " " + startDate + "->" + endDate + onBehalfNote,
-        details: JSON.stringify({ startDate, endDate, reason, requesterId, submittedBy: sessUserId, status, excludesDailyAssignments: managerScheduled, reassignedAssignments }),
+        details: JSON.stringify({ startDate, endDate, reason, requesterId, submittedBy: sessUserId, status, dayPortion, excludesDailyAssignments: managerScheduled && !isHalf, reassignedAssignments }),
       });
 
       if (managerScheduled) {
@@ -10005,7 +10024,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
             userId: requesterId,
             type: "time_off",
             title: "Vacation scheduled",
-            message: `${submitter?.name ?? "Your manager"} scheduled approved time off for ${startDate} to ${endDate}. You will be excluded from daily assignments during this period${reassignedAssignments ? `, and ${reassignedAssignments} existing assignment${reassignedAssignments === 1 ? " was" : "s were"} reassigned` : ""}.`,
+            message: isHalf
+              ? `${submitter?.name ?? "Your manager"} scheduled an approved half day for ${startDate} to ${endDate}. You still receive daily LO assignments; your transfers/day weight is halved and you will not be marked late.`
+              : `${submitter?.name ?? "Your manager"} scheduled approved time off for ${startDate} to ${endDate}. You will be excluded from daily assignments during this period${reassignedAssignments ? `, and ${reassignedAssignments} existing assignment${reassignedAssignments === 1 ? " was" : "s were"} reassigned` : ""}.`,
           });
         } catch {}
       }
@@ -10051,7 +10072,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const reviewerId = Number(settings.approval_recipient_id ?? settings.timeoff_approver_id ?? settings.comp_approver_id ?? 0) || null;
       const now = new Date().toISOString();
       db.prepare("UPDATE time_off_requests SET status=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE approval_token=? AND status='pending'").run(status, reviewerId, now, now, token);
-      const reassignedAssignments = status === "approved"
+      const reassignedAssignments = status === "approved" && String(row.day_portion ?? "full") !== "half"
         ? rebalanceClrVacationAssignments(Number(row.org_id), Number(row.user_id), row.start_date, row.end_date)
         : 0;
       try {
@@ -10092,7 +10113,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       const previousStatus = String(existing.status ?? "pending");
       const approvalReversed = previousStatus === "approved" && status === "denied";
       db.prepare("UPDATE time_off_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
-      const reassignedAssignments = status === "approved"
+      const reassignedAssignments = status === "approved" && String(existing.day_portion ?? "full") !== "half"
         ? rebalanceClrVacationAssignments(orgId, Number(existing.user_id), existing.start_date, existing.end_date)
         : 0;
       const nameById = timeOffNameMap();
@@ -14786,8 +14807,10 @@ ${note}` : daysLine;
       // one number instead of everything.
       let workedDaysByUser = new Map<number, number>();
       try {
+        // Distinct (assistant, day) pairs — then sum day portions so half days
+        // count as 0.5 in Transfers / day worked (not 1.0 or 0).
         const workedRows = sqlite.prepare(`
-          SELECT assistant_id, COUNT(DISTINCT d) AS days FROM (
+          SELECT assistant_id, d FROM (
             SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
             UNION SELECT assistant_id, log_date FROM daily_call_logs WHERE org_id=? AND calls_made>0
             UNION SELECT assistant_id, activity_date FROM callsync_activity_events WHERE org_id=?
@@ -14799,9 +14822,13 @@ ${note}` : daysLine;
             UNION SELECT assistant_id, report_date FROM eod_reports WHERE
               (calls_made>0 OR messages_sent>0 OR additional_conversations>0 OR calltools_conversations>0
                OR calltools_active_seconds>0 OR dialpad_calls>0 OR transfers>0 OR appointments>0)
-          ) WHERE d BETWEEN ? AND ? GROUP BY assistant_id
+          ) WHERE d BETWEEN ? AND ?
         `).all(...Array(7).fill(workOrg), startDate, endDate) as any[];
-        workedDaysByUser = new Map(workedRows.map(r => [Number(r.assistant_id), Number(r.days)]));
+        const halfCtx = paceHalfDayContext(sqlite, workOrg, startDate, endDate);
+        workedDaysByUser = sumWorkedDayPortions(
+          workedRows.map((r) => ({ userId: Number(r.assistant_id), date: String(r.d) })),
+          halfCtx.halfDays,
+        );
       } catch (e: any) {
         console.error("[manager-dashboard] worked-days rollup failed:", e?.message ?? e);
       }
@@ -16117,12 +16144,20 @@ ${note}` : daysLine;
     const judged = exp.working && !!exp.start;
     let onTime: number | null = null;
     let minutesLate: number | null = null;
+    const halfDayLateExcused = isHalfDayExcusedFromLate(
+      storageExtra.getRawSqlite(), orgId, userId, date, me?.name,
+    );
     if (judged) {
       const [sh, sm] = (exp.start as string).split(":").map((x: string) => parseInt(x, 10));
       const startMin = sh * 60 + sm;
       const nowMin = wallClockMinutes(tz);
       onTime = nowMin <= startMin + cfg.graceMin ? 1 : 0;
       minutesLate = Math.max(0, nowMin - startMin);
+      // Half day (requested or standing): still a check-in, never a late.
+      if (halfDayLateExcused && onTime === 0) {
+        onTime = 1;
+        minutesLate = 0;
+      }
     }
 
     const checkin = storageExtra.saveCheckin({
@@ -19938,14 +19973,15 @@ ${note}` : daysLine;
 
     const thisWeek = weekStartOf(today);
     const thisMonth = monthStartOf(today);
+    const halfDays = paceHalfDayContext(db, orgId, from, today).halfDays;
 
     res.json({
       generatedAt: new Date().toISOString(),
       today,
       from,
       helper: { name: helperName, resolved: helperUserId != null, excludedFromTeamFigures: helperUserId != null },
-      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth),
-      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek),
+      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, halfDays),
+      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, halfDays),
       definitions: definitionsFor(helperName, helperUserId != null),
     });
 
@@ -22665,8 +22701,8 @@ ${note}` : daysLine;
     // UNION deduplicates a normal day that appears in several sources. Weekend
     // activity remains visible in stats but does not advance the 20-workday
     // training clock.
-    const activeRows = sqlite.prepare(
-      `SELECT assistant_id, COUNT(*) AS days FROM (
+    const activeDateRows = sqlite.prepare(
+      `SELECT DISTINCT assistant_id, d FROM (
          SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
          UNION
          SELECT assistant_id, log_date AS d FROM daily_call_logs WHERE org_id=? AND calls_made > 0
@@ -22686,26 +22722,44 @@ ${note}` : daysLine;
          UNION
          SELECT user_id AS assistant_id, date(clock_in) AS d FROM time_clock_entries WHERE org_id=?
        )
-       WHERE d IS NOT NULL AND strftime('%w', d) NOT IN ('0', '6')
-       GROUP BY assistant_id`,
+       WHERE d IS NOT NULL AND strftime('%w', d) NOT IN ('0', '6')`,
     ).all(orgId, orgId, orgId, orgId, orgId, orgId, orgId) as any[];
 
     const byId = <T extends { assistant_id: any }>(rows: T[]) =>
       new Map<number, T>(rows.map((r) => [Number(r.assistant_id), r]));
-    const oMap = byId(outcomeRows), cMap = byId(callRows), aMap = byId(activeRows);
+    const oMap = byId(outcomeRows), cMap = byId(callRows);
+    const datesByUser = new Map<number, string[]>();
+    let earliest = "9999-12-31";
+    let latest = "0000-01-01";
+    for (const row of activeDateRows) {
+      const id = Number(row.assistant_id);
+      const d = String(row.d);
+      if (!Number.isFinite(id) || !d) continue;
+      (datesByUser.get(id) ?? datesByUser.set(id, []).get(id)!).push(d);
+      if (d < earliest) earliest = d;
+      if (d > latest) latest = d;
+    }
+    const halfDays = (earliest <= latest)
+      ? paceHalfDayContext(sqlite, orgId, earliest, latest).halfDays
+      : new Set<string>();
     const minIso = (a: string | null, b: string | null) => (a && b ? (a < b ? a : b) : a || b);
     const maxIso = (a: string | null, b: string | null) => (a && b ? (a > b ? a : b) : a || b);
 
     return roster.map((u: any): ClrTotals => {
-      const o = oMap.get(Number(u.id)) as any, c = cMap.get(Number(u.id)) as any;
+      const id = Number(u.id);
+      const o = oMap.get(id) as any, c = cMap.get(id) as any;
+      const dates = datesByUser.get(id) ?? [];
       return {
-        userId: Number(u.id),
+        userId: id,
         name: String(u.name ?? ""),
         calls: Number(c?.calls) || 0,
         transfers: Number(o?.transfers) || 0,
         appointments: Number(o?.appointments) || 0,
         fellThrough: Number(o?.fell_through) || 0,
-        activeDays: Number((aMap.get(Number(u.id)) as any)?.days) || 0,
+        // Distinct weekdays for the training clock / sample size.
+        activeDays: dates.length,
+        // Transfers/day denominator: half days count as 0.5.
+        workedDays: sumDayPortions(id, dates, halfDays),
         firstDay: minIso(o?.first_day ?? null, c?.first_day ?? null),
         lastDay: maxIso(o?.last_day ?? null, c?.last_day ?? null),
       };
@@ -22789,6 +22843,17 @@ ${note}` : daysLine;
       const set = trainerByUser.get(id) ?? trainerByUser.set(id, new Set()).get(id)!;
       try { for (const d of JSON.parse(row.training_dates)) if (typeof d === "string") set.add(d); } catch { /* malformed row claims nothing */ }
     }
+    let earliest = "9999-12-31";
+    let latest = "0000-01-01";
+    activeByUser.forEach((dates) => {
+      for (const d of dates) {
+        if (d < earliest) earliest = d;
+        if (d > latest) latest = d;
+      }
+    });
+    const halfDays = (earliest <= latest)
+      ? paceHalfDayContext(sqlite, orgId, earliest, latest).halfDays
+      : new Set<string>();
     const out = new Map<number, ClrWorkdayRate>();
     for (const u of clrRoster()) {
       const id = Number(u.id);
@@ -22796,6 +22861,8 @@ ${note}` : daysLine;
         activeDates: activeByUser.get(id) ?? [],
         trainerDates: trainerByUser.get(id) ?? new Set(),
         transferDates: transfersByUser.get(id) ?? [],
+        userId: id,
+        halfDays,
       }));
     }
     return out;
@@ -23440,13 +23507,22 @@ ${note}` : daysLine;
             WHERE tc.org_id=? AND tc.user_id IN (${marks}) AND tc.date >= ? AND tc.date <= ?
             GROUP BY tc.user_id, tc.date`,
         ).all(orgId, ...paceIds, from, w.today) as any[];
+        const paceCtx = paceHalfDayContext(sqlite, orgId, from, w.today);
         const weeks = weeklyPace({
           days: days.map((r) => ({ userId: Number(r.user_id), date: String(r.d) })),
           credits: credits.map((r) => ({ userId: Number(r.user_id), date: String(r.d), credit: Number(r.credit) || 0 })),
           today: w.today,
           weeks: TV_PACE_WEEKS,
+          halfDays: paceCtx.halfDays,
+          excludedDays: paceCtx.excludedDays,
         });
-        return { weeks, average: completedAverage(weeks), rampDays: PACE_RAMP_DAYS };
+        return {
+          weeks,
+          average: completedAverage(weeks),
+          rampDays: PACE_RAMP_DAYS,
+          halfDay: paceCtx.resolved,
+          excludedPersonDays: paceCtx.excludedDays,
+        };
       });
 
       // ── who the floor owes work to ───────────────────────────────────────
@@ -24528,7 +24604,7 @@ ${note}` : daysLine;
         lifetime: (() => {
           const all = clrAllTimeTotals(orgId);
           const mine = all.find((t) => t.userId === userId)
-            ?? { userId, name: String(u.name ?? ""), calls: 0, transfers: 0, appointments: 0, fellThrough: 0, activeDays: 0, firstDay: null, lastDay: null };
+            ?? { userId, name: String(u.name ?? ""), calls: 0, transfers: 0, appointments: 0, fellThrough: 0, activeDays: 0, workedDays: 0, firstDay: null, lastDay: null };
           // The baseline excludes people marked non-counted — they are on the
           // roster for other reasons and would skew what "typical" means.
           const counted = new Set(

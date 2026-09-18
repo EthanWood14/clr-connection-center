@@ -24,6 +24,7 @@
  * A bare date string still means one whole transfer, which is what every
  * ordinary transfer is.
  */
+import { dayPortionWeight } from "@shared/half-day";
 import { CLR_TRAINING_WORKDAY_THRESHOLD } from "./clr-training-status";
 
 /** Below this many qualifying workdays the rate is noise, not a number. */
@@ -57,6 +58,10 @@ export function transfersPerWorkingDay(input: {
   transferDates: readonly (string | { date: string; credit?: number })[];
   threshold?: number;
   minDays?: number;
+  /** CLR user id — required when halfDays is supplied so half days weight 0.5. */
+  userId?: number;
+  /** Approved / standing half days as `${userId}:${date}`. */
+  halfDays?: ReadonlySet<string> | null;
 }): ClrWorkdayRate {
   const threshold = input.threshold ?? CLR_TRAINING_WORKDAY_THRESHOLD;
   const minDays = input.minDays ?? MIN_WORKING_DAYS_FOR_RATE;
@@ -74,11 +79,21 @@ export function transfersPerWorkingDay(input: {
     const credit = Number(entry.credit);
     return sum + (Number.isFinite(credit) ? credit : 1);
   }, 0) * 2) / 2;
+  // Days worked = sum of day portions (full=1, half=0.5). Training clock above
+  // still uses distinct calendar days so half days still advance tenure.
+  const userId = Number(input.userId);
+  let workingDays = 0;
+  for (const date of workingSet) {
+    workingDays += (Number.isFinite(userId) && input.halfDays)
+      ? dayPortionWeight(userId, date, input.halfDays)
+      : 1;
+  }
+  workingDays = Math.round(workingDays * 10) / 10;
   return {
-    workingDays: workingSet.size,
+    workingDays,
     transfers,
-    ratePerWorkingDay: workingSet.size >= minDays
-      ? Number((transfers / workingSet.size).toFixed(2))
+    ratePerWorkingDay: workingDays >= minDays
+      ? Number((transfers / workingDays).toFixed(2))
       : null,
     trainingDays,
     trainerDays,
