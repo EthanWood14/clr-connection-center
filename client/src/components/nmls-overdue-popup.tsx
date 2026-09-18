@@ -24,8 +24,8 @@ export function NmlsOverduePopup() {
   if (overdueChecks.length === 0) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="w-full max-w-md mx-4 rounded-2xl bg-background border border-destructive/30 shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="flex max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-destructive/30 bg-background shadow-2xl sm:mx-4 sm:rounded-2xl">
         {/* Red header band */}
         <div className="bg-destructive/10 border-b border-destructive/20 px-6 py-4 flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-destructive/15 flex items-center justify-center flex-shrink-0">
@@ -39,7 +39,7 @@ export function NmlsOverduePopup() {
           </div>
         </div>
 
-        <div className="px-6 py-5 space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-5">
           <p className="text-sm text-muted-foreground">
             NMLS license verification for the following loan officers has not been completed. This must be resolved before you continue.
           </p>
@@ -74,9 +74,9 @@ export function NmlsOverduePopup() {
           </a>
         </div>
 
-        <div className="px-6 pb-5">
+        <div className="shrink-0 px-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-1">
           <Button
-            className="w-full gap-2"
+            className="min-h-12 w-full gap-2"
             onClick={() => navigate("/nmls-checks")}
           >
             <ShieldCheck className="w-4 h-4" />

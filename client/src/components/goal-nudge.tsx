@@ -84,7 +84,7 @@ export function GoalNudge() {
     <div
       role="alert"
       aria-live="polite"
-      className="fixed bottom-20 left-0 right-0 z-[9997] flex justify-center px-4 pointer-events-none
+      className="pointer-events-none fixed bottom-20 left-0 right-0 z-[9997] flex justify-center px-4 pb-[env(safe-area-inset-bottom)]
                  md:bottom-6 md:left-auto md:right-6 md:max-w-sm"
     >
       <div className="w-full pointer-events-auto rounded-xl border border-border bg-background/95 backdrop-blur-md shadow-2xl overflow-hidden">
@@ -104,7 +104,7 @@ export function GoalNudge() {
             <button
               onClick={snooze}
               aria-label="Remind me later"
-              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded flex-shrink-0 -mt-0.5 -mr-1"
+              className="-mr-1 -mt-0.5 flex min-h-11 min-w-11 flex-shrink-0 items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
             >
               <X className="w-4 h-4" />
             </button>
@@ -132,7 +132,7 @@ export function GoalNudge() {
           <div className="flex items-center gap-2 pt-0.5">
             <Button
               size="sm"
-              className="h-8 text-xs gap-1.5 flex-1"
+              className="h-11 flex-1 gap-1.5 text-sm sm:h-8 sm:text-xs"
               onClick={() => save.mutate()}
               disabled={save.isPending || !anyEntered}
               data-testid="button-goal-nudge-save"
@@ -146,7 +146,7 @@ export function GoalNudge() {
             <Button
               size="sm"
               variant="ghost"
-              className="h-8 text-xs text-muted-foreground"
+              className="h-11 text-sm text-muted-foreground sm:h-8 sm:text-xs"
               onClick={snooze}
               data-testid="button-goal-nudge-later"
             >

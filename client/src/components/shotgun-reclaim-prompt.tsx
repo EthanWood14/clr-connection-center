@@ -51,7 +51,7 @@ export function ShotgunReclaimPrompt() {
       </p>
       {reclaim.isError && <p className="mt-2 text-sm text-red-200" role="alert">{(reclaim.error as any)?.message || "Could not grab this lead back."}</p>}
       <Button
-        className="mt-3 w-full bg-white font-bold text-slate-950 hover:bg-sky-100"
+        className="mt-3 min-h-12 w-full bg-white text-base font-bold text-slate-950 hover:bg-sky-100"
         disabled={reclaim.isPending}
         onClick={() => reclaim.mutate(target.id)}
         data-testid="shotgun-grab-back"

@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.11",
+    headline: "Popups and Shotgun prompts are easier to use on phones.",
+    items: [
+      { text: "Dialogs and confirm prompts open as full-width bottom sheets on small screens, stay inside the safe area, and scroll inside when content is tall — so primary buttons stay reachable.", audience: "everyone" },
+      { text: "Shotgun offer / presence / reclaim / bounceback cards and the lead dock keep larger tap targets and stack without covering the bottom nav or sliding off the phone screen.", audience: "everyone" },
+      { text: "Overdue task / NMLS, intro, pipeline SOP, daily LO priorities, goal nudge, EOD siren, and manager summons overlays also fit short viewports with safer padding on notched phones.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.10",
     headline: "Shotgun bounceback: work a lead again 35 minutes later if it still has no transfer or appointment.",
     items: [

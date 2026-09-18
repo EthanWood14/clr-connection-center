@@ -60,7 +60,7 @@ export function ShotgunResultPrompt() {
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) snooze(); }}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto border-2 border-orange-300 sm:max-w-2xl" data-testid="shotgun-result-prompt">
+      <DialogContent className="border-2 border-orange-300 sm:max-w-2xl" data-testid="shotgun-result-prompt">
         <DialogHeader>
           <div className="mb-1 flex items-center gap-2 text-orange-700"><ClipboardCheck className="h-6 w-6" /><span className="text-xs font-black uppercase tracking-widest">Result required</span></div>
           <DialogTitle className="text-2xl">Log your Shotgun result</DialogTitle>
@@ -78,7 +78,7 @@ export function ShotgunResultPrompt() {
               {claimed.managerNotes && <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground"><strong>Manager context:</strong> {claimed.managerNotes}</p>}
             </div>
             <ShotgunResultCard key={claimed.id} lead={claimed} onCompleted={complete} />
-            <Button type="button" variant="ghost" className="mt-2 w-full text-muted-foreground" onClick={snooze}>Keep working — remind me in 10 minutes</Button>
+            <Button type="button" variant="ghost" className="mt-2 min-h-11 w-full text-muted-foreground" onClick={snooze}>Keep working — remind me in 10 minutes</Button>
           </div>
         )}
       </DialogContent>

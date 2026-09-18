@@ -77,13 +77,13 @@ export function EodSiren({ date, onGo }: { date: string; onGo: () => void }) {
 
   return (
     <div
-      className={`fixed inset-0 z-[100] flex items-center justify-center p-4 transition-colors duration-150 ${bg}`}
+      className={`fixed inset-0 z-[100] flex items-end justify-center overflow-y-auto p-0 transition-colors duration-150 sm:items-center sm:p-4 ${bg}`}
       role="alertdialog"
       aria-modal="true"
       aria-label="Your EOD report is required now"
       data-testid="eod-siren"
     >
-      <div className="w-full max-w-lg rounded-xl border-2 border-white/70 bg-black/45 p-6 text-white shadow-2xl">
+      <div className="my-0 max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-xl border-2 border-white/70 bg-black/45 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-white shadow-2xl sm:my-auto sm:rounded-xl">
         <div className="flex items-center gap-3">
           <AlertTriangle className="h-8 w-8 shrink-0" />
           <div>
@@ -113,7 +113,7 @@ export function EodSiren({ date, onGo }: { date: string; onGo: () => void }) {
         <Button
           onClick={onGo}
           size="lg"
-          className="mt-5 w-full gap-2 bg-white text-red-700 hover:bg-white/90"
+          className="mt-5 min-h-12 w-full gap-2 bg-white text-red-700 hover:bg-white/90"
           data-testid="eod-siren-go"
         >
           Fill out my EOD report <ArrowRight className="h-4 w-4" />
@@ -124,7 +124,7 @@ export function EodSiren({ date, onGo }: { date: string; onGo: () => void }) {
           onClick={() => setSilencedUntil(Date.now() + SILENCE_MS)}
           disabled={silenced}
           data-testid="eod-siren-silence"
-          className="mt-3 w-full rounded-md border border-white/40 px-3 py-1.5 text-xs font-medium text-white/90 hover:bg-white/10 disabled:opacity-60"
+          className="mt-3 min-h-11 w-full rounded-md border border-white/40 px-3 py-2 text-xs font-medium text-white/90 hover:bg-white/10 disabled:opacity-60"
         >
           {silenced ? "Silenced — the noise comes back in two minutes" : "Silence the noise for two minutes"}
         </button>
