@@ -15,6 +15,9 @@ type LaunchWindow = Pick<Window, "closed" | "close" | "focus" | "opener" | "loca
  * Reserve a blank tab synchronously in the click gesture, BEFORE the claim
  * request. No phone number leaves C3 until the caller explicitly opens it
  * after a successful ownership/compliance check. C3 itself stays open.
+ *
+ * If the blank tab was closed during an async gap (common on mobile), open()
+ * retries once with window.open(url) so Dialpad still launches.
  */
 export function reserveDialpadLaunch(phone: string, openWindow: () => LaunchWindow | null = () => window.open("about:blank", "_blank")) {
   const url = dialpadCallUrl(phone);
@@ -37,14 +40,26 @@ export function reserveDialpadLaunch(phone: string, openWindow: () => LaunchWind
       if (settled) return false;
       settled = true;
       try {
-        if (!popup || popup.closed) return false;
-        popup.location.replace(url);
+        if (popup && !popup.closed) {
+          popup.location.replace(url);
+          try { popup.focus(); } catch { /* focus may be denied even after successful navigation */ }
+          return true;
+        }
       } catch {
         try { popup?.close(); } catch { /* already closed */ }
+      }
+      // Reserved blank gone or navigation failed — one direct open as fallback.
+      try {
+        const retry = (typeof globalThis !== "undefined" && globalThis.window?.open)
+          ? globalThis.window.open(url, "_blank")
+          : null;
+        if (!retry) return false;
+        try { retry.opener = null; } catch { /* opener may be denied */ }
+        try { retry.focus(); } catch { /* focus may be denied */ }
+        return true;
+      } catch {
         return false;
       }
-      try { popup.focus(); } catch { /* focus may be denied even after successful navigation */ }
-      return true;
     },
     cancel() {
       if (settled) return;
