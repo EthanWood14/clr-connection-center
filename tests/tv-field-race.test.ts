@@ -178,7 +178,9 @@ test("broadcast graphics follow the actual camera and crossing instead of announ
   const wrapper=readFileSync(new URL("../client/src/components/tv/field-race.tsx", import.meta.url),"utf8");
   assert.match(wrapper,/onShot:next=>\{if\(!cancelled\)setShot\(next\);\}/);
   assert.match(wrapper,/data-broadcast-shot=\{shot\.id\}/);
-  assert.match(wrapper,/data-testid="tv-race-shot-label">\{isDayRace && hourLabel \? hourLabel : shot\.label\}/);
+  assert.match(wrapper,/data-testid="tv-race-shot-label">\{isDayRace && clockLabel \? clockLabel : \(reduced \? shot\.label : 'TRACKSIDE VIEW'\)\}/);
+  assert.match(wrapper,/stableCamera:true/, "transfer and day-race cameras stay trackside");
+  assert.match(wrapper,/snapUpdates:isDayRace/);
   assert.match(wrapper,/data-testid="tv-race-action-caption">\{caption\}/);
   assert.match(wrapper,/raceTransitionStartRank\(maneuver,maneuvers\)/);
   assert.doesNotMatch(wrapper,/MAKES THE PASS|Onboard focus|Turn 03/);

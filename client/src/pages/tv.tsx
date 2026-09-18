@@ -11,7 +11,7 @@ import { RaceScene } from "@/components/tv/race";
 import { FieldRace, RACE_MOMENT_MS, preloadFieldRace } from "@/components/tv/field-race";
 import { appendTvMoments, createTvRacePreview, createTvDayRacePreview, planTransferRaces, racePreviewStatus } from "@shared/tv-field-race";
 import { dueHourlyRaceKey } from "@shared/tv-hourly-race";
-import { dayRaceMomentMs, type DayRaceFrame, type DayRaceHourCredit } from "@shared/tv-day-race";
+import { dayRaceActiveHours, dayRaceMomentMs, type DayRaceFrame, type DayRaceHourCredit } from "@shared/tv-day-race";
 import { CornerRace } from "@/components/tv/corner-race";
 import {
   PAN_BOX, usePan,
@@ -97,7 +97,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   const playRacePreview = useCallback(() => {
     if (!previewPeople.length || previewStatus) return;
     const key = `local-race-preview:${Date.now()}:${++previewSequence.current}`;
-    // Day replay: 8s per non-empty hour, Elleine off the field. Falls back to
+    // Day replay: 2s per non-empty hour, by the minute, Elleine off the field. Falls back to
     // a still of today's grid when no hourly credits have landed yet.
     const moment = createTvDayRacePreview(previewPeople, raceDayCredits, key, new Date().toISOString());
     // A double click cannot add two previews. Real celebrations already in
@@ -218,7 +218,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   useEffect(() => {
     if (!current) return;
     const hold = (current.type === "event" || current.type === "overtake") && current.fieldRace
-      ? (current.type === "event" && current.dayFrames?.length ? dayRaceMomentMs(current.dayFrames.length) : RACE_MOMENT_MS)
+      ? (current.type === "event" && current.dayFrames?.length ? dayRaceMomentMs(dayRaceActiveHours(current.dayFrames).length) : RACE_MOMENT_MS)
       : current.type === "milestone" ? HOLD_MS.milestone
       : current.type === "overtake" ? HOLD_MS.overtake
       : HOLD_MS[current.event.kind];
@@ -574,7 +574,7 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
         onKeyDown={(event) => event.stopPropagation()}
         onKeyUp={(event) => event.stopPropagation()}
         aria-label={previewStatus === "playing" ? "Race preview playing" : previewStatus === "queued" ? "Race preview queued" : "Play race preview"}
-        title="Play today's race on this screen only (8s per hour, skip empty hours, Elleine excluded). Does not log a transfer or change scores."
+        title="Play today's race on this screen only (2s per hour, by the minute, skip empty stretches, Elleine excluded). Does not log a transfer or change scores."
       >
         <Play className="h-3.5 w-3.5" aria-hidden="true" />
         {previewStatus === "playing" ? "Race playing…" : previewStatus === "queued" ? "Race queued…" : "Play race"}

@@ -9,7 +9,7 @@ import { createTvCarModel } from "./car-model";
 import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
 import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
 
-type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; /** How long the scene runs before it stops drawing. The wall's corner race asks for two minutes; a transfer's moment holds the screen for twelve seconds. */ runSeconds?: number; /** How long the camera flight is stretched over. The same thirty-odd angles, walked slowly. */ cameraSeconds?: number; /** Corner mode: hold ONE car, and put its name up only now and then. A dozen nameplates at once is unreadable on a small panel. */ spotlight?: boolean; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
+type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; /** How long the scene runs before it stops drawing. The wall's corner race asks for two minutes; a transfer's moment holds the screen for twelve seconds. */ runSeconds?: number; /** How long the camera flight is stretched over. The same thirty-odd angles, walked slowly. */ cameraSeconds?: number; /** Corner mode: hold ONE car, and put its name up only now and then. A dozen nameplates at once is unreadable on a small panel. */ spotlight?: boolean; /** Lock the lens at the opening trackside pose — no pan/zoom/follow flight. Cars still move. */ stableCamera?: boolean; /** Day-race minute ticks: snap cars to the new grid instead of a multi-second pass. */ snapUpdates?: boolean; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
 
 /** Procedural scene with optional same-origin, access-controlled car pictures. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
@@ -299,7 +299,14 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     const ids=new Set(racers.map(r=>r.driver.id));
     const nextIds=new Set(next.map(d=>d.id));
     if(nextIds.size!==ids.size||Array.from(nextIds).some(id=>!ids.has(id)))return false;
-    transitions=new Map(planRaceTransition(currentDrivers,next,options.focusId).map(t=>[t.id,t]));
+    let plans=planRaceTransition(currentDrivers,next,options.focusId);
+    // Minute ticks are denser than a pass animation: park each car on its new
+    // grid spot so the day race does not queue a five-second maneuver every
+    // thirty-odd milliseconds. Live transfer moments keep the full move.
+    if(options.snapUpdates){
+      plans=plans.map(t=>({...t,startDistance:t.endDistance,startLane:t.endLane,scored:false,passing:false,passedIds:[],tieIds:[]}));
+    }
+    transitions=new Map(plans.map(t=>[t.id,t]));
     currentDrivers=next;transitionStart=lastElapsed;
     return true;
   };
@@ -330,7 +337,9 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     // two-minute shot without the cars crawling round in slow motion.
     const runFor=options.runSeconds??11.8, flightFor=options.cameraSeconds??12;
     const elapsed=options.reduced?4.6:Math.min(runFor,(now-start)/1000);
-    const cameraTime=options.reduced?12:Math.min(12,elapsed*12/flightFor);
+    // stableCamera: hold the opening trackside pose while cars keep lapping —
+    // no drone climb, dive, or follow flight on transfers / day replay.
+    const cameraTime=options.reduced?12:options.stableCamera?0:Math.min(12,elapsed*12/flightFor);
     // A 32ms floor pinned the scene at ~31fps, and at that rate a fast camera
     // move judders — which is the stutter on a transfer's race (owner, 16 Sep
     // 2026). The full-screen race now draws every frame it is offered; the
@@ -381,7 +390,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     // seconds in. On the corner's three-minute broadcast that read as the
     // grandstand dissolving and never coming back, so it is not used there
     // (owner, 16 Sep 2026).
-    const fanOpacity=options.reduced||options.spotlight?0:Math.max(0,Math.min(1,(1.8-elapsed)/.6));
+    const fanOpacity=options.reduced||options.spotlight||options.stableCamera?0:Math.max(0,Math.min(1,(1.8-elapsed)/.6));
     fanFrame.visible=fanOpacity>0;fanMaterial.opacity=railMaterial.opacity=fanOpacity;
     // Wide TV shots retreat from the field; atmosphere belongs behind the
     // racers, not between the lens and their cars.
@@ -398,7 +407,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
       ? {normal:{x:0,y:1,z:0},constant:1e6}
       : raceSceneryClipPlane(shot.position,shot.target,racers.map(r=>r.root.position));
     sceneryPlane.normal.set(sceneryClip.normal.x,sceneryClip.normal.y,sceneryClip.normal.z);sceneryPlane.constant=sceneryClip.constant;
-    const shotLabel=options.reduced?raceBroadcastShot(12,true):shot.shot;
+    const shotLabel=options.reduced||options.stableCamera?raceBroadcastShot(12,true):shot.shot;
     if(shotLabel.id!==reportedShot){reportedShot=shotLabel.id;options.onShot?.(shotLabel);}
     const progressTick=options.reduced?120:Math.floor(elapsed*5);
     if(progressTick!==reported){reported=progressTick;options.onProgress?.(options.reduced?12:elapsed);}

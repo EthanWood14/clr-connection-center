@@ -1,12 +1,12 @@
 import type Database from "better-sqlite3";
 import { TRANSFER_CREDIT_SQL } from "../shared/transfer-credit";
 import { transferCreditExclusionSql } from "../shared/stats-exclusions";
-import { officeHourFromIso, type DayRaceHourCredit } from "../shared/tv-day-race";
+import { officeStampFromIso, type DayRaceHourCredit } from "../shared/tv-day-race";
 
 /**
- * Today's transfer credits, stamped with the office-local hour they landed.
- * The Play-race button turns these into a timeline (shared/tv-day-race.ts);
- * empty hours are dropped there, not here, so the raw feed stays auditable.
+ * Today's transfer credits, stamped with the office-local hour+minute they
+ * landed. The Play-race button turns these into a timeline (shared/tv-day-race.ts);
+ * empty minutes are dropped there, not here, so the raw feed stays auditable.
  */
 export function loadDayRaceHourCredits(
   db: Database.Database,
@@ -28,9 +28,9 @@ export function loadDayRaceHourCredits(
     const userId = Number(row.userId);
     const credit = Number(row.credit);
     if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isFinite(credit) || credit <= 0) continue;
-    const hour = officeHourFromIso(String(row.at ?? ""), tz);
-    if (hour == null) continue;
-    out.push({ hour, userId, credit });
+    const stamp = officeStampFromIso(String(row.at ?? ""), tz);
+    if (stamp == null) continue;
+    out.push({ hour: stamp.hour, minute: stamp.minute, userId, credit });
   }
   return out;
 }

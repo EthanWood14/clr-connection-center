@@ -83,7 +83,7 @@ export interface Feed {
   newLeads?: NewLead[];
   racePlayback?: { id: number } | null;
   racePeople?: Person[];
-  /** Today's transfer credits by office-local hour — Play race day timeline. */
+  /** Today's transfer credits by office-local hour+minute — Play race day timeline. */
   raceDayCredits?: DayRaceHourCredit[];
 }
 

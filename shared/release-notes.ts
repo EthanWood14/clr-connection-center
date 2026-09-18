@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.4",
+    headline: "Office TV Play race is 4× faster, by the minute, without the transfer camera sweep.",
+    items: [
+      { text: "Play today's race runs at two seconds per office hour (was eight), so a full day finishes about four times sooner.", audience: "everyone" },
+      { text: "Cars advance on each transfer's office minute instead of jumping together on the hour; empty stretches are still skipped.", audience: "everyone" },
+      { text: "Transfer and day-race cameras stay trackside — no pan, zoom, or follow flight when someone scores. Cars still move and pulse on a live transfer.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.3",
     headline: "Manager Placed % hover tip is readable again.",
     items: [

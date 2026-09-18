@@ -67,13 +67,16 @@ export function createTvDayRacePreview(
   if (!frames.length) {
     return { ...createTvRacePreview(field, key, at) };
   }
+  // Start on the zeroed grid so the first transfer minute can land on its own
+  // clock instead of applying a whole hour of credits the instant Play is hit.
+  const grid = dayRaceStartingGrid(field);
   return {
     type: "event" as const,
     key,
     preview: true,
     dayFrames: frames,
-    raceBefore: dayRaceStartingGrid(field),
-    fieldRace: frames[0].people,
+    raceBefore: grid,
+    fieldRace: grid,
     event: { id: key, kind: "transfer" as const, at, borrower: "", who: "", lo: null, detail: null },
   };
 }
