@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { RotateCcw, Zap } from "lucide-react";
+import { Phone, RotateCcw, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useDialpadCall } from "@/lib/dialpad-call";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { playShotgunChime } from "@/components/shotgun-offer-alert";
@@ -14,6 +15,7 @@ import type { ShotgunPayload } from "@/pages/shotgun";
  */
 export function ShotgunBouncebackPrompt() {
   const { user } = useAuth();
+  const prepareDialpadCall = useDialpadCall();
   const eligible = !!user?.isClr;
   const { data } = useQuery<ShotgunPayload>({
     queryKey: ["/api/shotgun"],
@@ -39,6 +41,11 @@ export function ShotgunBouncebackPrompt() {
     return () => clearInterval(timer);
   }, [target?.id]);
   if (!target) return null;
+  const callBouncebackLead = () => {
+    const dialpad = prepareDialpadCall(target.phone);
+    if (!dialpad) return;
+    void accept.mutateAsync(target.id).then(() => dialpad.complete()).catch(() => dialpad.cancel());
+  };
   return (
     <section aria-label="Shotgun bounceback" data-testid="shotgun-bounceback-prompt" className="pointer-events-auto relative rounded-2xl border-2 border-violet-400 bg-slate-950 p-4 text-white shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4">
       <div className="flex items-center justify-between gap-2">
@@ -49,7 +56,9 @@ export function ShotgunBouncebackPrompt() {
         <strong className="break-words">{target.leadName}</strong> came in about 35 minutes ago and still has no transfer or appointment.
         Work it again while it is fresh.
       </p>
-      {target.phone && <p className="mt-2 text-sm text-violet-50">{target.phone}</p>}
+      {target.phone && <p className="mt-2 flex items-center gap-2 text-sm text-violet-50"><Phone className="h-4 w-4 shrink-0" /><button type="button" disabled={accept.isPending}
+          onClick={callBouncebackLead}
+          className="min-h-11 text-left underline decoration-violet-300 underline-offset-2 hover:text-violet-100 disabled:opacity-50" data-testid="shotgun-bounceback-call">{accept.isPending ? "Taking…" : `Call in Dialpad · ${target.phone}`}</button></p>}
       {target.source && <p className="mt-1 text-[11px] text-violet-200/80">Source: {target.source}</p>}
       {accept.isError && <p className="mt-2 text-sm text-red-200" role="alert">{(accept.error as any)?.message || "Could not take this bounceback."}</p>}
       <Button

@@ -121,7 +121,7 @@ export function ShotgunOfferAlert() {
         <p className="break-words text-lg font-bold">{offered.leadName}</p>
         {offered.phone && <p className="flex items-center gap-2"><Phone className="h-4 w-4 shrink-0" /><button type="button" disabled={confirm.isPending || deny.isPending || left <= 0}
           onClick={callOfferedLead}
-          className="underline decoration-orange-300 underline-offset-2 hover:text-orange-200 disabled:opacity-50" data-testid="shotgun-offer-call">{confirm.isPending ? "Confirming…" : `Call in Dialpad · ${offered.phone}`}</button></p>}
+          className="min-h-11 text-left underline decoration-orange-300 underline-offset-2 hover:text-orange-200 disabled:opacity-50" data-testid="shotgun-offer-call">{confirm.isPending ? "Confirming…" : `Call in Dialpad · ${offered.phone}`}</button></p>}
         {offered.email && <p className="flex items-center gap-2 break-all"><Mail className="h-4 w-4 shrink-0" />{offered.email}</p>}
         {offered.stateCode && <p className="flex items-center gap-2"><MapPin className="h-4 w-4 shrink-0" />{offered.stateCode}</p>}
         {offered.source && <p className="break-words text-orange-100">Source: {offered.source}</p>}

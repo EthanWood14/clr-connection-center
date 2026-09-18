@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { PhoneCall, RotateCcw } from "lucide-react";
+import { Phone, PhoneCall, RotateCcw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useDialpadCall } from "@/lib/dialpad-call";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { playShotgunChime } from "@/components/shotgun-offer-alert";
@@ -14,6 +15,7 @@ import type { ShotgunPayload } from "@/pages/shotgun";
  */
 export function ShotgunReclaimPrompt() {
   const { user } = useAuth();
+  const prepareDialpadCall = useDialpadCall();
   const eligible = !!user?.isClr;
   const { data } = useQuery<ShotgunPayload>({
     queryKey: ["/api/shotgun"],
@@ -36,6 +38,11 @@ export function ShotgunReclaimPrompt() {
     return () => clearInterval(timer);
   }, [target?.id]);
   if (!target) return null;
+  const callReclaimLead = () => {
+    const dialpad = prepareDialpadCall(target.phone);
+    if (!dialpad) return;
+    void reclaim.mutateAsync(target.id).then(() => dialpad.complete()).catch(() => dialpad.cancel());
+  };
   return (
     <section aria-label="Grab Shotgun lead back" data-testid="shotgun-reclaim-prompt" className="pointer-events-auto relative rounded-2xl border-2 border-sky-400 bg-slate-950 p-4 text-white shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4">
       <div className="flex items-center justify-between gap-2">
@@ -49,6 +56,9 @@ export function ShotgunReclaimPrompt() {
           : <> and it went back to the rotation</>}.
         If you are on the phone with them, take it back without waiting in line.
       </p>
+      {target.phone && <p className="mt-2 flex items-center gap-2 text-sm text-sky-50"><Phone className="h-4 w-4 shrink-0" /><button type="button" disabled={reclaim.isPending}
+          onClick={callReclaimLead}
+          className="min-h-11 text-left underline decoration-sky-300 underline-offset-2 hover:text-sky-100 disabled:opacity-50" data-testid="shotgun-reclaim-call">{reclaim.isPending ? "Grabbing…" : `Call in Dialpad · ${target.phone}`}</button></p>}
       {reclaim.isError && <p className="mt-2 text-sm text-red-200" role="alert">{(reclaim.error as any)?.message || "Could not grab this lead back."}</p>}
       <Button
         className="mt-3 min-h-12 w-full bg-white text-base font-bold text-slate-950 hover:bg-sky-100"

@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.12",
+    headline: "Call any Shotgun lead number in Dialpad from every Shotgun surface.",
+    items: [
+      { text: "Bounceback and Grab-back dock cards show Call in Dialpad · {number} — accepting or reclaiming first, then opening Dialpad for that lead's phone (same helper as the offer card).", audience: "everyone" },
+      { text: "On the Shotgun page, Grab-back rows and your claimed leads use Call in Dialpad for the lead's number; the result prompt header does too (with the existing verify-before-calling check).", audience: "everyone" },
+      { text: "Offer confirm-then-dial and the claimed-lead Call in Dialpad button are unchanged — still use useDialpadCall / Dialpad deep-link, not a second calling path.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.11",
     headline: "Popups and Shotgun prompts are easier to use on phones.",
     items: [

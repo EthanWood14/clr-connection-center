@@ -1,10 +1,10 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, Mail, MapPin, Phone } from "lucide-react";
+import { ClipboardCheck, Mail, MapPin } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGateActive } from "@/components/eod-lock-gate";
-import { ShotgunResultCard } from "@/components/shotgun-result-card";
+import { ShotgunCallLeadButton, ShotgunResultCard } from "@/components/shotgun-result-card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ShotgunPayload } from "@/pages/shotgun";
@@ -70,8 +70,8 @@ export function ShotgunResultPrompt() {
           <div>
             <div className="rounded-2xl border bg-orange-50/70 p-4 dark:bg-orange-950/15">
               <p className="text-xl font-black">{claimed.leadName}</p>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                {claimed.phone && <span className="flex items-center gap-1.5"><Phone className="h-4 w-4" />{claimed.phone}</span>}
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                {claimed.phone && <ShotgunCallLeadButton lead={claimed} />}
                 {claimed.email && <span className="flex items-center gap-1.5"><Mail className="h-4 w-4" />{claimed.email}</span>}
                 {claimed.stateCode && <span className="flex items-center gap-1.5"><MapPin className="h-4 w-4" />{claimed.stateCode}</span>}
               </div>

@@ -58,9 +58,9 @@ export function ShotgunCallLeadButton({ lead }: { lead: ShotgunLead }) {
     <div className="flex flex-wrap items-center gap-2">
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button size="sm" variant={prohibited ? "destructive" : "outline"} disabled={prohibited || openPhone.isPending} className="gap-1.5" data-testid={`shotgun-call-${lead.id}`}>
+          <Button size="sm" variant={prohibited ? "destructive" : "outline"} disabled={prohibited || openPhone.isPending} className="min-h-11 gap-1.5" data-testid={`shotgun-call-${lead.id}`}>
             <Phone className="h-4 w-4" />
-            {prohibited ? "Outside calling hours" : callStatus.status === "allowed" ? "Call in Dialpad" : "Verify before calling"}
+            {prohibited ? "Outside calling hours" : callStatus.status === "allowed" ? `Call in Dialpad · ${lead.phone}` : "Verify before calling"}
           </Button>
         </AlertDialogTrigger>
         <AlertDialogContent>
