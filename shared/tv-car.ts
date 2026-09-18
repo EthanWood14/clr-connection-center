@@ -1,4 +1,5 @@
 import { validateTvCarSkin, type TvCarSkin } from "./tv-car-skin";
+import { normalizeShopUpgrades } from "./tv-car-shop";
 
 export type TvCarAppearance = {
   bodyColor: string;
@@ -8,6 +9,8 @@ export type TvCarAppearance = {
   wrapUrl?: string;
   /** Authored pixel panels take visual precedence without deleting a saved photo. */
   skin?: TvCarSkin;
+  /** Read-only garage-shop unlocks. Never accepted from color/skin/wrap saves. */
+  upgrades?: string[];
 };
 
 export const TV_CAR_WRAP_MAX_BYTES = 1024 * 1024;
@@ -41,12 +44,14 @@ export function normalizeTvCarAppearance(raw: unknown, userId: number): TvCarApp
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fallback;
   const value = raw as Record<string, unknown>;
   const skin = validateTvCarSkin(value.skin);
+  const upgrades = normalizeShopUpgrades(value.upgrades);
   return {
     bodyColor: isColor(value.bodyColor) ? value.bodyColor.toLowerCase() : fallback.bodyColor,
     accentColor: isColor(value.accentColor) ? value.accentColor.toLowerCase() : fallback.accentColor,
     livery: isLivery(value.livery) ? value.livery : fallback.livery,
     ...(isSafeTvCarWrapUrl(value.wrapUrl) ? { wrapUrl: value.wrapUrl } : {}),
     ...(skin ? { skin } : {}),
+    ...(upgrades.length ? { upgrades } : {}),
   };
 }
 

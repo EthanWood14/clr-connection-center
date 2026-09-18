@@ -89,7 +89,7 @@ test("picture operations are self-scoped, upload decoded PNG bytes and retain un
 });
 
 test("pixel workshop is the default, preserves separate drafts and shares the real 3D model", () => {
-  assert.match(page, /useState<"skin" \| "paint">\("skin"\)/);
+  assert.match(page, /useState<"skin" \| "paint" \| "shop">\("skin"\)/);
   assert.match(page, /const CarSkinPreview = lazy/);
   assert.match(page, /<CarSkinEditor[\s\S]*onBusyChange=\{setPreparingSkin\}/);
   assert.match(page, /const editingSkin = skinDraft \?\? saved\.skin \?\? blankSkin/);
@@ -121,4 +121,13 @@ test("the garage spends a daily time budget and locks itself when it runs out", 
   assert.match(page, /data-testid="tv-car-time-left"/);
   assert.match(page, /Your garage is closed for today/);
   assert.match(page, /locked until tomorrow/);
+});
+
+test("the garage page includes a shop tab that spends earned stats, not race position", () => {
+  assert.match(page, /data-testid="tv-car-shop"/);
+  assert.match(page, /data-testid="tv-car-shop-tab"/);
+  assert.match(page, /\/api\/me\/tv-car\/shop/);
+  assert.match(page, /\/api\/me\/tv-car\/shop\/buy/);
+  assert.match(page, /Spend what you have earned/);
+  assert.match(page, /never change scoreboards/);
 });
