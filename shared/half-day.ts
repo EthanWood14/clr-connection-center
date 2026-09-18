@@ -1,23 +1,45 @@
 /**
- * Half-day time off and one-off pace exclusions.
+ * Day availability weights for rates and goal proration.
  *
  * A half day:
  *  - is still approved time off (shows on Time Off, excuses absence when they
  *    never check in)
  *  - still gets daily LO assignments (full days are the ones taken off the
  *    rotation — "still gives them a LO")
- *  - halves that person's day weight in transfers/day (weekly pace, scorecard,
- *    CLR stats, reporting) — days worked = sum of day portions (full=1, half=0.5)
+ *  - halves that person's day weight in every /day rate and in goal proration
  *  - does not mark them late on check-in
+ *
+ * A full day off ("no day"):
+ *  - approved time_off with day_portion=full (or non-half)
+ *  - weight 0 for ALL rate denominators and goal proration — even if a check-in,
+ *    dialpad row, EOD, etc. leaked into the activity union that day
  *
  * Standing half days (Rosas) and seeded one-offs are matched by roster name so
  * a rename is visible in one place rather than a stale user id.
+ *
+ * Prefer dayAvailabilityWeight / sumAvailabilityPortions /
+ * sumWorkedAvailabilityPortions at every call site so weights cannot drift.
  */
 
-/** Day weight applied to a half day in the transfers/day denominator. */
+/** Day weight applied to a half day in rate denominators and goal proration. */
 export const HALF_DAY_WEIGHT = 0.5;
 
+/** Full approved time off ("no day") — never counts toward days worked / goals. */
+export const FULL_DAY_OFF_WEIGHT = 0;
+
 export type DayPortion = "full" | "half";
+
+/**
+ * Sets keyed as `${userId}:${YYYY-MM-DD}` (see halfDayKey).
+ * Full day off and exclusions both force weight 0; full off wins over activity.
+ */
+export type DayAvailabilityContext = {
+  halfDays?: ReadonlySet<string> | null;
+  /** Approved full-day time off ("no days"). */
+  fullOffDays?: ReadonlySet<string> | null;
+  /** One-off pace exclusions (e.g. Jeremy 2026-09-17). */
+  excludedDays?: ReadonlySet<string> | null;
+};
 
 export function normalizeDayPortion(raw: unknown): DayPortion {
   const s = String(raw ?? "").trim().toLowerCase();
@@ -89,44 +111,117 @@ export function standingHalfDayUserIds(
   return ids;
 }
 
-/** Key used in halfDays sets: `${userId}:${YYYY-MM-DD}`. */
+/** Key used in halfDays / fullOffDays / excludedDays sets: `${userId}:${YYYY-MM-DD}`. */
 export function halfDayKey(userId: number, date: string): string {
   return `${userId}:${date}`;
 }
 
+export function excludedDayKeys(
+  excluded: ReadonlyArray<{ userId: number; date: string }> | null | undefined,
+): Set<string> {
+  const out = new Set<string>();
+  for (const e of excluded ?? []) {
+    const userId = Number(e.userId);
+    const date = String(e.date ?? "");
+    if (Number.isFinite(userId) && date) out.add(halfDayKey(userId, date));
+  }
+  return out;
+}
+
+/**
+ * Normalize a legacy halfDays Set OR a full DayAvailabilityContext into one
+ * context object so call sites cannot drift on argument order.
+ */
+export function asAvailabilityContext(
+  halfDaysOrCtx?: ReadonlySet<string> | DayAvailabilityContext | null,
+  fullOffDays?: ReadonlySet<string> | null,
+  excludedDays?: ReadonlySet<string> | null,
+): DayAvailabilityContext {
+  if (
+    halfDaysOrCtx &&
+    typeof halfDaysOrCtx === "object" &&
+    !(halfDaysOrCtx instanceof Set) &&
+    ("halfDays" in halfDaysOrCtx || "fullOffDays" in halfDaysOrCtx || "excludedDays" in halfDaysOrCtx)
+  ) {
+    return halfDaysOrCtx as DayAvailabilityContext;
+  }
+  return {
+    halfDays: (halfDaysOrCtx as ReadonlySet<string> | null | undefined) ?? null,
+    fullOffDays: fullOffDays ?? null,
+    excludedDays: excludedDays ?? null,
+  };
+}
+
+/**
+ * Single day-weight model for rates and goal proration (not weekly-pace today
+ * discount — that stays in paceDayWeight):
+ *   - excluded person-day → 0
+ *   - full approved time off → 0 ("no day"), even if activity leaked
+ *   - half day (approved or standing) → 0.5
+ *   - otherwise → 1
+ */
+export function dayAvailabilityWeight(
+  userId: number,
+  date: string,
+  ctx?: DayAvailabilityContext | null,
+): number {
+  const key = halfDayKey(userId, date);
+  if (ctx?.excludedDays?.has(key)) return FULL_DAY_OFF_WEIGHT;
+  if (ctx?.fullOffDays?.has(key)) return FULL_DAY_OFF_WEIGHT;
+  if (ctx?.halfDays?.has(key)) return HALF_DAY_WEIGHT;
+  return 1;
+}
+
 /**
  * Weight of one worked calendar date for transfers/day denominators.
- * Full day = 1, half day = HALF_DAY_WEIGHT. Does not apply the weekly-pace
- * "today is unfinished" discount — callers that need that use paceDayWeight.
+ * Accepts a halfDays Set (legacy) or a full DayAvailabilityContext.
+ * Does not apply the weekly-pace "today is unfinished" discount — callers that
+ * need that use paceDayWeight.
  */
 export function dayPortionWeight(
   userId: number,
   date: string,
-  halfDays?: ReadonlySet<string> | null,
+  halfDaysOrCtx?: ReadonlySet<string> | DayAvailabilityContext | null,
+  fullOffDays?: ReadonlySet<string> | null,
 ): number {
-  if (halfDays?.has(halfDayKey(userId, date))) return HALF_DAY_WEIGHT;
-  return 1;
+  return dayAvailabilityWeight(userId, date, asAvailabilityContext(halfDaysOrCtx, fullOffDays));
 }
 
-/** Sum of day portions over distinct dates for one user (1dp). */
-export function sumDayPortions(
+/** Sum of availability weights over distinct dates for one user (1dp). */
+export function sumAvailabilityPortions(
   userId: number,
   dates: Iterable<string>,
-  halfDays?: ReadonlySet<string> | null,
+  ctx?: DayAvailabilityContext | null,
 ): number {
+  const seen = new Set<string>();
   let sum = 0;
-  for (const date of dates) sum += dayPortionWeight(userId, String(date), halfDays);
+  for (const raw of dates) {
+    const date = String(raw ?? "");
+    if (!date || seen.has(date)) continue;
+    seen.add(date);
+    sum += dayAvailabilityWeight(userId, date, ctx);
+  }
   return Math.round(sum * 10) / 10;
 }
 
+/** @deprecated Prefer sumAvailabilityPortions — same math, clearer name. */
+export function sumDayPortions(
+  userId: number,
+  dates: Iterable<string>,
+  halfDaysOrCtx?: ReadonlySet<string> | DayAvailabilityContext | null,
+  fullOffDays?: ReadonlySet<string> | null,
+): number {
+  return sumAvailabilityPortions(userId, dates, asAvailabilityContext(halfDaysOrCtx, fullOffDays));
+}
+
 /**
- * Sum day portions per user from (userId, date) rows. Duplicate dates for the
- * same user are ignored (first wins), matching COUNT(DISTINCT day) semantics
- * with half-day weights.
+ * Sum availability weights per user from (userId, date) rows. Duplicate dates
+ * for the same user are ignored (first wins). Full-day off → 0 even when the
+ * activity union listed that day.
  */
-export function sumWorkedDayPortions(
+export function sumWorkedAvailabilityPortions(
   rows: ReadonlyArray<{ userId: number; date: string }>,
-  halfDays?: ReadonlySet<string> | null,
+  ctx?: DayAvailabilityContext | null,
 ): Map<number, number> {
   const seen = new Map<number, Set<string>>();
   const out = new Map<number, number>();
@@ -138,35 +233,100 @@ export function sumWorkedDayPortions(
     if (!dates) { dates = new Set(); seen.set(userId, dates); }
     if (dates.has(date)) continue;
     dates.add(date);
-    out.set(userId, (out.get(userId) ?? 0) + dayPortionWeight(userId, date, halfDays));
+    out.set(userId, (out.get(userId) ?? 0) + dayAvailabilityWeight(userId, date, ctx));
   }
   out.forEach((v, k) => out.set(k, Math.round(v * 10) / 10));
   return out;
 }
 
+/** @deprecated Prefer sumWorkedAvailabilityPortions. */
+export function sumWorkedDayPortions(
+  rows: ReadonlyArray<{ userId: number; date: string }>,
+  halfDaysOrCtx?: ReadonlySet<string> | DayAvailabilityContext | null,
+  fullOffDays?: ReadonlySet<string> | null,
+): Map<number, number> {
+  return sumWorkedAvailabilityPortions(rows, asAvailabilityContext(halfDaysOrCtx, fullOffDays));
+}
+
+function addIsoDaysUtc(iso: string, n: number): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function isWeekdayIso(iso: string): boolean {
+  const day = new Date(`${iso}T12:00:00Z`).getUTCDay();
+  return day >= 1 && day <= 5;
+}
+
 /**
- * Day weight for weekly pace: 1, HALF_DAY_WEIGHT, or 0 when the person-day is
- * excluded. `halfDayUserIds` are people on approved half-day time off that day
- * (or standing half-day). Exclusions win over half-day.
+ * Available weekday portions in [from, to] inclusive for goal proration.
+ * Every Mon–Fri starts at weight 1; full offs → 0, half → 0.5, exclusions → 0.
+ * Unlike rate denominators, this does NOT require activity on the day.
+ */
+export function availableWeekdayPortions(
+  userId: number,
+  from: string,
+  to: string,
+  ctx?: DayAvailabilityContext | null,
+): number {
+  if (!from || !to || from > to) return 0;
+  let sum = 0;
+  for (let d = from; d <= to; ) {
+    if (isWeekdayIso(d)) sum += dayAvailabilityWeight(userId, d, ctx);
+    d = addIsoDaysUtc(d, 1);
+  }
+  return Math.round(sum * 10) / 10;
+}
+
+/**
+ * Prorate a weekly goal by available weekday portions in the MTD window.
+ * `goal = weeklyGoal * (availablePortions / 5)`.
+ */
+export function prorateWeeklyGoal(weeklyGoal: number, availablePortions: number): number {
+  const weekly = Number(weeklyGoal) || 0;
+  if (weekly <= 0 || availablePortions <= 0) return 0;
+  return Math.round(weekly * (availablePortions / 5));
+}
+
+/** weeksElapsed equivalent: availablePortions / 5 (1dp). */
+export function weeksElapsedFromPortions(availablePortions: number): number {
+  if (availablePortions <= 0) return 0;
+  return Math.round((availablePortions / 5) * 10) / 10;
+}
+
+/**
+ * Day weight for weekly pace: availability weight, then today's unfinished-day
+ * discount. Exclusions / full offs → 0. Half day halves whatever the day would
+ * have counted as (including today → 0.25 when todayWeight is 0.5).
  */
 export function paceDayWeight(input: {
   userId: number;
   date: string;
   today: string;
   halfDayUserIds?: ReadonlySet<number>;
+  fullOffUserIds?: ReadonlySet<number>;
   excluded?: ReadonlyArray<{ userId: number; date: string }>;
+  /** Optional full context — preferred when available. */
+  availability?: DayAvailabilityContext | null;
   /** Today's unfinished-day weight from weekly-pace (usually 0.5). */
   todayWeight?: number;
 }): number {
+  const key = halfDayKey(input.userId, input.date);
   const excluded = input.excluded ?? [];
-  if (excluded.some((e) => e.userId === input.userId && e.date === input.date)) return 0;
-  const todayWeight = input.todayWeight ?? 0.5;
-  let weight = input.date === input.today ? todayWeight : 1;
-  if (input.halfDayUserIds?.has(input.userId)) {
-    // Half day halves whatever the day would have counted as (including today).
-    weight *= HALF_DAY_WEIGHT;
+  const ctx: DayAvailabilityContext = input.availability ?? {
+    halfDays: input.halfDayUserIds?.has(input.userId) ? new Set([key]) : null,
+    fullOffDays: input.fullOffUserIds?.has(input.userId) ? new Set([key]) : null,
+    excludedDays: excludedDayKeys(excluded),
+  };
+  // When using halfDayUserIds path, still honor excluded array.
+  if (!input.availability && excluded.some((e) => e.userId === input.userId && e.date === input.date)) {
+    return FULL_DAY_OFF_WEIGHT;
   }
-  return weight;
+  const base = dayAvailabilityWeight(input.userId, input.date, ctx);
+  if (base <= 0) return FULL_DAY_OFF_WEIGHT;
+  const todayWeight = input.todayWeight ?? 0.5;
+  return input.date === input.today ? base * todayWeight : base;
 }
 
 export function buildPaceExclusions(

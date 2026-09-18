@@ -1,27 +1,47 @@
 /**
- * Half-day time off: schema, lookups, and seeded marks.
+ * Half-day / full-day-off time off: schema, lookups, and seeded marks.
  */
 import {
   SEEDED_HALF_DAYS,
   STANDING_HALF_DAY_WHO,
+  asAvailabilityContext,
+  availableWeekdayPortions,
   buildPaceExclusions,
+  dayAvailabilityWeight,
+  excludedDayKeys,
+  halfDayKey,
   isHalfDayPortion,
   nameMatchesWho,
   normalizeDayPortion,
+  prorateWeeklyGoal,
   resolveRosterUserIds,
   standingHalfDayUserIds,
+  sumAvailabilityPortions,
   sumDayPortions,
+  sumWorkedAvailabilityPortions,
   sumWorkedDayPortions,
+  weeksElapsedFromPortions,
+  type DayAvailabilityContext,
   type DayPortion,
 } from "@shared/half-day";
 
 export {
+  asAvailabilityContext,
+  availableWeekdayPortions,
   buildPaceExclusions,
+  dayAvailabilityWeight,
+  excludedDayKeys,
+  halfDayKey,
   isHalfDayPortion,
   normalizeDayPortion,
+  prorateWeeklyGoal,
   standingHalfDayUserIds,
+  sumAvailabilityPortions,
   sumDayPortions,
+  sumWorkedAvailabilityPortions,
   sumWorkedDayPortions,
+  weeksElapsedFromPortions,
+  type DayAvailabilityContext,
 };
 
 /** Additive migration — safe to call on every boot. */
@@ -49,6 +69,17 @@ function activeUsers(db: any, orgId?: number): UserRow[] {
   }
 }
 
+function eachDateInRange(start: string, end: string, visit: (d: string) => void): void {
+  let d = String(start);
+  const last = String(end);
+  while (d <= last) {
+    visit(d);
+    const next = new Date(`${d}T12:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    d = next.toISOString().slice(0, 10);
+  }
+}
+
 /**
  * Insert approved half-day rows for Jackie (2026-09-17) and Chris Bermudez
  * (2026-09-18) when those people exist and no overlapping request is on file.
@@ -73,7 +104,6 @@ export function ensureSeededHalfDays(db: any): { inserted: number; matched: Arra
           ORDER BY id DESC LIMIT 1`,
       ).get(orgId, userId, seed.date, seed.date) as any;
       if (existing) {
-        // Promote a full-day seed collision to half if it was our seed reason.
         if (existing.status === "approved" && !isHalfDayPortion(existing.day_portion)) {
           try {
             db.prepare(
@@ -110,7 +140,6 @@ export function approvedFullDayTimeOffUserIds(db: any, orgId: number, date: stri
     `).all(orgId, date, date) as Array<{ user_id: number }>;
     return new Set(rows.map((r) => Number(r.user_id)));
   } catch {
-    // Pre-migration fallback: treat every approved row as full day.
     const rows = db.prepare(`
       SELECT DISTINCT user_id FROM time_off_requests
       WHERE org_id=? AND status='approved' AND start_date<=? AND end_date>=?
@@ -154,12 +183,18 @@ export function isHalfDayExcusedFromLate(db: any, orgId: number, userId: number,
 }
 
 /**
- * Build the halfDays set and exclusions the weekly pace feed needs, resolving
- * roster names to ids at read time.
+ * Build halfDays, fullOffDays ("no days"), and exclusions for rates / pace /
+ * goal proration. Resolves roster names to ids at read time.
+ *
+ * Full-day off keys are included even when no activity exists that day — goal
+ * proration needs the calendar weekday minus offs, not the activity union.
  */
 export function paceHalfDayContext(db: any, orgId: number, from: string, today: string): {
   halfDays: Set<string>;
+  fullOffDays: Set<string>;
   excludedDays: Array<{ userId: number; date: string }>;
+  /** Ready-to-pass DayAvailabilityContext for dayAvailabilityWeight helpers. */
+  availability: DayAvailabilityContext;
   resolved: {
     jeremy?: { id: number; name: string };
     jackie?: { id: number; name: string };
@@ -169,9 +204,9 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
 } {
   const users = activeUsers(db, orgId);
   const halfDays = new Set<string>();
+  const fullOffDays = new Set<string>();
   const standing = standingHalfDayUserIds(users);
 
-  // Standing: every weekday from `from` through `today`.
   for (const id of standing) {
     for (let d = from; d <= today; ) {
       const day = new Date(`${d}T12:00:00Z`).getUTCDay();
@@ -185,23 +220,34 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
   try {
     ensureHalfDaySchema(db);
     const rows = db.prepare(`
-      SELECT user_id, start_date, end_date FROM time_off_requests
-      WHERE org_id=? AND status='approved' AND COALESCE(day_portion,'full')='half'
+      SELECT user_id, start_date, end_date, COALESCE(day_portion, 'full') AS day_portion
+      FROM time_off_requests
+      WHERE org_id=? AND status='approved'
         AND end_date >= ? AND start_date <= ?
-    `).all(orgId, from, today) as Array<{ user_id: number; start_date: string; end_date: string }>;
+    `).all(orgId, from, today) as Array<{
+      user_id: number; start_date: string; end_date: string; day_portion: string;
+    }>;
     for (const r of rows) {
-      let d = String(r.start_date);
-      const end = String(r.end_date);
-      while (d <= end && d <= today) {
-        if (d >= from) halfDays.add(`${Number(r.user_id)}:${d}`);
-        const next = new Date(`${d}T12:00:00Z`);
-        next.setUTCDate(next.getUTCDate() + 1);
-        d = next.toISOString().slice(0, 10);
-      }
+      const userId = Number(r.user_id);
+      const half = isHalfDayPortion(r.day_portion);
+      eachDateInRange(String(r.start_date), String(r.end_date), (d) => {
+        if (d < from || d > today) return;
+        const key = halfDayKey(userId, d);
+        if (half) halfDays.add(key);
+        else fullOffDays.add(key);
+      });
     }
   } catch { /* ignore */ }
 
+  // Full day off wins over standing/approved half on the same person-day.
+  for (const key of fullOffDays) halfDays.delete(key);
+
   const excludedDays = buildPaceExclusions(users).map(({ userId, date }) => ({ userId, date }));
+  const availability: DayAvailabilityContext = {
+    halfDays,
+    fullOffDays,
+    excludedDays: excludedDayKeys(excludedDays),
+  };
 
   const pick = (who: "jeremy" | "jackie" | "chris") => {
     const hits = users.filter((u) => nameMatchesWho(u.name, who));
@@ -211,7 +257,9 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
 
   return {
     halfDays,
+    fullOffDays,
     excludedDays,
+    availability,
     resolved: {
       jeremy: pick("jeremy"),
       jackie: pick("jackie"),

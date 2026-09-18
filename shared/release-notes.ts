@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.121.0",
+    headline: "Half days and days off now count in every rate and goal.",
+    items: [
+      { text: "Full approved days off (\"no days\") now count as zero in transfers/day, calls/day, CLR stats, Ask C3, the agent stats feed, and the office TV weekly pace — even if a check-in or other activity leaked that day.", audience: "manager" },
+      { text: "Manager dashboard goals are prorated per CLR by available weekdays this month (full day off = 0, half day = 0.5), so someone with time off is not held to the same month-to-date target as someone who worked every day.", audience: "manager" },
+      { text: "The scorecard adds Calls / day worked beside Transfers / day worked, using the same availability weights.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.120.1",
     headline: "Jordon Chang is out of Transfer Tournament scoring from Wednesday.",
     items: [
