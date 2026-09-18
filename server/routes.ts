@@ -9,6 +9,7 @@ import { COUNTED_CALLS_SQL, COUNTED_MESSAGES_SQL, selfReportedCountsOn } from "@
 import { BONZO_CALL_EVENT_BATCH_MAX, BONZO_CALL_KINDS, BONZO_CALL_PATH_SOURCE, BONZO_CALL_CANDIDATE_SOURCE, type BonzoCallKind } from "@shared/bonzo-calls";
 import type { BonzoCallEventInput } from "./storage";
 import { notesBetween } from "@shared/release-notes";
+import { orgClientFacingName, orgInternalLabel } from "@shared/org-names";
 import {
   questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT,
   reviewAnswers, unansweredQuestionIds, missRates, missRatesByDay, canReviewAttempt,
@@ -6799,10 +6800,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const cfg = checkinConfig();
     const done = new Set((storageExtra.getExternalCheckinsForDate(orgId, date) as any[]).map((c) => `${c.subject_type}:${c.subject_id}`));
     const roster = (storageExtra.listPortalRoster(orgId) as any[]).map((s) => ({ ...s, checkedIn: done.has(`${s.type}:${s.id}`) }));
+    const orgRow = storageExtra.getRawSqlite().prepare(`SELECT name, company_name, nickname FROM organizations WHERE id = ?`).get(orgId) as any;
     res.json({
       date, timeZone, timeZoneLabel: "Pacific Time", enabled: cfg.enabled,
       networkConfigured: cfg.allowedIps.length > 0,
       networkMode: cfg.networkMode,
+      companyName: orgClientFacingName(orgRow),
       roster,
     });
   });
@@ -11327,7 +11330,8 @@ ${note}` : daysLine;
       };
       const fmtBytes = (n: number) => n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
       const settings = (() => { try { return storageExtra.getEmailSettings() as any; } catch { return {}; } })();
-      const orgName = esc(settings?.company_name || settings?.org_name || "CLR Connection Center");
+      const orgRow = (() => { try { return storageExtra.getRawSqlite().prepare(`SELECT name, company_name, nickname FROM organizations WHERE id = ?`).get(orgId) as any; } catch { return null; } })();
+      const orgName = esc(orgClientFacingName(orgRow) || settings?.company_name || settings?.org_name || "CLR Connection Center");
 
       let payout = "Awaiting payout";
       if (c.status === "approved") payout = c.isReceived ? "Received by team member" : (c.isPaid ? "Paid — awaiting receipt confirmation" : "Approved — awaiting payout");
@@ -11459,7 +11463,8 @@ ${note}` : daysLine;
         try { const dt = new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? String(d) + "T12:00:00" : String(d)); return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return String(d); }
       };
       const settings = (() => { try { return storageExtra.getEmailSettings() as any; } catch { return {}; } })();
-      const orgName = esc(settings?.company_name || settings?.org_name || "CLR Connection Center");
+      const orgRow = (() => { try { return storageExtra.getRawSqlite().prepare(`SELECT name, company_name, nickname FROM organizations WHERE id = ?`).get(orgId) as any; } catch { return null; } })();
+      const orgName = esc(orgClientFacingName(orgRow) || settings?.company_name || settings?.org_name || "CLR Connection Center");
       const grandTotal = items.reduce((s, i) => s + (i.amountCents || 0), 0);
       // Split by reimbursement flag — out-of-pocket money owed back vs. earned comp.
       const reimbTotal = items.reduce((s, i) => s + (i.isReimbursement ? (i.amountCents || 0) : 0), 0);
@@ -27005,7 +27010,7 @@ ${note}` : daysLine;
   // Current org settings (per-team branding, etc.)
   app.get("/api/org/current", requireAuth, (req: any, res) => {
     const orgId = getCurrentOrgId(req.session_user);
-    const org = sqliteRaw.prepare(`SELECT id, name, slug, logo_url, company_name, plan FROM organizations WHERE id = ?`).get(orgId) as any;
+    const org = sqliteRaw.prepare(`SELECT id, name, slug, logo_url, company_name, nickname, plan FROM organizations WHERE id = ?`).get(orgId) as any;
     if (!org) return res.status(404).json({ error: "Organization not found" });
     res.json({
       id: org.id,
@@ -27013,6 +27018,9 @@ ${note}` : daysLine;
       slug: org.slug,
       logoUrl: org.logo_url,
       companyName: org.company_name,
+      nickname: org.nickname ?? null,
+      internalLabel: orgInternalLabel(org),
+      clientFacingName: orgClientFacingName(org),
       plan: org.plan,
     });
   });
@@ -27020,7 +27028,7 @@ ${note}` : daysLine;
   // ── Super-admin routes ────────────────────────────────────────────────────
   app.get("/api/super-admin/orgs", requireAuth, requireSuperAdmin, (_req: any, res) => {
     const rows = sqliteRaw.prepare(`
-      SELECT o.id, o.name, o.slug, o.logo_url, o.company_name, o.plan, o.created_at,
+      SELECT o.id, o.name, o.slug, o.logo_url, o.company_name, o.nickname, o.plan, o.created_at,
         (SELECT COUNT(*) FROM users u WHERE u.org_id = o.id) AS user_count,
         (SELECT COUNT(*) FROM users u WHERE u.org_id = o.id AND u.is_clr = 1) AS clr_count
       FROM organizations o
@@ -27030,15 +27038,16 @@ ${note}` : daysLine;
   });
 
   app.post("/api/super-admin/orgs", requireAuth, requireSuperAdmin, async (req: any, res) => {
-    const { name, companyName, adminEmail, adminName } = req.body ?? {};
+    const { name, companyName, nickname, adminEmail, adminName } = req.body ?? {};
     if (!name || !companyName || !adminEmail || !adminName) {
       return res.status(400).json({ error: "name, companyName, adminEmail, adminName are required" });
     }
+    const nick = typeof nickname === "string" && nickname.trim() ? nickname.trim() : null;
     const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `org-${Date.now()}`;
     try {
       const info = sqliteRaw.prepare(`
-        INSERT INTO organizations (name, slug, company_name, plan) VALUES (?, ?, ?, 'trial')
-      `).run(name, slug, companyName);
+        INSERT INTO organizations (name, slug, company_name, nickname, plan) VALUES (?, ?, ?, ?, 'trial')
+      `).run(name, slug, companyName, nick);
       const orgId = Number(info.lastInsertRowid);
 
       // Create first admin user for that org with temp password
@@ -27058,13 +27067,14 @@ ${note}` : daysLine;
   app.patch("/api/super-admin/orgs/:id", requireAuth, requireSuperAdmin, (req: any, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const { name, plan, logoUrl, companyName, resendApiKey, fromEmail, managerEmails } = req.body ?? {};
+    const { name, plan, logoUrl, companyName, nickname, resendApiKey, fromEmail, managerEmails } = req.body ?? {};
     const fields: string[] = [];
     const vals: any[] = [];
     if (name !== undefined) { fields.push("name = ?"); vals.push(name); }
     if (plan !== undefined) { fields.push("plan = ?"); vals.push(plan); }
     if (logoUrl !== undefined) { fields.push("logo_url = ?"); vals.push(logoUrl); }
     if (companyName !== undefined) { fields.push("company_name = ?"); vals.push(companyName); }
+    if (nickname !== undefined) { fields.push("nickname = ?"); vals.push(typeof nickname === "string" && nickname.trim() ? nickname.trim() : null); }
     if (resendApiKey !== undefined) { fields.push("resend_api_key = ?"); vals.push(resendApiKey); }
     if (fromEmail !== undefined) { fields.push("from_email = ?"); vals.push(fromEmail); }
     if (managerEmails !== undefined) {
@@ -27087,11 +27097,12 @@ ${note}` : daysLine;
   app.post("/api/super-admin/orgs/:id/impersonate", requireAuth, requireSuperAdmin, (req: any, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const org = sqliteRaw.prepare(`SELECT id, name FROM organizations WHERE id = ?`).get(id) as any;
+    const org = sqliteRaw.prepare(`SELECT id, name, company_name, nickname FROM organizations WHERE id = ?`).get(id) as any;
     if (!org) return res.status(404).json({ error: "Org not found" });
     const session = req.session_user;
     const u = storage.getUserById(session.userId) as any;
     const originalOrgId = Number(session.originalOrgId ?? u?.orgId ?? u?.org_id ?? 1);
+    const label = orgInternalLabel(org);
     const payload = JSON.stringify({
       userId: session.userId,
       role: session.role,
@@ -27099,7 +27110,7 @@ ${note}` : daysLine;
       superAdmin: true,
       originalOrgId,
       isImpersonating: true,
-      impersonatingOrgName: org.name,
+      impersonatingOrgName: label,
     });
     const isProduction = process.env.NODE_ENV === "production";
     res.cookie(COOKIE_NAME, payload, {
@@ -27110,7 +27121,7 @@ ${note}` : daysLine;
       secure: isProduction, path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    res.json({ ok: true, orgId: id, orgName: org.name });
+    res.json({ ok: true, orgId: id, orgName: label });
   });
 
   function clearImpersonationCookie(req: any, res: any) {
@@ -27214,7 +27225,7 @@ ${note}` : daysLine;
       if (apiKey) {
         const resend = new Resend(apiKey);
         resend.emails.send({
-          from: `${org?.company_name ?? "CLR Connection Center"} <${from}>`,
+          from: `${orgClientFacingName(org)} <${from}>`,
           to: email,
           subject: `You've been invited to join ${org?.name ?? "CLR Connection Center"}`,
           html: `<p>You've been invited to join <strong>${org?.name ?? "CLR Connection Center"}</strong> on CLR Connection Center.</p><p><a href="${inviteLink}">Accept your invite</a></p><p>This link expires in 7 days.</p>`,
@@ -27255,7 +27266,7 @@ ${note}` : daysLine;
   app.get("/api/invite/:token", (req, res) => {
     const token = req.params.token;
     const row = sqliteRaw.prepare(`
-      SELECT it.*, o.name AS org_name, o.company_name AS org_company_name
+      SELECT it.*, o.name AS org_name, o.company_name AS org_company_name, o.nickname AS org_nickname
       FROM invite_tokens it JOIN organizations o ON o.id = it.org_id
       WHERE it.token = ?
     `).get(token) as any;
@@ -27266,8 +27277,9 @@ ${note}` : daysLine;
       email: row.email,
       role: row.role,
       orgId: row.org_id,
-      orgName: row.org_name,
-      orgCompanyName: row.org_company_name,
+      orgName: orgInternalLabel({ name: row.org_name, company_name: row.org_company_name, nickname: row.org_nickname }),
+      orgCompanyName: orgClientFacingName({ name: row.org_name, company_name: row.org_company_name, nickname: row.org_nickname }),
+      orgNickname: row.org_nickname ?? null,
     });
   });
 

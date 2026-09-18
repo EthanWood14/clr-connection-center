@@ -5,10 +5,16 @@ import { z } from "zod";
 // ── Organizations (multi-tenancy) ──────────────────────────────────────────────
 export const organizations = sqliteTable("organizations", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  // Legacy org key (slug source). Prefer nickname for C3-internal display.
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   logoUrl: text("logo_url"),
+  // Client-facing / legal company name (portal, emails, external surfaces).
   companyName: text("company_name").notNull(),
+  // Optional C3-internal label so operators can tell teams apart under one
+  // legal company (e.g. "West Capital — Victory" vs "West Capital — Retail").
+  // Null → fall back to name via orgInternalLabel().
+  nickname: text("nickname"),
   resendApiKey: text("resend_api_key"),
   fromEmail: text("from_email"),
   managerEmails: text("manager_emails"),

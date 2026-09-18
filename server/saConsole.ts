@@ -4,6 +4,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { storage, getRawSqlite } from "./storage";
+import { orgClientFacingName, orgInternalLabel } from "@shared/org-names";
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? "clr-secret-2026";
 const SA_COOKIE = "clr_sa_session";
@@ -163,7 +164,7 @@ export function registerSaConsole(app: Express) {
   // ── Organizations ──────────────────────────────────────────────────────────
   app.get("/api/sa/orgs", requireSaAuth, (req: any, res) => {
     const rows = sqliteRaw.prepare(`
-      SELECT o.id, o.name, o.slug, o.company_name, o.plan, o.is_demo, o.created_at,
+      SELECT o.id, o.name, o.slug, o.company_name, o.nickname, o.plan, o.is_demo, o.created_at,
         (SELECT COUNT(*) FROM users u WHERE u.org_id = o.id) AS user_count,
         (SELECT COUNT(*) FROM loan_officers l WHERE l.org_id = o.id) AS clr_count,
         (SELECT COUNT(*) FROM lead_outcomes lo WHERE lo.org_id = o.id) AS outcome_count
@@ -183,20 +184,26 @@ export function registerSaConsole(app: Express) {
         }
       }
     } catch {}
-    res.json({ orgs: rows, currentOrgId, isImpersonating });
+    const orgs = (rows as any[]).map((o) => ({
+      ...o,
+      internal_label: orgInternalLabel(o),
+      client_facing_name: orgClientFacingName(o),
+    }));
+    res.json({ orgs, currentOrgId, isImpersonating });
   });
 
   app.post("/api/sa/orgs", requireSaAuth, async (req, res) => {
-    const { name, companyName, adminName, adminEmail } = req.body ?? {};
+    const { name, companyName, nickname, adminName, adminEmail } = req.body ?? {};
     if (!name || !companyName || !adminName || !adminEmail) {
       return res.status(400).json({ error: "name, companyName, adminName, adminEmail are required" });
     }
+    const nick = typeof nickname === "string" && nickname.trim() ? nickname.trim() : null;
     const slug = String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
       || `org-${Date.now()}`;
     try {
       const info = sqliteRaw.prepare(
-        `INSERT INTO organizations (name, slug, company_name, plan) VALUES (?, ?, ?, 'trial')`
-      ).run(name, slug, companyName);
+        `INSERT INTO organizations (name, slug, company_name, nickname, plan) VALUES (?, ?, ?, ?, 'trial')`
+      ).run(name, slug, companyName, nick);
       const orgId = Number(info.lastInsertRowid);
 
       const tempPassword = crypto.randomBytes(8).toString("base64")
@@ -216,12 +223,13 @@ export function registerSaConsole(app: Express) {
   app.patch("/api/sa/orgs/:id", requireSaAuth, (req, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const { name, plan, companyName } = req.body ?? {};
+    const { name, plan, companyName, nickname } = req.body ?? {};
     const fields: string[] = [];
     const vals: any[] = [];
     if (name !== undefined) { fields.push("name = ?"); vals.push(name); }
     if (plan !== undefined) { fields.push("plan = ?"); vals.push(plan); }
     if (companyName !== undefined) { fields.push("company_name = ?"); vals.push(companyName); }
+    if (nickname !== undefined) { fields.push("nickname = ?"); vals.push(typeof nickname === "string" && nickname.trim() ? nickname.trim() : null); }
     if (!fields.length) return res.json({ ok: true });
     vals.push(id);
     sqliteRaw.prepare(`UPDATE organizations SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
@@ -241,7 +249,7 @@ export function registerSaConsole(app: Express) {
   app.post("/api/sa/orgs/:id/impersonate", requireSaAuth, (req: any, res) => {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const org = sqliteRaw.prepare(`SELECT id, name FROM organizations WHERE id = ?`).get(id) as any;
+    const org = sqliteRaw.prepare(`SELECT id, name, company_name, nickname FROM organizations WHERE id = ?`).get(id) as any;
     if (!org) return res.status(404).json({ error: "Org not found" });
     // Set the MAIN app session so subsequent requests to /api/* pick it up
     const isProduction = process.env.NODE_ENV === "production";
@@ -249,6 +257,7 @@ export function registerSaConsole(app: Express) {
     const u = storage.getUserById(sa.userId) as any;
     // Super admin's home org defaults to 1 (West Capital) if not set.
     const originalOrgId = Number(u?.orgId ?? u?.org_id ?? 1) || 1;
+    const label = orgInternalLabel(org);
     const payload = JSON.stringify({
       userId: sa.userId,
       role: u?.role ?? "admin",
@@ -256,7 +265,7 @@ export function registerSaConsole(app: Express) {
       superAdmin: true,
       originalOrgId,
       isImpersonating: id !== originalOrgId,
-      impersonatingOrgName: id !== originalOrgId ? org.name : null,
+      impersonatingOrgName: id !== originalOrgId ? label : null,
     });
     res.cookie(MAIN_COOKIE, payload, {
       signed: true,
@@ -266,7 +275,7 @@ export function registerSaConsole(app: Express) {
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    res.json({ ok: true, orgId: id, orgName: org.name, isImpersonating: id !== originalOrgId });
+    res.json({ ok: true, orgId: id, orgName: label, isImpersonating: id !== originalOrgId });
   });
 
   // Exit impersonation from SA Console: clear the main cookie's impersonation state
@@ -1337,6 +1346,7 @@ tbody tr:hover { background: #0f172a; }
           <button class="secondary" id="refreshOrgs">Refresh</button>
         </div>
       </div>
+      <div style="margin:0 0 12px"><input id="orgSearch" type="search" placeholder="Filter by nickname or company…" style="width:100%;max-width:360px;padding:8px 10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0" /></div>
       <div id="orgsGrid" class="org-grid">
         <div class="spinner">Loading organizations…</div>
       </div>
@@ -1601,10 +1611,23 @@ async function loadOrgs() {
     renderImpBanner();
     const sel = $('#userOrgFilter');
     sel.innerHTML = '<option value="">All orgs</option>' +
-      _orgs.map(o => '<option value="' + o.id + '">' + escapeHtml(o.name) + '</option>').join('');
+      _orgs.map(o => '<option value="' + o.id + '">' + escapeHtml(o.internal_label || o.nickname || o.name) + '</option>').join('');
+    const search = $('#orgSearch');
+    if (search && !search._bound) {
+      search._bound = true;
+      search.addEventListener('input', () => renderOrgs());
+    }
   } catch (e) {
     grid.innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
   }
+}
+function orgLabel(o) {
+  return (o.internal_label || o.nickname || o.name || '').trim() || o.company_name || o.slug || '';
+}
+function orgMatches(o, q) {
+  if (!q) return true;
+  const hay = [o.nickname, o.name, o.company_name, o.internal_label, o.slug].filter(Boolean).map(s => String(s).toLowerCase());
+  return hay.some(h => h.includes(q));
 }
 function renderOrgs() {
   const grid = $('#orgsGrid');
@@ -1612,19 +1635,27 @@ function renderOrgs() {
     grid.innerHTML = '<div class="empty">No organizations.</div>';
     return;
   }
-  grid.innerHTML = _orgs.map(o => {
+  const q = (($('#orgSearch') && $('#orgSearch').value) || '').trim().toLowerCase();
+  const list = _orgs.filter(o => orgMatches(o, q));
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty">No organizations match that filter.</div>';
+    return;
+  }
+  grid.innerHTML = list.map(o => {
     const isHome = o.id === HOME_ORG_ID;
     const isCurrent = _isImpersonating && _currentOrgId === o.id;
     const cardClass = isCurrent ? 'org-card impersonating' : 'org-card';
     const impBtn = isCurrent
       ? '<button class="impersonate-btn" disabled>👁 Currently Viewing</button>'
       : '<button class="impersonate-btn" data-act="impersonate" data-id="' + o.id + '">👁 Impersonate</button>';
+    const client = o.company_name || o.slug || '';
+    const nick = orgLabel(o);
     return \`
     <div class="\${cardClass}">
       <div class="head">
         <div>
-          <div class="name">\${escapeHtml(o.name)}</div>
-          <div class="company">\${escapeHtml(o.company_name || o.slug || '')}</div>
+          <div class="name">\${escapeHtml(nick)}</div>
+          <div class="company">\${escapeHtml(client)}\${o.nickname ? ' · nickname set' : ''}</div>
         </div>
         <div class="badges">
           \${planLabel(o)}
@@ -1657,7 +1688,7 @@ async function onOrgAction(act, id) {
   if (!org) return;
   if (act === 'edit') editOrg(org);
   else if (act === 'suspend') {
-    if (!confirm(\`\${org.plan === 'suspended' ? 'Reactivate' : 'Suspend'} "\${org.name}"?\`)) return;
+    if (!confirm(\`\${org.plan === 'suspended' ? 'Reactivate' : 'Suspend'} "\${orgLabel(org)}"?\`)) return;
     try { await api('/api/sa/orgs/' + id + '/suspend', { method: 'POST' }); loadOrgs(); }
     catch (e) { alert(e.message); }
   } else if (act === 'impersonate') {
@@ -1671,8 +1702,9 @@ async function onOrgAction(act, id) {
 function editOrg(org) {
   const body = el('div');
   body.innerHTML = \`
-    <div class="field"><label>Name</label><input id="eoName" value="\${escapeHtml(org.name)}" /></div>
-    <div class="field"><label>Company Name</label><input id="eoCompany" value="\${escapeHtml(org.company_name || '')}" /></div>
+    <div class="field"><label>Org Name (legacy key / slug source)</label><input id="eoName" value="\${escapeHtml(org.name)}" /></div>
+    <div class="field"><label>Client-facing company name</label><input id="eoCompany" value="\${escapeHtml(org.company_name || '')}" placeholder="West Capital Lending" /></div>
+    <div class="field"><label>Nickname (C3 internal)</label><input id="eoNick" value="\${escapeHtml(org.nickname || '')}" placeholder="West Capital — Victory" /><div class="hint">Shown to C3 operators. Leave blank to use the org name.</div></div>
     <div class="field"><label>Plan</label>
       <select id="eoPlan">
         <option value="trial"\${org.plan==='trial'?' selected':''}>trial</option>
@@ -1687,6 +1719,7 @@ function editOrg(org) {
       await api('/api/sa/orgs/' + org.id, { method: 'PATCH', body: JSON.stringify({
         name: body.querySelector('#eoName').value,
         companyName: body.querySelector('#eoCompany').value,
+        nickname: body.querySelector('#eoNick').value.trim() || null,
         plan: body.querySelector('#eoPlan').value,
       }) });
       closeModal(); loadOrgs();
@@ -1697,11 +1730,12 @@ function editOrg(org) {
 $('#newOrgBtn').addEventListener('click', () => {
   const body = el('div');
   body.innerHTML = \`
-    <div class="field"><label>Org Name</label><input id="noName" placeholder="Acme Mortgage" /></div>
-    <div class="field"><label>Company Name</label><input id="noCompany" placeholder="Acme Mortgage LLC" /></div>
+    <div class="field"><label>Org Name</label><input id="noName" placeholder="West Capital — Victory" /></div>
+    <div class="field"><label>Client-facing company name</label><input id="noCompany" placeholder="West Capital Lending" /></div>
+    <div class="field"><label>Nickname (C3 internal, optional)</label><input id="noNick" placeholder="Defaults to org name" /></div>
     <div class="field"><label>Admin Name</label><input id="noAdminName" placeholder="Jane Doe" /></div>
     <div class="field"><label>Admin Email</label><input id="noAdminEmail" type="email" placeholder="jane@acme.com" /></div>
-    <div class="hint">A temporary password will be generated and shown.</div>
+    <div class="hint">A temporary password will be generated and shown. Nickname is what C3 operators see; client-facing name is what clients and emails see.</div>
   \`;
   const cancel = el('button', { class: 'secondary', onClick: closeModal }, 'Cancel');
   const create = el('button', { onClick: async () => {
@@ -1709,6 +1743,7 @@ $('#newOrgBtn').addEventListener('click', () => {
       const r = await api('/api/sa/orgs', { method: 'POST', body: JSON.stringify({
         name: body.querySelector('#noName').value.trim(),
         companyName: body.querySelector('#noCompany').value.trim(),
+        nickname: body.querySelector('#noNick').value.trim() || null,
         adminName: body.querySelector('#noAdminName').value.trim(),
         adminEmail: body.querySelector('#noAdminEmail').value.trim(),
       }) });

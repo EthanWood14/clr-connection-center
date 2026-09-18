@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 
 export function ImpersonationBanner({ returnLabel = "Exit to SA Console" }: { returnLabel?: string }) {
   const { user } = useAuth();
-  const { data: org } = useQuery<{ id: number; name: string; companyName: string }>({
+  const { data: org } = useQuery<{ id: number; name: string; companyName: string; nickname?: string | null; internalLabel?: string }>({
     queryKey: ["/api/org/current"],
     enabled: !!user,
   });
@@ -27,7 +27,7 @@ export function ImpersonationBanner({ returnLabel = "Exit to SA Console" }: { re
     }
   }
 
-  const displayName = user?.impersonatingOrgName || org.name;
+  const displayName = user?.impersonatingOrgName || org.internalLabel || org.nickname || org.name;
 
   return (
     <div className="w-full bg-amber-500 text-white px-4 py-2 flex items-center gap-3 text-sm shadow sticky top-0 z-50">

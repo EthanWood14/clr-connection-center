@@ -264,9 +264,9 @@ test("the scene loads separately and a late import cannot mount after the overla
   const wrapper = readFileSync(new URL("../client/src/components/tv/field-race.tsx", import.meta.url), "utf8");
   assert.match(wrapper, /import\(["']\.\/race-scene["']\)/);
   assert.doesNotMatch(wrapper, /^import\s+[^\n]+\s+from\s+["']three(?:\/[^"']*)?["']/m);
-  assert.match(wrapper, /useMemo\(\s*\(\)\s*=>\s*raceGrid\(people\),\s*\[people\]\s*\)/);
+  assert.match(wrapper, /useMemo\(\s*\(\)\s*=>\s*raceGrid\(livePeople\),\s*\[livePeople\]\s*\)/);
   assert.match(wrapper, /if\s*\(\s*cancelled\s*\|\|\s*!host\.current\s*\)\s*return/);
-  assert.match(wrapper, /return\s*\(\)\s*=>\s*\{\s*cancelled\s*=\s*true;\s*cleanup\?\.\(\);?\s*\}/);
+  assert.match(wrapper, /return\s*\(\)\s*=>\s*\{\s*cancelled\s*=\s*true;\s*scene\.current\s*=\s*null;\s*cleanup\?\.\(\);?\s*\}/);
   assert.match(wrapper, /catch\(\s*error\s*=>\s*\{\s*sceneImport\s*=\s*undefined;\s*throw error;/,
     "a failed prefetch must not permanently poison later races");
 });
