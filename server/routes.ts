@@ -144,6 +144,7 @@ import {
   prorateWeeklyGoal, sumAvailabilityPortions, sumWorkedAvailabilityPortions,
   weeksElapsedFromPortions,
 } from "./half-day";
+import { ensureTimedNeedsTransfersPins } from "./timed-needs-transfers";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
 import { definitionsFor, monthStartOf, rollUp, weekStartOf } from "./agent-stats";
@@ -3866,6 +3867,12 @@ export function registerRoutes(httpServer: Server, app: Express) {
       console.log("[half-day] seeds:", JSON.stringify(seeded));
     }
   } catch (e: any) { console.error("[half-day] seed failed:", e?.message ?? e); }
+  try {
+    const timedPins = ensureTimedNeedsTransfersPins(storageExtra.getRawSqlite());
+    if (timedPins.updated || timedPins.matched.length) {
+      console.log("[timed-needs-transfers] pins:", JSON.stringify(timedPins));
+    }
+  } catch (e: any) { console.error("[timed-needs-transfers] seed failed:", e?.message ?? e); }
 
   // ── weekly_schedules migration ───────────────────────────────────────────────
   // Planned weekly work schedule per CLR. One row per user per week (week_start
