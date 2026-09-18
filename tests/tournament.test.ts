@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  LAST_TOURNAMENT_DATE, TOURNAMENT_ENABLED, TOURNAMENT_END, TOURNAMENT_START, TOURNAMENT_TZ, isTournamentExcluded, outcomeCreatedMs, todayInTz, tournamentPhase, tournamentStandings, tournamentWindow, wallClockToMs,
+  LAST_TOURNAMENT_DATE, TOURNAMENT_ENABLED, TOURNAMENT_END, TOURNAMENT_EXCLUDED_FROM, TOURNAMENT_START, TOURNAMENT_TZ, isTournamentExcluded, outcomeCreatedMs, todayInTz, tournamentPhase, tournamentStandings, tournamentWindow, wallClockToMs,
 } from "../shared/tournament";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -135,4 +135,37 @@ test("tournament is on for home pages, with Elleine excluded from the board and 
   assert.match(page, /if \(!TOURNAMENT_ENABLED\) \{/);
   assert.match(page, /isTournamentExcluded\(user\?\.name\)/);
   assert.match(page, /<TournamentBoard fullscreen date=\{LAST_TOURNAMENT_DATE\} \/>/);
+});
+
+// Ethan 18 Sep 2026: "jordon shouldn't count since wednesday" — from 2026-09-16 PT.
+test("Jordon Chang is excluded from tournament scoring on/after 2026-09-16 PT", () => {
+  assert.ok(TOURNAMENT_EXCLUDED_FROM.some((r) => r.fromDate === "2026-09-16"));
+  assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-16"), true);
+  assert.equal(isTournamentExcluded("Jordan Chang", "2026-09-16"), true, "Jordan spelling variant");
+  assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-15"), false, "before Wednesday still counts");
+  assert.equal(isTournamentExcluded("Jordan Rivera", "2026-09-16"), false, "demo LO must not match");
+  assert.equal(isTournamentExcluded("Elleine Asuncion", "2026-09-14"), true, "Elleine stays always excluded");
+
+  const people = [
+    { id: 1, name: "Ana" },
+    { id: 2, name: "Jordon Chang" },
+    { id: 3, name: "Cy" },
+  ];
+  const before = tournamentWindow("2026-09-15");
+  const after = tournamentWindow("2026-09-16");
+  const atBefore = (hhmm: string) => new Date(wallClockToMs("2026-09-15", hhmm)).toISOString();
+  const atAfter = (hhmm: string) => new Date(wallClockToMs("2026-09-16", hhmm)).toISOString();
+  const rowsBefore = [
+    { id: 1, assistant_id: 2, outcome_type: "transfer", created_at: atBefore("13:00"), borrower_name: "Jordon day" },
+    { id: 2, assistant_id: 1, outcome_type: "transfer", created_at: atBefore("13:05"), borrower_name: "Ana" },
+  ];
+  const rowsAfter = [
+    { id: 1, assistant_id: 2, outcome_type: "transfer", created_at: atAfter("13:00"), borrower_name: "Jordon day" },
+    { id: 2, assistant_id: 1, outcome_type: "transfer", created_at: atAfter("13:05"), borrower_name: "Ana" },
+  ];
+  const sBefore = tournamentStandings(rowsBefore, people, before);
+  assert.ok(sBefore.some((r) => r.name === "Jordon Chang" && r.credit === 1), "pre-Wednesday board still credits Jordon");
+  const sAfter = tournamentStandings(rowsAfter, people, after);
+  assert.ok(!sAfter.some((r) => /jordon|jordan/i.test(r.name)), "from Wednesday Jordon is off the board");
+  assert.deepEqual(sAfter.map((r) => [r.name, r.credit]), [["Ana", 1], ["Cy", 0]]);
 });

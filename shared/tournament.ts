@@ -27,16 +27,48 @@ export const TOURNAMENT_ENABLED = true;
 export const LAST_TOURNAMENT_DATE = "2026-09-14";
 
 /**
- * Helpers who should not compete / see the home board. Match is case-insensitive
- * on a whole word in the display name (e.g. "Elleine Asuncion").
+ * Helpers who should not compete / see the home board — always. Match is
+ * case-insensitive on a whole word in the display name (e.g. "Elleine Asuncion").
  */
 export const TOURNAMENT_EXCLUDED_NAME_RE = /\belleine\b/i;
 
-export function isTournamentExcluded(name: string | null | undefined): boolean {
-  return TOURNAMENT_EXCLUDED_NAME_RE.test(String(name ?? "").trim());
+/**
+ * Date-scoped exclusions: from this Pacific calendar day inclusive forward.
+ * Jordon Chang (also "Jordan Chang") — Ethan 18 Sep 2026: "jordon shouldn't
+ * count since wednesday" (2026-09-16 PT). Match jordon as a whole word, or
+ * "jordan chang" so demo LO "Jordan Rivera" is not pulled in.
+ */
+export const TOURNAMENT_EXCLUDED_FROM: readonly {
+  nameRe: RegExp;
+  fromDate: string;
+  reason: string;
+}[] = [
+  {
+    nameRe: /\bjordon\b|\bjordan\s+chang\b/i,
+    fromDate: "2026-09-16",
+    reason: "Ethan: Jordon shouldn't count since Wednesday (2026-09-16 PT)",
+  },
+];
+
+/**
+ * Whether this display name is out of tournament scoring / live UI.
+ * Pass the tournament window's Pacific `date` ("YYYY-MM-DD") so date-scoped
+ * rules only apply on/after their fromDate; omit for "today" (UI gates).
+ */
+export function isTournamentExcluded(
+  name: string | null | undefined,
+  date?: string | null,
+): boolean {
+  const n = String(name ?? "").trim();
+  if (TOURNAMENT_EXCLUDED_NAME_RE.test(n)) return true;
+  const day = (date && String(date).trim()) || todayInTz();
+  for (const rule of TOURNAMENT_EXCLUDED_FROM) {
+    if (day >= rule.fromDate && rule.nameRe.test(n)) return true;
+  }
+  return false;
 }
 
-/** Home tab / sidebar: tournament is on AND this user is not excluded. */
+/** Home tab / sidebar: tournament is on AND this user is not excluded today. */
 export function canSeeTournamentHome(name: string | null | undefined): boolean {
   return TOURNAMENT_ENABLED && !isTournamentExcluded(name);
 }
@@ -147,7 +179,7 @@ const str = (v: unknown) => (v == null ? "" : String(v));
 
 /**
  * Standings for one window. Every active CLR in `people` is on the board
- * (zero is a score too), except TOURNAMENT_EXCLUDED names; anyone else who
+ * (zero is a score too), except always-excluded and date-scoped TOURNAMENT_EXCLUDED names; anyone else who
  * earned credit is added by name (also skipping excluded people).
  */
 export function tournamentStandings(
@@ -155,7 +187,7 @@ export function tournamentStandings(
   people: ReadonlyArray<TournamentPerson>,
   window: TournamentWindow,
 ): TournamentStanding[] {
-  const excludedIds = new Set(people.filter((p) => isTournamentExcluded(p.name)).map((p) => p.id));
+  const excludedIds = new Set(people.filter((p) => isTournamentExcluded(p.name, window.date)).map((p) => p.id));
   const roster = people.filter((p) => !excludedIds.has(p.id));
   const byUser = new Map<number, TournamentStanding>();
   const ensure = (id: number, name: string) => {
@@ -178,7 +210,7 @@ export function tournamentStandings(
     const sender = Number(row.shotgunSenderId ?? row.shotgun_sender_id) || 0;
     const credited = maker > 0 && sender > 0 && maker !== sender ? [maker, sender] : [maker, sender].filter((id) => id > 0).slice(0, 1);
     for (const who of credited) {
-      if (excludedIds.has(who) || isTournamentExcluded(nameOf.get(who))) continue;
+      if (excludedIds.has(who) || isTournamentExcluded(nameOf.get(who), window.date)) continue;
       const credit = transferCreditFor(row, who);
       if (credit <= 0) continue;
       const s = ensure(who, nameOf.get(who) ?? `CLR #${who}`);

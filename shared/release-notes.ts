@@ -29,6 +29,13 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.120.1",
+    headline: "Jordon Chang is out of Transfer Tournament scoring from Wednesday.",
+    items: [
+      { text: "From 2026-09-16 (Pacific) onward, Jordon Chang's transfers do not count on the Transfer Tournament board (Jordan Chang spelling included). Earlier tournament days are unchanged. Elleine stays excluded as before.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.120.0",
     headline: "Companies can have a client-facing name and a C3 nickname.",
     items: [
@@ -36,7 +43,6 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       { text: "C3 lists, impersonation, and org filters use the nickname when set; the portal and outbound email still use the client-facing company name. Search matches either.", audience: "manager" },
     ],
   },
-
   {
     version: "4.119.5",
     headline: "Half days count as half a day in transfers/day worked.",
