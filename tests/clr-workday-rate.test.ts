@@ -150,3 +150,23 @@ test("a long month of halves does not drift on floating-point addition", () => {
   });
   assert.equal(r.transfers, 10.5);
 });
+
+test("half days weigh 0.5 in the working-days denominator", () => {
+  const active = days(30); // 20 training + 10 post
+  const halfDates = active.slice(20); // all 10 post-training are half days → 5.0
+  const halfDays = new Set(halfDates.map((d) => `42:${d}`));
+  const r = transfersPerWorkingDay({
+    activeDates: active,
+    trainerDates: new Set(),
+    transferDates: halfDates.map((d) => ({ date: d, credit: 1 })),
+    threshold: 20,
+    userId: 42,
+    halfDays,
+  });
+  assert.equal(r.workingDays, 5);
+  assert.equal(r.transfers, 10);
+  assert.equal(r.ratePerWorkingDay, 2);
+  // Training clock still advances by distinct calendar days.
+  assert.equal(r.trainingDays, 20);
+  assert.equal(r.graduated, true);
+});

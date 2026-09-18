@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.119.5",
+    headline: "Half days count as half a day in transfers/day worked.",
+    items: [
+      { text: "Transfers / day worked (scorecard, CLR stats, Ask C3, and the agent stats feed) now treats an approved or standing half day as 0.5 days worked — not a full day and not zero.", audience: "manager" },
+      { text: "The office TV weekly transfers-per-CLR chart already used this weighting; it stays the same.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.119.4",
     headline: "Half days on Time Off, a cleaner transfers/day, and no false TV transfer races.",
     items: [

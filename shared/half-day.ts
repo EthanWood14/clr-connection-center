@@ -6,7 +6,8 @@
  *    never check in)
  *  - still gets daily LO assignments (full days are the ones taken off the
  *    rotation — "still gives them a LO")
- *  - halves that person's day weight in transfers/day (weekly pace)
+ *  - halves that person's day weight in transfers/day (weekly pace, scorecard,
+ *    CLR stats, reporting) — days worked = sum of day portions (full=1, half=0.5)
  *  - does not mark them late on check-in
  *
  * Standing half days (Rosas) and seeded one-offs are matched by roster name so
@@ -86,6 +87,61 @@ export function standingHalfDayUserIds(
     for (const id of resolveRosterUserIds(users, who)) ids.add(id);
   }
   return ids;
+}
+
+/** Key used in halfDays sets: `${userId}:${YYYY-MM-DD}`. */
+export function halfDayKey(userId: number, date: string): string {
+  return `${userId}:${date}`;
+}
+
+/**
+ * Weight of one worked calendar date for transfers/day denominators.
+ * Full day = 1, half day = HALF_DAY_WEIGHT. Does not apply the weekly-pace
+ * "today is unfinished" discount — callers that need that use paceDayWeight.
+ */
+export function dayPortionWeight(
+  userId: number,
+  date: string,
+  halfDays?: ReadonlySet<string> | null,
+): number {
+  if (halfDays?.has(halfDayKey(userId, date))) return HALF_DAY_WEIGHT;
+  return 1;
+}
+
+/** Sum of day portions over distinct dates for one user (1dp). */
+export function sumDayPortions(
+  userId: number,
+  dates: Iterable<string>,
+  halfDays?: ReadonlySet<string> | null,
+): number {
+  let sum = 0;
+  for (const date of dates) sum += dayPortionWeight(userId, String(date), halfDays);
+  return Math.round(sum * 10) / 10;
+}
+
+/**
+ * Sum day portions per user from (userId, date) rows. Duplicate dates for the
+ * same user are ignored (first wins), matching COUNT(DISTINCT day) semantics
+ * with half-day weights.
+ */
+export function sumWorkedDayPortions(
+  rows: ReadonlyArray<{ userId: number; date: string }>,
+  halfDays?: ReadonlySet<string> | null,
+): Map<number, number> {
+  const seen = new Map<number, Set<string>>();
+  const out = new Map<number, number>();
+  for (const row of rows) {
+    const userId = Number(row.userId);
+    const date = String(row.date ?? "");
+    if (!Number.isFinite(userId) || !date) continue;
+    let dates = seen.get(userId);
+    if (!dates) { dates = new Set(); seen.set(userId, dates); }
+    if (dates.has(date)) continue;
+    dates.add(date);
+    out.set(userId, (out.get(userId) ?? 0) + dayPortionWeight(userId, date, halfDays));
+  }
+  out.forEach((v, k) => out.set(k, Math.round(v * 10) / 10));
+  return out;
 }
 
 /**

@@ -453,7 +453,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     ...(pace ? [{ key: "transfersPerWorkedDay", label: "Transfers / day worked", better: true,
       get: (r: any) => r.transfersPerWorkedDay ?? null,
       fmt: (r: any) => r.transfersPerWorkedDay == null ? "—" : Number(r.transfersPerWorkedDay).toFixed(2),
-      title: "MTD transfers divided by distinct days with recorded work. Days off are excluded.",
+      title: "MTD transfers divided by days worked (full day=1, half day=0.5). Full days off are excluded.",
       cellTitle: (r: any) => `${r.transfers ?? 0} transfers / ${r.workedDays ?? 0} days worked`,
     }] : []),
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },

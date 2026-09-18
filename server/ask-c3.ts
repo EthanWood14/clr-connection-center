@@ -29,6 +29,8 @@ import {
   getCallStatsByRange,
 } from "./storage";
 import { transferCreditByUser, transferCreditFor } from "@shared/transfer-credit";
+import { sumDayPortions } from "@shared/half-day";
+import { paceHalfDayContext } from "./half-day";
 
 // ── Model tiers ──────────────────────────────────────────────────────────────
 // Entry order is the client dropdown order. Fable runs at effort "high": its
@@ -365,6 +367,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         if (active && clrLike && portal !== "lap" && portal !== "lop") ids.add(id);
       }
 
+      const halfDays = paceHalfDayContext(getRawSqlite(), user.orgId, start, end).halfDays;
       const perClr = [...ids].map((id) => {
         const u = usersById.get(id);
         const stat = statsByClr.get(id);
@@ -372,7 +375,8 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         const callsMade = Number(call?.total_calls ?? call?.totalCalls ?? 0);
         const transfers = stat?.transfers ?? 0;
         const appointments = stat?.appointments ?? 0;
-        const activeDays = stat?.days.size ?? 0;
+        // Days worked = sum of day portions (half day = 0.5), not distinct count.
+        const activeDays = sumDayPortions(id, stat?.days ?? [], halfDays);
         return {
           userId: id,
           name: String(u?.name ?? `User #${id}`),
@@ -419,7 +423,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
           avgTransfersPerActiveDay: avg(active.filter((row) => row.activeDays > 0).map((row) => row.transfersPerActiveDay)),
           avgTransfersPer100Calls: avg(rated.map((row) => row.transfersPer100Calls as number)),
         },
-        note: "Team averages include only CLRs with activity in the range; active days count days with at least one logged outcome.",
+        note: "Team averages include only CLRs with activity in the range; active days are the sum of day portions (full=1, half=0.5) for days with at least one logged outcome.",
       });
     }
     case "get_clr_trends": {

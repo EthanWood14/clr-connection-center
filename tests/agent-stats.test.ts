@@ -111,6 +111,20 @@ test("the denominator is days worked, not headcount", () => {
   assert.equal(wk.avgPerClr, 2.5);
 });
 
+
+test("half days count as 0.5 in the CLR-days denominator", () => {
+  const rows = [
+    row("2026-09-08", 20), row("2026-09-09", 20),
+    row("2026-09-08", 21),
+  ];
+  const half = new Set(["20:2026-09-09"]);
+  const [wk] = rollUp(rows, weekStartOf, null, () => true, half);
+  // User 20: 1 + 0.5 = 1.5; user 21: 1 → 2.5 CLR-days, 3 transfers.
+  assert.equal(wk.clrDays, 2.5);
+  assert.equal(wk.transfers, 3);
+  assert.equal(wk.avgPerClrDay, Math.round((3 / 2.5) * 100) / 100);
+});
+
 test("a day spent logging anything counts, even with no transfer on it", () => {
   // Otherwise a bad day disappears from the denominator and flatters the rate.
   const rows = [row("2026-09-08", 20, "no_answer"), row("2026-09-09", 20, "transfer")];
@@ -139,6 +153,7 @@ test("the payload explains the traps a reader would otherwise fall into", () => 
   // this data — including by me.
   const d = definitionsFor("Elleine", true);
   assert.match(d.avgPerClrDay, /THIS IS THE FIGURE TO COMPARE ACROSS PERIODS/);
+  assert.match(d.avgPerClrDay, /half days count as 0.5/);
   assert.match(d.complete, /never a trend/);
   assert.match(d.nestedWindows, /collapsing when it is not/);
   assert.match(d.helperTransfers, /Elleine is flagged exclude_from_stats/);
