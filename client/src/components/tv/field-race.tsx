@@ -7,6 +7,7 @@ import { raceBroadcastShot, raceFocusCaption } from "@shared/tv-race-camera";
 import {
   DAY_RACE_SECONDS_PER_HOUR,
   dayRaceActiveHours,
+  dayRaceFrameBlendSeconds,
   dayRaceFrameOffsetMs,
   dayRaceRunSeconds,
   dayRaceStartingGrid,
@@ -25,7 +26,7 @@ export const RACE_SCENE_SECONDS = 18;
 export const RACE_MOMENT_MS = (RACE_SCENE_SECONDS + .6) * 1000;
 
 /** What mountRaceScene hands back: tear it down, or move it on in place. */
-type RaceSceneHandle = (() => void) & { update: (next: RaceDriver[]) => boolean };
+type RaceSceneHandle = (() => void) & { update: (next: RaceDriver[], opts?: { blendSeconds?: number }) => boolean };
 
 export function preloadFieldRace() {
   return sceneImport ??= import("./race-scene").catch(error=>{sceneImport=undefined;throw error;});
@@ -94,7 +95,6 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
           // Lock the lens trackside for transfers and day replay — no flight
           // pan/zoom/follow. Cars still animate; scored transfers keep boost.
           stableCamera:true,
-          snapUpdates:isDayRace,
           cameraSeconds:Math.min(runSeconds,RACE_SCENE_SECONDS),
           onProgress:time=>{if(!cancelled)setElapsed(time);},
           onShot:next=>{if(!cancelled)setShot(next);},
@@ -110,13 +110,16 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[isDayRace?`day:${dayFrames!.length}:${activeHours.join(",")}`:`live:${startPeople.map(p=>`${p.id}:${p.transfersToday}`).join("|")}`,reduced,focusId,runSeconds]);
 
-  // Walk each non-empty minute in place, timed inside its hour slot.
+  // Walk each non-empty minute in place, timed inside its hour slot. Blend
+  // each credit's grid into the next over the wall-clock gap so cars glide
+  // continuously (many frames/sec) instead of teleporting on each tick.
   useEffect(()=>{
     if(!isDayRace||!dayFrames?.length)return;
     const hours=dayRaceActiveHours(dayFrames);
-    const timers=dayFrames.map((frame)=>window.setTimeout(()=>{
+    const timers=dayFrames.map((frame,index)=>window.setTimeout(()=>{
       const next=raceGrid(frame.people);
-      if(scene.current?.update(next)===false)return;
+      const blendSeconds=dayRaceFrameBlendSeconds(index,dayFrames,hours);
+      if(scene.current?.update(next,{blendSeconds})===false)return;
       setLivePeople(frame.people);
     },dayRaceFrameOffsetMs(frame,hours)));
     return()=>{timers.forEach(clearTimeout);};
@@ -142,7 +145,7 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
         <div className="flex items-center gap-3"><span className={`${preview?'bg-cyan-700':'bg-red-600'} px-2.5 py-1 text-[10px] font-black uppercase tracking-[.2em]`}>{preview?(isDayRace?'Day race':'Preview'):'Live'}</span><h2 className="text-[clamp(16px,1.7vw,30px)] font-black italic uppercase tracking-tight">C3 Grand Prix</h2></div>
         <div className="border-l-2 border-cyan-300 bg-[#08131f]/80 px-3 py-1.5 text-right"><p className="text-[9px] font-semibold uppercase tracking-[.22em] text-white/50">Race coverage</p><p className="mt-0.5 text-[clamp(10px,1vw,17px)] font-bold uppercase tracking-wider text-cyan-100" data-testid="tv-race-shot-label">{isDayRace && clockLabel ? clockLabel : (reduced ? shot.label : 'TRACKSIDE VIEW')}</p></div>
       </div>
-      {preview&&<p className="mt-2 text-[11px] font-semibold text-cyan-100/80">{isDayRace?`Today’s race · ${DAY_RACE_SECONDS_PER_HOUR}s per hour · By the minute · Empty stretches skipped`:'Current standings · No stats changed'}</p>}
+      {preview&&<p className="mt-2 text-[11px] font-semibold text-cyan-100/80">{isDayRace?`Today’s race · ${DAY_RACE_SECONDS_PER_HOUR}s per hour · By the minute · Smooth motion · Empty stretches skipped`:'Current standings · No stats changed'}</p>}
     </header>
     <aside className="absolute right-0 inset-y-0 flex w-[20%] flex-col border-l border-white/15 bg-[#08131f]/95 px-[1.2%] py-[3%]">
       <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-black uppercase tracking-[.15em]">Running order</h3><span className="rounded-sm border border-white/25 px-1.5 py-0.5 text-[10px] text-white/60">TODAY</span></div>

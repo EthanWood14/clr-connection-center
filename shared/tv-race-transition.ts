@@ -140,14 +140,11 @@ const smooth = (value: number) => { const t = clamp(value); return t * t * (3 - 
 const mix = (start: number, end: number, amount: number) => start + (end - start) * amount;
 
 /**
- * Sample with scene elapsed seconds (not milliseconds). Hold the before pose
- * through 2s, pull out, accelerate past/catch rivals, then rejoin by exactly 7s.
- * Every car uses the same longitudinal curve so only earned relative-order
- * changes can cross; catching a tie never overshoots into a fabricated pass.
- * A reduced-motion renderer should sample at RACE_TRANSITION_END or later.
+ * Pose from clamped maneuver progress in [0, 1]. Shared by timed transfer
+ * passes and day-race wall-clock blends.
  */
-export function interpolateRaceTransition(driver: RaceTransition, elapsedSeconds: number): RaceTransitionPose {
-  const progress = clamp((elapsedSeconds - RACE_TRANSITION_START) / (RACE_TRANSITION_END - RACE_TRANSITION_START));
+export function poseRaceTransition(driver: RaceTransition, progress: number): RaceTransitionPose {
+  progress = clamp(progress);
   if (progress === 0) return { distance: driver.startDistance, lane: driver.startLane, progress, passing: false };
   if (progress === 1) return { distance: driver.endDistance, lane: driver.endLane, progress, passing: false };
   const forward = smooth((progress - .2) / .6);
@@ -157,4 +154,38 @@ export function interpolateRaceTransition(driver: RaceTransition, elapsedSeconds
   else if (progress <= .8) lane = driver.maneuverLane;
   else lane = mix(driver.maneuverLane, driver.endLane, smooth((progress - .8) / .2));
   return { distance: mix(driver.startDistance, driver.endDistance, forward), lane, progress, passing: driver.passing };
+}
+
+/**
+ * Sample with scene elapsed seconds (not milliseconds). Hold the before pose
+ * through 2s, pull out, accelerate past/catch rivals, then rejoin by exactly 7s.
+ * Every car uses the same longitudinal curve so only earned relative-order
+ * changes can cross; catching a tie never overshoots into a fabricated pass.
+ * A reduced-motion renderer should sample at RACE_TRANSITION_END or later.
+ */
+export function interpolateRaceTransition(driver: RaceTransition, elapsedSeconds: number): RaceTransitionPose {
+  const progress = clamp((elapsedSeconds - RACE_TRANSITION_START) / (RACE_TRANSITION_END - RACE_TRANSITION_START));
+  return poseRaceTransition(driver, progress);
+}
+
+/**
+ * Day-race (and similar) continuous crawl: smoothstep the full gap with no
+ * 2s hold / 5s pass choreography. Cars glide from the previous grid to the
+ * next over wall-clock blendSeconds between credit events.
+ */
+export function interpolateRaceTransitionBlend(
+  driver: RaceTransition,
+  elapsedSeconds: number,
+  blendSeconds: number,
+): RaceTransitionPose {
+  const progress = blendSeconds <= 0 ? 1 : clamp(elapsedSeconds / blendSeconds);
+  if (progress === 0) return { distance: driver.startDistance, lane: driver.startLane, progress, passing: false };
+  if (progress === 1) return { distance: driver.endDistance, lane: driver.endLane, progress, passing: false };
+  const amount = smooth(progress);
+  return {
+    distance: mix(driver.startDistance, driver.endDistance, amount),
+    lane: mix(driver.startLane, driver.endLane, amount),
+    progress,
+    passing: false,
+  };
 }

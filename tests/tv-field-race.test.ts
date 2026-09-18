@@ -180,7 +180,9 @@ test("broadcast graphics follow the actual camera and crossing instead of announ
   assert.match(wrapper,/data-broadcast-shot=\{shot\.id\}/);
   assert.match(wrapper,/data-testid="tv-race-shot-label">\{isDayRace && clockLabel \? clockLabel : \(reduced \? shot\.label : 'TRACKSIDE VIEW'\)\}/);
   assert.match(wrapper,/stableCamera:true/, "transfer and day-race cameras stay trackside");
-  assert.match(wrapper,/snapUpdates:isDayRace/);
+  assert.match(wrapper,/blendSeconds/, "day race lerps between minute credits instead of snapping");
+  assert.doesNotMatch(wrapper,/snapUpdates/);
+  assert.match(wrapper,/dayRaceFrameBlendSeconds/);
   assert.match(wrapper,/data-testid="tv-race-action-caption">\{caption\}/);
   assert.match(wrapper,/raceTransitionStartRank\(maneuver,maneuvers\)/);
   assert.doesNotMatch(wrapper,/MAKES THE PASS|Onboard focus|Turn 03/);

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { raceGrid } from "../shared/tv-race-grid";
-import { planRaceTransition, interpolateRaceTransition, raceTransitionStartRank, type RaceTransition } from "../shared/tv-race-transition";
+import { planRaceTransition, interpolateRaceTransition, interpolateRaceTransitionBlend, raceTransitionStartRank, type RaceTransition } from "../shared/tv-race-transition";
 import type { RankRow } from "../shared/tv-overtake";
 
 const driver = (id: number, transfersToday: number, name = `Driver ${id}`): RankRow => ({ id, name, transfersToday });
@@ -213,4 +213,27 @@ test("inputs are immutable and poses stay finite, bounded, continuous and monoto
     close(last.distance, plan.endDistance);
     close(last.lane, plan.endLane);
   }
+});
+
+test("day-race blend interpolates smoothly over the wall-clock gap with no snap or pass hold", () => {
+  const driver: RaceTransition = {
+    id: 1,
+    startDistance: 10,
+    endDistance: 0,
+    startLane: -3,
+    endLane: 3,
+    scored: false,
+    passing: false,
+    passedIds: [],
+    tieIds: [],
+    maneuverLane: 0,
+  };
+  assert.equal(interpolateRaceTransitionBlend(driver, 0, 1).distance, 10);
+  assert.equal(interpolateRaceTransitionBlend(driver, 1, 1).distance, 0);
+  const mid = interpolateRaceTransitionBlend(driver, 0.5, 1);
+  assert.ok(mid.distance > 0 && mid.distance < 10);
+  assert.ok(mid.lane > -3 && mid.lane < 3);
+  // Mid-blend is between endpoints — not parked on either snap frame.
+  assert.notEqual(mid.distance, 10);
+  assert.notEqual(mid.distance, 0);
 });

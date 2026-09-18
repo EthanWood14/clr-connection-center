@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.5",
+    headline: "Office TV Play race cars glide between transfer minutes instead of jumping frame-by-frame.",
+    items: [
+      { text: "On Play today's race, cars continuously interpolate along the track between each transfer minute so motion looks fluid at many frames per second — not a single-frame slideshow.", audience: "everyone" },
+      { text: "Still 4× speed (two seconds per office hour), still by the minute for credit timing, still skips empty stretches, and the camera stays trackside.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.4",
     headline: "Office TV Play race is 4× faster, by the minute, without the transfer camera sweep.",
     items: [

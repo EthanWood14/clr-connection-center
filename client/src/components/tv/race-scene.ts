@@ -2,14 +2,14 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { raceGrid, raceTrackPoint, type RaceDriver } from "@shared/tv-race-grid";
 import { layoutRaceLabels, RACE_BASE_ANGULAR_SPEED, RACE_SPEED_MULTIPLIER } from "@shared/tv-race-labels";
-import { planRaceTransition, interpolateRaceTransition } from "@shared/tv-race-transition";
+import { planRaceTransition, interpolateRaceTransition, interpolateRaceTransitionBlend } from "@shared/tv-race-transition";
 import { RACE_CAMERA_FOV, raceBroadcastShot, raceCameraPose, raceCameraRadius, raceCameraStartAngle, raceCameraSubjects } from "@shared/tv-race-camera";
 import { cornerCameraPose, cornerFocusIndex } from "@shared/tv-corner-camera";
 import { createTvCarModel } from "./car-model";
 import { sampleRaceDynamics } from "@shared/tv-race-dynamics";
 import { raceSceneryClipPlane } from "@shared/tv-race-scenery";
 
-type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; /** How long the scene runs before it stops drawing. The wall's corner race asks for two minutes; a transfer's moment holds the screen for twelve seconds. */ runSeconds?: number; /** How long the camera flight is stretched over. The same thirty-odd angles, walked slowly. */ cameraSeconds?: number; /** Corner mode: hold ONE car, and put its name up only now and then. A dozen nameplates at once is unreadable on a small panel. */ spotlight?: boolean; /** Lock the lens at the opening trackside pose — no pan/zoom/follow flight. Cars still move. */ stableCamera?: boolean; /** Day-race minute ticks: snap cars to the new grid instead of a multi-second pass. */ snapUpdates?: boolean; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
+type Options = { drivers: RaceDriver[]; before?: RaceDriver[] | null; reduced: boolean; focusId?: number; /** How long the scene runs before it stops drawing. The wall's corner race asks for two minutes; a transfer's moment holds the screen for twelve seconds. */ runSeconds?: number; /** How long the camera flight is stretched over. The same thirty-odd angles, walked slowly. */ cameraSeconds?: number; /** Corner mode: hold ONE car, and put its name up only now and then. A dozen nameplates at once is unreadable on a small panel. */ spotlight?: boolean; /** Lock the lens at the opening trackside pose — no pan/zoom/follow flight. Cars still move. */ stableCamera?: boolean; onFailure: () => void; onProgress?: (elapsed: number) => void; onShot?: (shot: { id: string; label: string }) => void };
 
 /** Procedural scene with optional same-origin, access-controlled car pictures. */
 export function mountRaceScene(host: HTMLElement, options: Options) {
@@ -243,7 +243,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   let transitions=new Map(planRaceTransition(options.before??null,options.drivers,options.focusId).map(t=>[t.id,t]));
   // What the cars are driving to, and when they were told to. Both move when
   // the standings change under a running scene; see `update` below.
-  let currentDrivers=options.drivers,transitionStart=0,lastElapsed=0;
+  let currentDrivers=options.drivers,transitionStart=0,lastElapsed=0,transitionBlendSeconds:number|null=null;
   const allPlans=Array.from(transitions.values());
   // Spotlight keeps ONE car in shot. raceCameraSubjects deliberately widens
   // to the rivals of a pass, which is right for a transfer's race and wrong
@@ -294,17 +294,20 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
   // are driving to is replaced, and they drive to it from where they are.
   // A roster that has actually gained or lost somebody still needs a rebuild,
   // which is what `false` asks the caller for.
-  const update=(next:RaceDriver[])=>{
+  const update=(next:RaceDriver[],opts?:{blendSeconds?:number})=>{
     if(disposed)return false;
     const ids=new Set(racers.map(r=>r.driver.id));
     const nextIds=new Set(next.map(d=>d.id));
     if(nextIds.size!==ids.size||Array.from(nextIds).some(id=>!ids.has(id)))return false;
     let plans=planRaceTransition(currentDrivers,next,options.focusId);
-    // Minute ticks are denser than a pass animation: park each car on its new
-    // grid spot so the day race does not queue a five-second maneuver every
-    // thirty-odd milliseconds. Live transfer moments keep the full move.
-    if(options.snapUpdates){
-      plans=plans.map(t=>({...t,startDistance:t.endDistance,startLane:t.endLane,scored:false,passing:false,passedIds:[],tieIds:[]}));
+    // Day race: continuously lerp over the wall-clock gap to the next credit
+    // instead of teleporting (snap) or queuing a five-second pass animation.
+    // Live transfer moments omit blendSeconds and keep the full maneuver.
+    if(opts?.blendSeconds!=null){
+      plans=plans.map(t=>({...t,scored:false,passing:false,passedIds:[],tieIds:[]}));
+      transitionBlendSeconds=Math.max(1/60,opts.blendSeconds);
+    }else{
+      transitionBlendSeconds=null;
     }
     transitions=new Map(plans.map(t=>[t.id,t]));
     currentDrivers=next;transitionStart=lastElapsed;
@@ -367,7 +370,7 @@ export function mountRaceScene(host: HTMLElement, options: Options) {
     for(const {driver,root,wheels,boost,chassis,frontSteering} of racers) {
       const transition=transitions.get(driver.id);
       if(!transition)continue;
-      const position=interpolateRaceTransition(transition,transitionTime);
+      const position=transitionBlendSeconds!=null?interpolateRaceTransitionBlend(transition,transitionTime,transitionBlendSeconds):interpolateRaceTransition(transition,transitionTime);
       if(position.distance<leaderDistance){leaderDistance=position.distance;leaderId=driver.id;}
       const point=raceTrackPoint(lead-position.distance/42,position.lane);
       if(options.spotlight&&driver.id===spotlightId)focusPose={angle:lead-position.distance/42,lane:position.lane};
