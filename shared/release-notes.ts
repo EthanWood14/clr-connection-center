@@ -29,6 +29,18 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.0",
+    headline: "C3 ↔ Bonzo helper: log results, track views, and show Bonzo stats on the scorecard.",
+    items: [
+      { text: "The Chrome extension is now a general C3 ↔ Bonzo helper — logging transfer/call results is primary; Shotgun stays available as a secondary action.", audience: "everyone" },
+      { text: "Log result opens a step-through wizard covering every Input Results field (result → LO → lead source → qual questions → info sections with N/A toggles → notes → submit).", audience: "everyone" },
+      { text: "Opening a prospect or conversation in Bonzo counts as a unique view for that CLR that day (POST /api/bonzo-views).", audience: "everyone" },
+      { text: "Manager Transfer Scorecard adds Bonzo Calls, Bonzo Contacts, and Bonzo Convos — separate from Dialpad Call Tools Contacts/Convos.", audience: "manager" },
+      { text: "Extension builds stamp the manifest version from the America/Los_Angeles calendar day (e.g. 2026.9.18) so each rebuild day is a new Chrome version.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.121.0",
     headline: "Half days and days off now count in every rate and goal.",
     items: [

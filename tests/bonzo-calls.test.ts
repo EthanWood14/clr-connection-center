@@ -103,7 +103,7 @@ test("the extension is wired end to end and its version moved", () => {
   assert.match(popup, /bonzoCallsToday/);
   const manifest = JSON.parse(read("chrome-extension/manifest.json"));
   // 1.3.0 added the call tracker; 1.4.0 added the result panel on top of it.
-  assert.ok(["1.3.0", "1.4.0"].includes(manifest.version) || manifest.version > "1.4.0", `unexpected extension version ${manifest.version}`);
+  assert.ok(/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(manifest.version) || ["1.3.0", "1.4.0"].includes(manifest.version) || manifest.version > "1.4.0", `unexpected extension version ${manifest.version}`);
   const eod = read("client/src/pages/eod-report.tsx");
   assert.match(eod, /data-testid="bonzo-calls-line"/);
 });

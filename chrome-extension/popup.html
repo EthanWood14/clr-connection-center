@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  body { width: 320px; margin: 0; padding: 14px; font: 13px/1.45 system-ui, -apple-system, sans-serif; color: #1c1917; background: #fff; }
+  body { width: 340px; margin: 0; padding: 14px; font: 13px/1.45 system-ui, -apple-system, sans-serif; color: #1c1917; background: #fff; }
   h1 { margin: 0 0 2px; font-size: 15px; }
-  h1 .bolt { color: #ea580c; }
+  h1 .bolt { color: #0284c7; }
   .muted { color: #78716c; margin: 0 0 10px; }
   #status { padding: 8px 10px; border-radius: 8px; margin-bottom: 12px; font-weight: 600; }
   #status.ok { background: #f0fdf4; color: #15803d; }
@@ -15,15 +15,16 @@
   .hint { color: #78716c; font-size: 12px; margin: 4px 0 8px; }
   .row { display: flex; gap: 6px; }
   input { flex: 1; padding: 6px 8px; border: 1px solid #d6d3d1; border-radius: 6px; font: 12px ui-monospace, monospace; }
-  button { padding: 6px 12px; border: none; border-radius: 6px; background: #ea580c; color: #fff; font-weight: 700; cursor: pointer; }
-  button:hover { background: #c2410c; }
-  a { color: #ea580c; font-weight: 600; }
+  button { padding: 6px 12px; border: none; border-radius: 6px; background: #0284c7; color: #fff; font-weight: 700; cursor: pointer; }
+  button:hover { background: #0369a1; }
+  a { color: #0284c7; font-weight: 600; }
   #saved { color: #15803d; font-weight: 600; display: none; margin-top: 6px; }
+  #built { color: #a8a29e; font-size: 11px; margin-top: 10px; }
 </style>
 </head>
 <body>
-  <h1><span class="bolt">⚡</span> C3 Shotgun</h1>
-  <p class="muted">Open a prospect in Bonzo, then click the orange button.</p>
+  <h1><span class="bolt">⚡</span> C3 ↔ Bonzo Helper</h1>
+  <p class="muted">Primary job: log transfer/call results from Bonzo into C3. Shotgun stays available as a secondary action on the page.</p>
   <div id="status" class="wait">Checking connection…</div>
   <div id="seen" class="hint"></div>
   <label for="key">Extension key</label>
@@ -34,6 +35,7 @@
   </div>
   <div id="saved">Saved ✓</div>
   <p><a href="https://www.westcapitallending.center/#/shotgun" target="_blank">Open C3 Shotgun</a></p>
+  <div id="built"></div>
   <script src="popup.js"></script>
 </body>
 </html>

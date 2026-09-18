@@ -7,6 +7,7 @@ import { insertUserSchema, insertLoanOfficerSchema, insertLeadOutcomeSchema, ins
 import { APP_VERSION } from "@shared/version";
 import { COUNTED_CALLS_SQL, COUNTED_MESSAGES_SQL, selfReportedCountsOn } from "@shared/self-reported";
 import { BONZO_CALL_EVENT_BATCH_MAX, BONZO_CALL_KINDS, BONZO_CALL_PATH_SOURCE, BONZO_CALL_CANDIDATE_SOURCE, type BonzoCallKind } from "@shared/bonzo-calls";
+import { BONZO_VIEW_EVENT_BATCH_MAX, BONZO_VIEW_TYPES, type BonzoViewType } from "@shared/bonzo-views";
 import type { BonzoCallEventInput } from "./storage";
 import { notesBetween } from "@shared/release-notes";
 import { orgClientFacingName, orgInternalLabel } from "@shared/org-names";
@@ -5734,7 +5735,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     // shotgunExtensionAuth (session cookie OR hashed per-user key). The key
     // exists precisely for requests the strict same-site cookie cannot ride —
     // which requireAuth here would 401 before the route ever ran.
-    if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo" || req.path === "/bonzo-calls"
+    if (req.path === "/shotgun/extension-status" || req.path === "/shotgun/from-bonzo" || req.path === "/bonzo-calls" || req.path === "/bonzo-views"
       || req.path === "/extension/outcome" || req.path === "/extension/outcome-options") return next();
     // LO priority share link — no C3 login. Every request resolves a single
     // revocable, expiring token inside the handler before touching anything,
@@ -8897,7 +8898,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const me = storage.getUserById(userId) as any;
     const canPublish = taskManager(me) || !!(me?.canPublishShotgun ?? me?.can_publish_shotgun);
     const today = businessTodayInTz(checkinTzFor(userId));
-    res.json({ ok: true, name: String(me?.name ?? ""), canPublish, bonzoCallsToday: storageExtra.bonzoCallsForUserDay(orgId, userId, today) });
+    res.json({ ok: true, name: String(me?.name ?? ""), canPublish, bonzoCallsToday: storageExtra.bonzoCallsForUserDay(orgId, userId, today), bonzoContactsToday: storageExtra.bonzoContactsViewedForUserDay(orgId, userId, today), bonzoConversationsToday: storageExtra.bonzoConversationsViewedForUserDay(orgId, userId, today) });
   });
 
   // Calls placed inside Bonzo, reported by the extension against the signed-in
@@ -8936,6 +8937,44 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
 
   // Managers: which request shapes the extensions have seen, so the counting
   // pattern can be pinned to Bonzo's real one rather than a guess.
+
+  // Prospects / conversations opened in Bonzo. Unique per CLR per target per
+  // business day. Same auth as Bonzo calls; counting rules in shared/bonzo-views.ts.
+  app.post("/api/bonzo-views", shotgunExtensionAuth, (req: any, res) => {
+    const userId = Number(req.session_user?.userId) || 0;
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const raw = Array.isArray(req.body?.events) ? req.body.events : [];
+    if (!raw.length) return res.status(400).json({ error: "events required" });
+    if (raw.length > BONZO_VIEW_EVENT_BATCH_MAX) return res.status(400).json({ error: `At most ${BONZO_VIEW_EVENT_BATCH_MAX} events per request.` });
+    const tz = checkinTzFor(userId);
+    const rows: Parameters<typeof storageExtra.insertBonzoViewEvents>[0] = [];
+    for (const e of raw) {
+      const eventId = String(e?.eventId ?? "").trim().slice(0, 64);
+      const viewType = String(e?.viewType ?? "").trim() as BonzoViewType;
+      const targetId = Number(e?.targetId);
+      const at = new Date(String(e?.occurredAt ?? ""));
+      const prospect = Number(e?.prospectId);
+      if (!eventId || !BONZO_VIEW_TYPES.includes(viewType) || !Number.isFinite(targetId) || targetId <= 0 || Number.isNaN(at.getTime())) continue;
+      const skewMs = Math.abs(Date.now() - at.getTime());
+      const occurredAt = skewMs > 6 * 3_600_000 ? new Date() : at;
+      rows.push({
+        orgId, userId, eventId, viewType,
+        targetId: Math.trunc(targetId),
+        prospectId: Number.isFinite(prospect) && prospect > 0 ? Math.trunc(prospect) : null,
+        occurredAt: occurredAt.toISOString(),
+        businessDate: businessTodayInTz(tz, occurredAt),
+        pageUrl: typeof e?.url === "string" ? e.url : null,
+      });
+    }
+    const result = storageExtra.insertBonzoViewEvents(rows);
+    const today = businessTodayInTz(tz);
+    res.json({
+      ok: true, ...result,
+      contactsToday: storageExtra.bonzoContactsViewedForUserDay(orgId, userId, today),
+      conversationsToday: storageExtra.bonzoConversationsViewedForUserDay(orgId, userId, today),
+    });
+  });
+
   app.get("/api/bonzo-calls/observed", requireAuth, (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -14437,6 +14476,9 @@ ${note}` : daysLine;
       const lbCallsByUser = new Map<number, number>();
       for (const r of lbCalls) lbCallsByUser.set(r.assistant_id, Number(r.calls) || 0);
       const lbCallActivity = callSyncActivityByUser(startDate, endDate);
+      const workOrgForBonzo = Number(currentOrgId() ?? 1);
+      const lbBonzoCalls = storageExtra.bonzoCallsByUser(workOrgForBonzo, startDate, endDate);
+      const lbBonzoViews = storageExtra.bonzoViewsByUser(workOrgForBonzo, startDate, endDate);
       // Messages sent (from EOD reports) per CLR for this range.
       const lbMsgs = sqlite.prepare(`
         SELECT assistant_id, COALESCE(SUM(messages), 0) AS messages
@@ -14896,6 +14938,9 @@ ${note}` : daysLine;
             callToolsContacts: activity.contacts,
             callToolsConversations: activity.conversations,
             callToolsActiveSeconds: activity.activeSeconds,
+            bonzoCalls: lbBonzoCalls.get(u.id) ?? 0,
+            bonzoContacts: lbBonzoViews.get(u.id)?.contacts ?? 0,
+            bonzoConversations: lbBonzoViews.get(u.id)?.conversations ?? 0,
             conversionRate,
             transferPct,
             appointmentPct,

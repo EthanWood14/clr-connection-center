@@ -7,6 +7,10 @@ import { applyW2OnlyExclusions } from "@shared/w2-only-states";
 import { TRANSFER_CREDIT_SQL, transferCreditIn } from "@shared/transfer-credit";
 import { SELF_REPORTED_CUTOFF } from "@shared/self-reported";
 import { BONZO_CALLS_BY_DAY_SQL, classifyBonzoCallEvent, type BonzoCallKind } from "@shared/bonzo-calls";
+import {
+  BONZO_CONTACTS_VIEWED_BY_DAY_SQL, BONZO_CONVERSATIONS_VIEWED_BY_DAY_SQL,
+  type BonzoViewType,
+} from "@shared/bonzo-views";
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS } from "@shared/lo-new-leads";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -3596,6 +3600,27 @@ try { sqlite.exec(`ALTER TABLE morning_checkins ADD COLUMN minutes_late INTEGER`
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_bonzo_calls_user_date
     ON bonzo_call_events(org_id, user_id, business_date, counts)`);
 
+  // Prospects / conversations a CLR opens in Bonzo (extension). Unique per
+  // CLR per target per business day — separate from Dialpad Call Tools and
+  // from Bonzo call counts.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS bonzo_view_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL DEFAULT 1,
+    user_id INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    view_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    prospect_id INTEGER,
+    occurred_at TEXT NOT NULL,
+    business_date TEXT NOT NULL,
+    page_url TEXT,
+    received_at TEXT NOT NULL,
+    UNIQUE(org_id, event_id),
+    UNIQUE(org_id, user_id, view_type, target_id, business_date)
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_bonzo_views_user_date
+    ON bonzo_view_events(org_id, user_id, business_date, view_type)`);
+
   // New leads on today's assigned loan officers, as seen in LeadVault's feed.
   // One row per lead: who it was announced to, whether a CLR claimed it inside
   // the window, and the Shotgun lead it became if nobody did
@@ -4929,6 +4954,89 @@ export function bonzoCallPathsObserved(orgId: number, sinceDate: string): any[] 
 }
 
 // ── New leads on assigned loan officers (shared/lo-new-leads.ts) ─────────────
+
+
+export type BonzoViewEventInput = {
+  orgId: number; userId: number; eventId: string; viewType: BonzoViewType;
+  targetId: number; prospectId: number | null; occurredAt: string; businessDate: string; pageUrl: string | null;
+};
+
+/** Record prospect/conversation opens. Idempotent on event_id AND on (user, type, target, day). */
+export function insertBonzoViewEvents(rows: BonzoViewEventInput[]): { accepted: number; contacts: number; conversations: number } {
+  const now = new Date().toISOString();
+  const stmt = sqlite.prepare(`
+    INSERT OR IGNORE INTO bonzo_view_events
+      (org_id, user_id, event_id, view_type, target_id, prospect_id, occurred_at, business_date, page_url, received_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  let accepted = 0, contacts = 0, conversations = 0;
+  const tx = sqlite.transaction(() => {
+    for (const r of rows) {
+      if (r.viewType !== "contact" && r.viewType !== "conversation") continue;
+      if (!(r.targetId > 0) || !r.eventId) continue;
+      const res = stmt.run(
+        r.orgId, r.userId, r.eventId, r.viewType, r.targetId,
+        r.prospectId, r.occurredAt, r.businessDate,
+        r.pageUrl ? r.pageUrl.slice(0, 300) : null, now,
+      );
+      if (res.changes) {
+        accepted++;
+        if (r.viewType === "contact") contacts++;
+        else conversations++;
+      }
+    }
+  });
+  tx();
+  return { accepted, contacts, conversations };
+}
+
+export function bonzoContactsViewedForUserDay(orgId: number, userId: number, date: string): number {
+  const row = sqlite.prepare(
+    `SELECT COALESCE(SUM(contacts), 0) AS n FROM ${BONZO_CONTACTS_VIEWED_BY_DAY_SQL} WHERE org_id = ? AND assistant_id = ? AND d = ?`,
+  ).get(orgId, userId, date) as any;
+  return Number(row?.n ?? 0) || 0;
+}
+
+export function bonzoConversationsViewedForUserDay(orgId: number, userId: number, date: string): number {
+  const row = sqlite.prepare(
+    `SELECT COALESCE(SUM(conversations), 0) AS n FROM ${BONZO_CONVERSATIONS_VIEWED_BY_DAY_SQL} WHERE org_id = ? AND assistant_id = ? AND d = ?`,
+  ).get(orgId, userId, date) as any;
+  return Number(row?.n ?? 0) || 0;
+}
+
+/** Sum unique contacts/conversations viewed over a date range, keyed by user id. */
+export function bonzoViewsByUser(orgId: number, startDate: string, endDate: string): Map<number, { contacts: number; conversations: number }> {
+  const map = new Map<number, { contacts: number; conversations: number }>();
+  const contactRows = sqlite.prepare(
+    `SELECT assistant_id, SUM(contacts) AS n FROM ${BONZO_CONTACTS_VIEWED_BY_DAY_SQL}
+      WHERE org_id = ? AND d BETWEEN ? AND ? GROUP BY assistant_id`,
+  ).all(orgId, startDate, endDate) as any[];
+  for (const r of contactRows) {
+    const id = Number(r.assistant_id);
+    map.set(id, { contacts: Number(r.n) || 0, conversations: 0 });
+  }
+  const convoRows = sqlite.prepare(
+    `SELECT assistant_id, SUM(conversations) AS n FROM ${BONZO_CONVERSATIONS_VIEWED_BY_DAY_SQL}
+      WHERE org_id = ? AND d BETWEEN ? AND ? GROUP BY assistant_id`,
+  ).all(orgId, startDate, endDate) as any[];
+  for (const r of convoRows) {
+    const id = Number(r.assistant_id);
+    const cur = map.get(id) ?? { contacts: 0, conversations: 0 };
+    cur.conversations = Number(r.n) || 0;
+    map.set(id, cur);
+  }
+  return map;
+}
+
+/** Sum Bonzo calls over a date range, keyed by user id. */
+export function bonzoCallsByUser(orgId: number, startDate: string, endDate: string): Map<number, number> {
+  const map = new Map<number, number>();
+  const rows = sqlite.prepare(
+    `SELECT assistant_id, SUM(calls) AS n FROM ${BONZO_CALLS_BY_DAY_SQL}
+      WHERE org_id = ? AND d BETWEEN ? AND ? GROUP BY assistant_id`,
+  ).all(orgId, startDate, endDate) as any[];
+  for (const r of rows) map.set(Number(r.assistant_id), Number(r.n) || 0);
+  return map;
+}
 
 export type LoNewLeadInput = {
   orgId: number; externalId: string; loId: number | null; loEmail: string; loName: string | null;

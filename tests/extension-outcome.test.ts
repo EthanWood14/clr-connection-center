@@ -75,7 +75,8 @@ test("the extension endpoints use the extension auth, are let through the API gu
 
 test("the extension ships the panel and wires it end to end", () => {
   const manifest = JSON.parse(read("chrome-extension/manifest.json"));
-  assert.equal(manifest.version, "1.4.0");
+  // Daily LA calendar stamp from script/build-extension.py (e.g. 2026.9.18).
+  assert.match(String(manifest.version), /^\d{4}\.\d{1,2}\.\d{1,2}$/);
   const iso = manifest.content_scripts.find((c: any) => c.js.includes("content.js"));
   assert.ok(iso.js.includes("outcome-panel.js"), "outcome-panel.js must be a content script");
   assert.match(read("script/build-extension.py"), /"outcome-panel\.js"/);

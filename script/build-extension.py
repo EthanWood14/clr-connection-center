@@ -34,6 +34,34 @@ SHIPPED = [
     "icons/16.png", "icons/48.png", "icons/128.png",
 ]
 
+# Stamp the extension version from America's Los Angeles calendar day so each
+# day's rebuild is a new Chrome version (1–4 dot-separated integers).
+# Example: Sep 18, 2026 PT → 2026.9.18
+from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+    _la = datetime.now(ZoneInfo("America/Los_Angeles"))
+except Exception:
+    from datetime import timezone, timedelta
+    _la = datetime.now(timezone(timedelta(hours=-7)))
+_day_version = f"{_la.year}.{_la.month}.{_la.day}"
+_manifest_path = os.path.join(EXT, "manifest.json")
+with open(_manifest_path, "r", encoding="utf-8") as _mf:
+    _manifest = json.load(_mf)
+_manifest["version"] = _day_version
+# Human-readable "built for" stamp the popup reads.
+import re as _re
+_manifest["description"] = _re.sub(
+    r"\s*\(built for [^)]+\)\s*$",
+    "",
+    str(_manifest.get("description") or ""),
+).rstrip() + f" (built for {_day_version} America/Los_Angeles)"
+with open(_manifest_path, "w", encoding="utf-8", newline="\n") as _mf:
+    json.dump(_manifest, _mf, indent=2)
+    _mf.write("\n")
+print(f"manifest version set to {_day_version} (America/Los_Angeles)")
+
+
 # ── Icon drawing (stdlib-only PNG writer) ─────────────────────────────────────
 BOLT = [(0.60, 0.06), (0.24, 0.56), (0.45, 0.56), (0.38, 0.94), (0.78, 0.40), (0.55, 0.40)]
 

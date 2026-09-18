@@ -95,7 +95,7 @@
     btn.style.boxShadow = "0 6px 20px rgba(234,88,12,.45)";
     const who = firstName();
     if (current) {
-      btn.textContent = who ? `⚡ Shotgun · ${who}` : "⚡ Shotgun this prospect";
+      btn.textContent = who ? `⚡ Shotgun · ${who}` : "⚡ Shotgun (optional)";
       btn.style.opacity = "1";
       btn.style.cursor = "pointer";
       btn.onclick = fire;
@@ -103,7 +103,7 @@
       // Never hide outright. A button that renders nothing when it cannot find
       // a prospect is indistinguishable from a broken install — which is
       // exactly how this failed in the office.
-      btn.textContent = "⚡ Open a Bonzo prospect";
+      btn.textContent = "⚡ Open a prospect to Shotgun";
       btn.style.opacity = "0.45";
       btn.style.cursor = "default";
       btn.onclick = null;
@@ -177,6 +177,25 @@
   const newEventId = () => {
     try { return crypto.randomUUID(); } catch { return "e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
   };
+
+  // Prospects / conversations the CLR opens — unique per day on the server.
+  const sendView = (viewType, targetId) => {
+    try {
+      const id = Number(targetId);
+      if (!Number.isFinite(id) || id <= 0) return;
+      chrome.runtime.sendMessage({
+        type: "c3shotgun.view",
+        event: {
+          eventId: newEventId(),
+          viewType,
+          targetId: id,
+          prospectId: viewType === "contact" ? id : (current ? current.id : null),
+          occurredAt: new Date().toISOString(),
+          url: location.href,
+        },
+      }, () => { void chrome.runtime.lastError; });
+    } catch {}
+  };
   const sendCall = (ev) => {
     try {
       chrome.runtime.sendMessage({
@@ -209,7 +228,9 @@
       const isTel = /^tel:/i.test(href);
       // Exact labels only: a tab or a menu item that merely contains the word
       // is not a call being placed.
-      const isCall = !isTel && /^(call|call now|dial|start call|place call)$/i.test(label);
+      // Keep labels tight: a tab that merely CONTAINS "call" is not a dial.
+      // Also accept common Bonzo variants seen on conversation pages.
+      const isCall = !isTel && /^(call|call now|dial|start call|place call|phone call|call prospect)$/i.test(label);
       if (!isTel && !isCall) return;
       sendCall({ kind: "click", method: "CLICK", path: isTel ? "tel:" : "click:" + label.toLowerCase() });
     } catch {}
@@ -230,6 +251,7 @@
     const convId = urlConversationId();
     if (convId && d.conversationId != null && Number(d.conversationId) !== convId) return;
     current = { id: Number(d.id), fields: d.fields || null };
+    sendView("contact", current.id);
     ensureMounted();
     if (!busy) setIdle();
   });
@@ -242,15 +264,22 @@
     lastHref = location.href;
     const id = urlProspectId();
     if (id) {
-      if (!current || current.id !== id) current = { id, fields: null };
+      if (!current || current.id !== id) {
+        current = { id, fields: null };
+        sendView("contact", id);
+      }
       ensureMounted();
       if (!busy) setIdle();
-    } else if (current) {
+    } else {
+      const convId = urlConversationId();
+      if (convId) sendView("conversation", convId);
+      if (current) {
       // Leaving a prospect clears it. A conversation URL clears it too — the
       // thread on screen has its own borrower, and the previous one must not
       // linger on the button while the new response is still in flight.
       current = null;
       if (!busy) setIdle();
+      }
     }
   }, 500);
 
@@ -258,7 +287,13 @@
   // page-hook to replay an announce that may have fired before this script's
   // listener existed.
   const seed = urlProspectId();
-  if (seed) current = { id: seed, fields: null };
+  if (seed) {
+    current = { id: seed, fields: null };
+    sendView("contact", seed);
+  } else {
+    const convSeed = urlConversationId();
+    if (convSeed) sendView("conversation", convSeed);
+  }
   ensureMounted();
   setIdle();
   window.postMessage({ type: "C3_SHOTGUN_PING" }, location.origin);

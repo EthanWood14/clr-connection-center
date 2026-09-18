@@ -1,6 +1,8 @@
 const statusEl = document.getElementById("status");
 const keyEl = document.getElementById("key");
 const savedEl = document.getElementById("saved");
+const seenEl = document.getElementById("seen");
+const builtEl = document.getElementById("built");
 
 function refreshStatus() {
   statusEl.className = "wait";
@@ -13,13 +15,19 @@ function refreshStatus() {
     }
     if (resp.ok && resp.body) {
       const calls = Number(resp.body.bonzoCallsToday);
-      const callsNote = Number.isFinite(calls) ? ` · ${calls} Bonzo call${calls === 1 ? "" : "s"} counted today` : "";
+      const contacts = Number(resp.body.bonzoContactsToday);
+      const convos = Number(resp.body.bonzoConversationsToday);
+      const parts = [];
+      if (Number.isFinite(calls)) parts.push(`${calls} Bonzo call${calls === 1 ? "" : "s"}`);
+      if (Number.isFinite(contacts)) parts.push(`${contacts} contact${contacts === 1 ? "" : "s"} viewed`);
+      if (Number.isFinite(convos)) parts.push(`${convos} convo${convos === 1 ? "" : "s"} viewed`);
+      const countsNote = parts.length ? ` · ${parts.join(" · ")} today` : "";
       if (resp.body.canPublish) {
         statusEl.className = "ok";
-        statusEl.textContent = `Connected as ${resp.body.name || "you"} — Shotgun publishing enabled ✓${callsNote}`;
+        statusEl.textContent = `Connected as ${resp.body.name || "you"} — ready to log results ✓${countsNote}`;
       } else {
         statusEl.className = "warn";
-        statusEl.textContent = `Connected as ${resp.body.name || "you"}, but you don't have Shotgun publish access. Ask an admin to grant it in C3 Settings.${callsNote}`;
+        statusEl.textContent = `Connected as ${resp.body.name || "you"}, but you don't have Shotgun publish access. You can still log results.${countsNote}`;
       }
     } else if (resp.status === 401) {
       statusEl.className = "warn";
@@ -35,9 +43,6 @@ chrome.storage.local.get("c3Key").then((stored) => {
   if (stored.c3Key) keyEl.value = String(stored.c3Key);
 });
 
-// What the Bonzo tab last saw. Turns "the button never showed up" from a
-// mystery into one line the person reading it can act on.
-const seenEl = document.getElementById("seen");
 chrome.storage.local.get("c3Seen").then((stored) => {
   const seen = stored && stored.c3Seen;
   if (!seenEl) return;
@@ -59,5 +64,18 @@ document.getElementById("save").addEventListener("click", () => {
     refreshStatus();
   });
 });
+
+try {
+  fetch(chrome.runtime.getURL("manifest.json"))
+    .then((r) => r.json())
+    .then((m) => {
+      const d = String(m.description || "");
+      const match = d.match(/\(built for ([^)]+)\)/);
+      if (builtEl) builtEl.textContent = match
+        ? `Built for ${match[1]} · v${m.version}`
+        : `Extension v${m.version}`;
+    })
+    .catch(() => {});
+} catch {}
 
 refreshStatus();
