@@ -19,8 +19,8 @@ export function IntroModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="relative w-full max-w-2xl mx-4 rounded-2xl overflow-hidden shadow-2xl bg-[#0F182D] border border-white/10">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-0 backdrop-blur-sm animate-in fade-in duration-300 sm:items-center sm:p-4">
+      <div className="relative flex max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-[#0F182D] shadow-2xl sm:mx-4 sm:rounded-2xl">
 
         {/* Header */}
         <div className="flex items-start justify-between px-6 py-4 border-b border-white/10">
@@ -30,7 +30,7 @@ export function IntroModal() {
           </div>
           <button
             onClick={handleDismiss}
-            className="text-white/40 hover:text-white/80 transition-colors p-1 rounded-lg hover:bg-white/10"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-lg p-1 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
             title="Skip walkthrough"
           >
             <X className="w-5 h-5" />
@@ -38,7 +38,7 @@ export function IntroModal() {
         </div>
 
         {/* Body */}
-        <div className="px-6 py-8 sm:py-10 flex flex-col items-center text-center">
+        <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto overscroll-contain px-6 py-8 text-center sm:py-10">
           <div
             className="w-20 h-20 rounded-full flex items-center justify-center mb-5"
             style={{ backgroundColor: "rgba(196, 154, 60, 0.15)" }}
@@ -58,7 +58,7 @@ export function IntroModal() {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-white/10">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
             onClick={handleDismiss}
             className="text-white/50 hover:text-white/80 text-sm transition-colors"

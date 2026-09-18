@@ -63,14 +63,14 @@ export function TaskOverduePopup() {
   if (!overdue.length || blocked || location === "/tasks" || now < snoozedUntil) return null;
 
   return (
-    <aside className="fixed bottom-4 right-4 z-[45] w-[calc(100vw-2rem)] max-w-md overflow-hidden rounded-2xl border-2 border-red-500 bg-background shadow-2xl shadow-red-500/25" role="alert" aria-live="assertive" data-testid="task-overdue-popup">
+    <aside className="fixed bottom-20 right-3 z-[45] max-h-[min(70dvh,calc(100dvh-8rem-env(safe-area-inset-bottom)))] w-[calc(100vw-1.5rem)] max-w-md overflow-y-auto overscroll-contain rounded-2xl border-2 border-red-500 bg-background shadow-2xl shadow-red-500/25 sm:bottom-4 sm:right-4" role="alert" aria-live="assertive" data-testid="task-overdue-popup">
       <div className="flex items-start gap-3 bg-red-600 px-4 py-3 text-white">
         <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/15"><AlertTriangle className="h-5 w-5" /></span>
         <div className="min-w-0 flex-1">
           <p className="font-black">{overdue.length === 1 ? "A C3 task is overdue" : `${overdue.length} C3 tasks are overdue`}</p>
           <p className="text-xs text-red-100">This reminder returns every 30 minutes until the work is handled.</p>
         </div>
-        <button type="button" className="rounded-md p-1 text-red-100 hover:bg-white/15 hover:text-white" aria-label="Remind me in 30 minutes" onClick={() => setSnoozedUntil(Date.now() + SNOOZE_MS)}><X className="h-4 w-4" /></button>
+        <button type="button" className="flex min-h-11 min-w-11 items-center justify-center rounded-md p-1 text-red-100 hover:bg-white/15 hover:text-white" aria-label="Remind me in 30 minutes" onClick={() => setSnoozedUntil(Date.now() + SNOOZE_MS)}><X className="h-4 w-4" /></button>
       </div>
       <div className="space-y-2 p-4">
         {overdue.slice(0, 3).map((task) => (
@@ -81,8 +81,8 @@ export function TaskOverduePopup() {
         ))}
         {overdue.length > 3 && <p className="text-center text-xs text-muted-foreground">+{overdue.length - 3} more overdue</p>}
         <div className="flex gap-2 pt-1">
-          <Button variant="outline" className="flex-1" onClick={() => setSnoozedUntil(Date.now() + SNOOZE_MS)}>Remind me in 30m</Button>
-          <Button className="flex-1 gap-2 bg-red-600 hover:bg-red-700" onClick={() => navigate("/tasks")}>Open Tasks <ArrowRight className="h-4 w-4" /></Button>
+          <Button variant="outline" className="min-h-11 flex-1" onClick={() => setSnoozedUntil(Date.now() + SNOOZE_MS)}>Remind me in 30m</Button>
+          <Button className="min-h-11 flex-1 gap-2 bg-red-600 hover:bg-red-700" onClick={() => navigate("/tasks")}>Open Tasks <ArrowRight className="h-4 w-4" /></Button>
         </div>
       </div>
     </aside>

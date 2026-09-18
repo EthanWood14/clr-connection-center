@@ -53,7 +53,7 @@ export function ShotgunBouncebackPrompt() {
       {target.source && <p className="mt-1 text-[11px] text-violet-200/80">Source: {target.source}</p>}
       {accept.isError && <p className="mt-2 text-sm text-red-200" role="alert">{(accept.error as any)?.message || "Could not take this bounceback."}</p>}
       <Button
-        className="mt-3 w-full bg-white font-bold text-slate-950 hover:bg-violet-100"
+        className="mt-3 min-h-12 w-full bg-white text-base font-bold text-slate-950 hover:bg-violet-100"
         disabled={accept.isPending}
         onClick={() => accept.mutate(target.id)}
         data-testid="shotgun-bounceback-take"

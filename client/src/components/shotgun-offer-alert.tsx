@@ -129,8 +129,8 @@ export function ShotgunOfferAlert() {
       </div>
       {confirm.isError && <p className="mb-2 text-sm text-red-200" role="alert" data-testid="shotgun-confirm-error">{(confirm.error as any)?.message || "This lead already moved. The board will update automatically."}</p>}
       {deny.isError && <p className="mb-2 text-sm text-red-200" role="alert" data-testid="shotgun-deny-error">{(deny.error as any)?.message || "Could not pass this lead. Please try again."}</p>}
-      <Button className="w-full bg-white font-bold text-slate-950 hover:bg-orange-100" disabled={confirm.isPending || deny.isPending || left <= 0} onClick={() => confirm.mutate(offered.id)}>{confirm.isPending ? "CONFIRMING…" : "I RECEIVED THIS LEAD"}</Button>
-      <Button size="sm" variant="ghost" className="mt-1 w-full text-orange-100 hover:bg-white/10 hover:text-white" disabled={deny.isPending || confirm.isPending || left <= 0} onClick={() => deny.mutate(offered.id)} data-testid="shotgun-deny">{deny.isPending ? "Passing…" : "Pass — send to the next CLR"}</Button>
+      <Button className="min-h-12 w-full bg-white text-base font-bold text-slate-950 hover:bg-orange-100" disabled={confirm.isPending || deny.isPending || left <= 0} onClick={() => confirm.mutate(offered.id)}>{confirm.isPending ? "CONFIRMING…" : "I RECEIVED THIS LEAD"}</Button>
+      <Button size="sm" variant="ghost" className="mt-1 min-h-11 w-full text-orange-100 hover:bg-white/10 hover:text-white" disabled={deny.isPending || confirm.isPending || left <= 0} onClick={() => deny.mutate(offered.id)} data-testid="shotgun-deny">{deny.isPending ? "Passing…" : "Pass — send to the next CLR"}</Button>
       <p className="mt-1 text-[11px] text-orange-200/80">Passing keeps you in the rotation. Letting the timer run out takes you out of it.</p>
     </section>
   );

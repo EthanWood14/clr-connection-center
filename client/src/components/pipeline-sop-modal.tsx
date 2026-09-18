@@ -75,8 +75,8 @@ export function PipelineSopModal({ onClose }: { onClose?: () => void } = {}) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="relative w-full max-w-2xl mx-4 my-8 rounded-2xl overflow-hidden shadow-2xl bg-[#0F182D] border border-white/10 flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-0 backdrop-blur-sm animate-in fade-in duration-300 sm:items-center sm:p-4">
+      <div className="relative mx-0 flex max-h-[min(92dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-[#0F182D] shadow-2xl sm:mx-4 sm:rounded-2xl">
 
         {/* Header */}
         <div className="flex items-start justify-between px-6 py-4 border-b border-white/10 shrink-0">
@@ -94,7 +94,7 @@ export function PipelineSopModal({ onClose }: { onClose?: () => void } = {}) {
           </div>
           <button
             onClick={handleDismiss}
-            className="text-white/40 hover:text-white/80 transition-colors p-1 rounded-lg hover:bg-white/10 shrink-0"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg p-1 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80"
             title="Dismiss"
           >
             <X className="w-5 h-5" />
@@ -155,10 +155,10 @@ export function PipelineSopModal({ onClose }: { onClose?: () => void } = {}) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/10 shrink-0">
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-white/10 px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <Button
             onClick={handleDismiss}
-            className="font-semibold"
+            className="min-h-11 font-semibold"
             style={{ backgroundColor: GOLD, color: NAVY }}
           >
             Got it

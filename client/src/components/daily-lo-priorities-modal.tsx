@@ -66,8 +66,8 @@ export function DailyLoPrioritiesModal({ userId, orgId, timezone, onDismiss }: D
   });
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/85 px-3 py-5 backdrop-blur-sm" data-testid="daily-lo-priorities-modal">
-      <div className="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0F182D] shadow-2xl">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/85 px-0 py-0 backdrop-blur-sm sm:items-center sm:px-3 sm:py-5" data-testid="daily-lo-priorities-modal">
+      <div className="flex max-h-[min(94dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-[#0F182D] shadow-2xl sm:rounded-2xl">
         <div className="border-b border-white/10 px-5 py-5 sm:px-7">
           <div className="flex items-start gap-4">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: "rgba(196, 154, 60, 0.16)" }}>
@@ -163,11 +163,11 @@ export function DailyLoPrioritiesModal({ userId, orgId, timezone, onDismiss }: D
           </div>
         </ScrollArea>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-          <Button variant="ghost" onClick={dismiss} className="text-white/60 hover:text-white" disabled={isLoading}>
+        <div className="flex flex-col-reverse gap-2 border-t border-white/10 px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:px-7">
+          <Button variant="ghost" onClick={dismiss} className="min-h-11 text-white/60 hover:text-white" disabled={isLoading}>
             Continue to C3
           </Button>
-          <Button onClick={openAssignments} className="font-semibold" style={{ backgroundColor: GOLD, color: NAVY }} disabled={isLoading} data-testid="open-daily-assignments">
+          <Button onClick={openAssignments} className="min-h-11 font-semibold" style={{ backgroundColor: GOLD, color: NAVY }} disabled={isLoading} data-testid="open-daily-assignments">
             Open daily assignments <ArrowRight className="h-4 w-4" />
           </Button>
         </div>

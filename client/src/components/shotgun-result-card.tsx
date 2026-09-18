@@ -172,10 +172,10 @@ export function ShotgunResultCard({ lead, onCompleted }: { lead: ShotgunLead; on
       {save.isError && <p role="alert" className="mt-3 rounded-lg border border-red-400 bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">Could not save: {save.error.message}. Your entries are still here; please try again.</p>}
       {!canComplete && <p className="mt-3 text-sm text-muted-foreground">{!called && !texted ? "Select Called or Sent a text. " : ""}{notes.trim().length < 2 ? "Add a short note about what happened. " : ""}</p>}
       <p className="mt-3 text-xs text-muted-foreground">Save for later keeps this lead assigned and reminders active. Finish lead saves the final result and clears this reminder.</p>
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="outline" disabled={save.isPending} onClick={() => save.mutate(false)}>Save for later</Button>
+      <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+        <Button type="button" variant="outline" className="min-h-11" disabled={save.isPending} onClick={() => save.mutate(false)}>Save for later</Button>
         {resultType === "complete" && (
-          <Button type="button" className="gap-2 bg-emerald-600 hover:bg-emerald-700" disabled={save.isPending || !canComplete} onClick={() => save.mutate(true)}>
+          <Button type="button" className="min-h-11 gap-2 bg-emerald-600 hover:bg-emerald-700" disabled={save.isPending || !canComplete} onClick={() => save.mutate(true)}>
             <CheckCircle2 className="h-4 w-4" />
             {save.isPending ? "Saving…" : "Finish lead"}
           </Button>

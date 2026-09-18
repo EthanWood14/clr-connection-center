@@ -136,7 +136,7 @@ export function ManagerSummonsAlarm() {
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center p-6"
+      className="fixed inset-0 z-[200] flex items-end justify-center overflow-y-auto p-0 sm:items-center sm:p-6"
       style={{
         backgroundColor: reducedMotion ? "#7f1d1d" : (flashOn ? "#dc2626" : "#450a0a"),
         transition: reducedMotion ? undefined : "background-color 220ms linear",
@@ -146,7 +146,7 @@ export function ManagerSummonsAlarm() {
       aria-label="Go see your manager"
       data-testid="manager-summons-alarm"
     >
-      <div className="w-full max-w-2xl rounded-2xl border-4 border-white/80 bg-black/70 p-6 text-center shadow-2xl">
+      <div className="max-h-[min(94dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-t-2xl border-4 border-white/80 bg-black/70 p-4 text-center shadow-2xl sm:rounded-2xl sm:p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         {/* The video is the loud part. The flashing is pulled back to the frame
             around it so the two are not fighting for the same pixels. */}
         <video
@@ -157,7 +157,7 @@ export function ManagerSummonsAlarm() {
           controls={false}
           // Sized to its own aspect ratio — a portrait clip stretched across a
           // landscape box is mostly black bars.
-          className="mx-auto max-h-[48vh] w-auto max-w-full rounded-lg bg-black"
+          className="mx-auto max-h-[36vh] w-auto max-w-full rounded-lg bg-black sm:max-h-[48vh]"
           data-testid="summons-video"
         />
         <div className="mt-4 flex items-center justify-center gap-3">
@@ -165,7 +165,7 @@ export function ManagerSummonsAlarm() {
             className="h-10 w-10 shrink-0 text-white"
             style={{ opacity: reducedMotion ? 1 : (flashOn ? 1 : 0.45) }}
           />
-          <h1 className="text-3xl font-black uppercase tracking-tight text-white sm:text-4xl">
+          <h1 className="text-2xl font-black uppercase tracking-tight text-white sm:text-4xl">
             Go see your manager
           </h1>
         </div>
@@ -184,7 +184,7 @@ export function ManagerSummonsAlarm() {
           type="button"
           onClick={() => setSilencedUntil(Date.now() + SILENCE_MS)}
           disabled={silenced}
-          className="mt-4 rounded-lg border-2 border-white/70 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:opacity-50"
+          className="mt-4 min-h-11 rounded-lg border-2 border-white/70 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:opacity-50"
           data-testid="summons-silence"
         >
           {silenced ? "Sound off for 2 minutes" : "Silence the sound for 2 minutes"}

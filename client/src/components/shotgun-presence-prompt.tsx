@@ -58,7 +58,7 @@ export function ShotgunPresencePrompt() {
       </div>
       <p className="mt-1 text-xs text-orange-100"><strong className="break-words">{held.leadName}</strong> goes back to the rotation in <strong>{Math.ceil(state.secondsLeft)} seconds</strong> — three minutes after you claimed it — unless you keep it. Nobody else is offered it until then.</p>
       {stillHere.isError && <p className="mt-2 text-sm text-red-200" role="alert">{(stillHere.error as any)?.message || "Could not confirm — the lead may already have moved."}</p>}
-      <Button className="mt-3 w-full bg-white font-bold text-slate-950 hover:bg-sky-100" disabled={stillHere.isPending} onClick={() => stillHere.mutate(held.id)} data-testid="shotgun-still-here">
+      <Button className="mt-3 min-h-12 w-full bg-white text-base font-bold text-slate-950 hover:bg-sky-100" disabled={stillHere.isPending} onClick={() => stillHere.mutate(held.id)} data-testid="shotgun-still-here">
         {stillHere.isPending ? "…" : "I'M HERE — KEEP IT"}
       </Button>
     </section>
