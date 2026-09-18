@@ -4,7 +4,14 @@ import { raceGrid, type RaceDriver } from "@shared/tv-race-grid";
 import { planRaceTransition, raceTransitionStartRank } from "@shared/tv-race-transition";
 import { formatTransferCount } from "@shared/transfer-credit";
 import { raceBroadcastShot, raceFocusCaption } from "@shared/tv-race-camera";
-import { DAY_RACE_SECONDS_PER_HOUR, dayRaceRunSeconds, type DayRaceFrame } from "@shared/tv-day-race";
+import {
+  DAY_RACE_SECONDS_PER_HOUR,
+  dayRaceActiveHours,
+  dayRaceFrameOffsetMs,
+  dayRaceRunSeconds,
+  dayRaceStartingGrid,
+  type DayRaceFrame,
+} from "@shared/tv-day-race";
 
 let sceneImport: Promise<typeof import("./race-scene")> | undefined;
 /**
@@ -12,6 +19,7 @@ let sceneImport: Promise<typeof import("./race-scene")> | undefined;
  * the same flight walked more slowly reads as a broadcast rather than a
  * rush past the cars (owner, 16 Sep 2026: "I want it smooth and longer").
  * tv.tsx holds the moment for RACE_MOMENT_MS, which is this plus a beat.
+ * Camera motion on transfers is locked trackside — cars still animate.
  */
 export const RACE_SCENE_SECONDS = 18;
 export const RACE_MOMENT_MS = (RACE_SCENE_SECONDS + .6) * 1000;
@@ -23,6 +31,12 @@ export function preloadFieldRace() {
   return sceneImport ??= import("./race-scene").catch(error=>{sceneImport=undefined;throw error;});
 }
 
+function formatDayRaceClock(hour: number, minute: number): string {
+  const suffix = hour % 12 === 0 ? 12 : hour % 12;
+  const ampm = hour < 12 ? "AM" : "PM";
+  return `Through ${suffix}:${String(minute).padStart(2, "0")} ${ampm}`;
+}
+
 export function FieldRace({ people, before = null, who, focusId: requestedFocusId, reduced, preview = false, dayFrames = null }: {
   people: RankRow[];
   before?: RankRow[] | null;
@@ -31,9 +45,9 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
   reduced: boolean;
   preview?: boolean;
   /**
-   * Play-button day replay: cumulative standings after each non-empty hour.
-   * The scene mounts on the first frame (from a zeroed before) and advances
-   * in place every DAY_RACE_SECONDS_PER_HOUR — no black flash between hours.
+   * Play-button day replay: cumulative standings after each non-empty minute.
+   * The scene mounts on a zeroed grid and advances in place as each transfer
+   * minute lands — no black flash, no hour-synced jumps.
    */
   dayFrames?: DayRaceFrame[] | null;
 }) {
@@ -44,9 +58,10 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
   const [shot,setShot]=useState(()=>raceBroadcastShot(0,reduced));
   const [livePeople,setLivePeople]=useState(people);
   const isDayRace=!!dayFrames?.length;
-  const startPeople=isDayRace?dayFrames![0].people:people;
-  const startBefore=isDayRace?(before??dayFrames![0].people.map(p=>({...p,transfersToday:0}))):before;
-  const runSeconds=isDayRace?dayRaceRunSeconds(dayFrames!.length):RACE_SCENE_SECONDS;
+  const activeHours=useMemo(()=>isDayRace?dayRaceActiveHours(dayFrames!):[],[isDayRace,dayFrames]);
+  const startPeople=isDayRace?(before??dayRaceStartingGrid(dayFrames![0].people)):people;
+  const startBefore=isDayRace?(before??dayRaceStartingGrid(dayFrames![0].people)):before;
+  const runSeconds=isDayRace?dayRaceRunSeconds(activeHours.length):RACE_SCENE_SECONDS;
   const drivers=useMemo(()=>raceGrid(livePeople),[livePeople]);
   const matching=drivers.filter(p=>p.name===who);
   const focusId=requestedFocusId??(matching.length===1?matching[0].id:undefined);
@@ -65,41 +80,58 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
     setStatus("loading");
     setElapsed(0);
     setLivePeople(startPeople);
-    setShot(raceBroadcastShot(0,reduced));
+    setShot(raceBroadcastShot(0,true));
     scene.current=null;
     void preloadFieldRace().then(({mountRaceScene})=>{
       if(cancelled||!host.current)return;
       try {
-        cleanup=mountRaceScene(host.current,{drivers:raceGrid(startPeople),before:startBefore,reduced,focusId,runSeconds,cameraSeconds:Math.min(runSeconds,RACE_SCENE_SECONDS),onProgress:time=>{if(!cancelled)setElapsed(time);},onShot:next=>{if(!cancelled)setShot(next);},onFailure:()=>{if(!cancelled)setStatus("unavailable");}});
+        cleanup=mountRaceScene(host.current,{
+          drivers:raceGrid(startPeople),
+          before:startBefore,
+          reduced,
+          focusId:isDayRace?undefined:focusId,
+          runSeconds,
+          // Lock the lens trackside for transfers and day replay — no flight
+          // pan/zoom/follow. Cars still animate; scored transfers keep boost.
+          stableCamera:true,
+          snapUpdates:isDayRace,
+          cameraSeconds:Math.min(runSeconds,RACE_SCENE_SECONDS),
+          onProgress:time=>{if(!cancelled)setElapsed(time);},
+          onShot:next=>{if(!cancelled)setShot(next);},
+          onFailure:()=>{if(!cancelled)setStatus("unavailable");},
+        });
         scene.current=cleanup as RaceSceneHandle;
         setStatus("ready");
       }catch{if(!cancelled)setStatus("unavailable");}
     }).catch(()=>{if(!cancelled)setStatus("unavailable");});
     return()=>{cancelled=true;scene.current=null;cleanup?.();};
-    // Day-race frames advance via update() below; remounting on each hour
+    // Day-race frames advance via update() below; remounting on each minute
     // would flash the wall black. Transfer moments still remount per key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[isDayRace?`day:${dayFrames!.length}`:`live:${startPeople.map(p=>`${p.id}:${p.transfersToday}`).join("|")}`,reduced,focusId,runSeconds]);
+  },[isDayRace?`day:${dayFrames!.length}:${activeHours.join(",")}`:`live:${startPeople.map(p=>`${p.id}:${p.transfersToday}`).join("|")}`,reduced,focusId,runSeconds]);
 
-  // Walk remaining hours in place: eight seconds each, skip already applied.
+  // Walk each non-empty minute in place, timed inside its hour slot.
   useEffect(()=>{
-    if(!isDayRace||!dayFrames||dayFrames.length<2)return;
-    const timers=dayFrames.slice(1).map((frame,index)=>window.setTimeout(()=>{
+    if(!isDayRace||!dayFrames?.length)return;
+    const hours=dayRaceActiveHours(dayFrames);
+    const timers=dayFrames.map((frame)=>window.setTimeout(()=>{
       const next=raceGrid(frame.people);
       if(scene.current?.update(next)===false)return;
       setLivePeople(frame.people);
-    },(index+1)*DAY_RACE_SECONDS_PER_HOUR*1000));
+    },dayRaceFrameOffsetMs(frame,hours)));
     return()=>{timers.forEach(clearTimeout);};
   },[isDayRace,dayFrames]);
 
   const leader=drivers[0];
-  const hourLabel=isDayRace&&dayFrames?(()=>{
-    const idx=Math.min(dayFrames.length-1,Math.max(0,Math.floor(elapsed/DAY_RACE_SECONDS_PER_HOUR)));
-    const hour=dayFrames[idx]?.hour;
-    if(hour==null)return `Hour ${idx+1} of ${dayFrames.length}`;
-    const suffix=hour%12===0?12:hour%12;
-    const ampm=hour<12?'AM':'PM';
-    return `Through ${suffix} ${ampm}`;
+  const clockLabel=isDayRace&&dayFrames?.length?(()=>{
+    const hours=activeHours;
+    let current:DayRaceFrame|null=null;
+    for(const frame of dayFrames){
+      if(dayRaceFrameOffsetMs(frame,hours)<=elapsed*1000)current=frame;
+      else break;
+    }
+    if(!current)return "Green flag";
+    return formatDayRaceClock(current.hour,current.minute);
   })():null;
   return <section className="absolute inset-0 z-30 overflow-hidden bg-[#111e29] text-white" data-testid="tv-field-race" data-scene-status={status} data-broadcast-shot={shot.id} data-day-race={isDayRace?"1":"0"}>
     <div ref={host} className="absolute inset-y-0 left-0 right-[20%] overflow-hidden" style={{background:"linear-gradient(160deg,#617886,#183338 65%,#0f202c)"}} />
@@ -108,9 +140,9 @@ export function FieldRace({ people, before = null, who, focusId: requestedFocusI
     <header className="pointer-events-none absolute left-[2.5%] top-[3.5%] right-[23%]">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3"><span className={`${preview?'bg-cyan-700':'bg-red-600'} px-2.5 py-1 text-[10px] font-black uppercase tracking-[.2em]`}>{preview?(isDayRace?'Day race':'Preview'):'Live'}</span><h2 className="text-[clamp(16px,1.7vw,30px)] font-black italic uppercase tracking-tight">C3 Grand Prix</h2></div>
-        <div className="border-l-2 border-cyan-300 bg-[#08131f]/80 px-3 py-1.5 text-right"><p className="text-[9px] font-semibold uppercase tracking-[.22em] text-white/50">Race coverage</p><p className="mt-0.5 text-[clamp(10px,1vw,17px)] font-bold uppercase tracking-wider text-cyan-100" data-testid="tv-race-shot-label">{isDayRace && hourLabel ? hourLabel : shot.label}</p></div>
+        <div className="border-l-2 border-cyan-300 bg-[#08131f]/80 px-3 py-1.5 text-right"><p className="text-[9px] font-semibold uppercase tracking-[.22em] text-white/50">Race coverage</p><p className="mt-0.5 text-[clamp(10px,1vw,17px)] font-bold uppercase tracking-wider text-cyan-100" data-testid="tv-race-shot-label">{isDayRace && clockLabel ? clockLabel : (reduced ? shot.label : 'TRACKSIDE VIEW')}</p></div>
       </div>
-      {preview&&<p className="mt-2 text-[11px] font-semibold text-cyan-100/80">{isDayRace?`Today’s race · ${DAY_RACE_SECONDS_PER_HOUR}s per hour · Empty hours skipped`:'Current standings · No stats changed'}</p>}
+      {preview&&<p className="mt-2 text-[11px] font-semibold text-cyan-100/80">{isDayRace?`Today’s race · ${DAY_RACE_SECONDS_PER_HOUR}s per hour · By the minute · Empty stretches skipped`:'Current standings · No stats changed'}</p>}
     </header>
     <aside className="absolute right-0 inset-y-0 flex w-[20%] flex-col border-l border-white/15 bg-[#08131f]/95 px-[1.2%] py-[3%]">
       <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-black uppercase tracking-[.15em]">Running order</h3><span className="rounded-sm border border-white/25 px-1.5 py-0.5 text-[10px] text-white/60">TODAY</span></div>
