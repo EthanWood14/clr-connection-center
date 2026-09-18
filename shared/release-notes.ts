@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.2",
+    headline: "Manager Placed % still shows when investment routing is off.",
+    items: [
+      { text: "On the Manager Transfer Scorecard, MTD Placed no longer blanks to a dash solely because Justin/Mateo/John could not be resolved under one LO desk.", audience: "manager" },
+      { text: "Those Investment/2nd Home transfers keep ordinary placement scoring; the cell still notes \"routing rule off\" and the hover explains the share is the ordinary mean.", audience: "manager" },
+      { text: "When the investment ladder does resolve, Justin/Mateo/John 100/0 routing scoring is unchanged.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.0",
     headline: "C3 ↔ Bonzo helper: log results, track views, and show Bonzo stats on the scorecard.",
     items: [

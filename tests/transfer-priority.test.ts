@@ -1807,11 +1807,12 @@ test("the server fills that column from this module, over the row's own window",
   const scan = placementScan();
   assert.match(scan, /scoreTransferPriority\(/, "the rule is not reimplemented in the route");
   // Every reason the column withholds a number lives in ONE helper, so a third
-  // reason cannot be added to the cell and forgotten on the row. The rules it
-  // holds are pinned here: too thin a sample, and a routing rule that could not
-  // run at all.
+  // reason cannot be added to the cell and forgotten on the row. The rule it
+  // holds is pinned here: too thin a sample. Investment routing unresolved no
+  // longer blanks the share — see the HIGH test below.
   assert.match(routes, /placementScore: placementPct\(placementByUser\.get\(u\.id\)\)/);
-  assert.match(routes, /!cell \|\| !cell\.ranked \|\| cell\.investmentUnscored > 0 \? null : cell\.pct/);
+  assert.match(routes, /!cell \|\| !cell\.ranked \? null : cell\.pct/);
+  assert.doesNotMatch(routes, /cell\.investmentUnscored > 0 \? null : cell\.pct/);
   // The transfers SCORED are startDate/endDate — the range every other cell on
   // that row is counted over. A second scoring window would put two different
   // fortnights on one line.
@@ -2141,21 +2142,25 @@ test("HIGH — the cell's breakdown is taken over EVERY transfer behind the numb
   assert.match(mgr, /left out of the share/);
 });
 
-test("HIGH — a routing rule that could not run shows a dash and the reason, never a red 0%", () => {
+test("HIGH — a routing rule that could not run still shows ordinary Placed %, with the reason", () => {
   // The rule stopping is a fact about the ROSTER, not about anybody's work.
-  // Those transfers were required to reach one desk, so ordinary placement
-  // scores perfect compliance at 0% — the sharpest verdict this column hands
-  // out, arrived at because somebody was renamed.
+  // Those Investment/2nd Home transfers still fall through into ordinary
+  // placement scoring in the module; blanking the share solely because
+  // investmentUnscored > 0 hid a mean the floor already earned.
   assert.match(routes, /placementUnscored: placementByUser\.get\(u\.id\)\?\.investmentUnscored \?\? 0/);
-  // The number is withheld, in the one helper that holds every such rule.
+  // placementPct only withholds for an unranked sample — not for unscored.
   assert.match(routes, /const placementPct = \(cell\?: PlacementCell\): number \| null =>/);
-  assert.match(routes, /cell\.investmentUnscored > 0 \? null : cell\.pct/);
-  // ...and the dash says WHICH dash it is, ahead of every other reason, because
-  // each of those would explain a dash this one is not.
+  assert.match(routes, /!cell \|\| !cell\.ranked \? null : cell\.pct/);
+  assert.doesNotMatch(routes, /cell\.investmentUnscored > 0 \? null : cell\.pct/);
+  // The tooltip explains the rule is off and the share is ordinary placement.
   assert.match(mgr, /if \(unscored > 0\) \{/);
   assert.match(mgr, /The investment routing rule is not running/);
   assert.match(mgr, /roster cannot resolve Chris's/);
-  assert.match(mgr, /no share is shown until the roster answers/);
+  assert.match(mgr, /scored as ordinary placement instead/);
+  assert.match(mgr, /The share shown is that ordinary mean/);
+  assert.doesNotMatch(mgr, /no share is shown until the roster answers/);
+  // Cell note still flags the condition when unscored > 0.
+  assert.match(mgr, /if \(Number\(r\.placementUnscored \?\? 0\) > 0\) return "routing rule off";/);
   // The warn names what failed and which assistant: the module's own sentence,
   // not a generic one this route made up.
   const scan = placementScan();

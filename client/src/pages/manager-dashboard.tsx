@@ -351,15 +351,40 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     const dropped = unplaced - filled;
     const behind = scored + filled;
 
-    // The rule that did not run answers first. The cell is a dash because of
-    // it, and every other reason below would explain the wrong dash.
+    // The rule that did not run answers first so a manager knows the share is
+    // ordinary placement, not a Justin/Mateo/John routing verdict — but the
+    // share itself still shows when the sample ranks.
     if (unscored > 0) {
-      return `The investment routing rule is not running: the roster cannot resolve Chris's`
+      const ruleOff = `The investment routing rule is not running: the roster cannot resolve Chris's`
         + ` Justin, Mateo or John, so ${unscored} of this CLR's transfers that the app recorded as`
-        + ` Investment/2nd Home ${unscored === 1 ? "was" : "were"} not judged on routing at all.`
-        + ` Each of those had to reach one desk, so reading them as ordinary placement would score`
-        + ` obedience as 0% — no share is shown until the roster answers. The server log names what`
-        + ` failed.`;
+        + ` Investment/2nd Home ${unscored === 1 ? "was" : "were"} not judged on Justin/Mateo/John`
+        + ` routing and ${unscored === 1 ? "was" : "were"} scored as ordinary placement instead.`
+        + ` The share shown is that ordinary mean; the cell notes "routing rule off". The server`
+        + ` log names what failed.`;
+      if (r.placementScore == null) {
+        const why = !r.transfers
+          ? "No transfers logged in this range, so there is no placement to judge."
+          : !scored
+            ? "None of this CLR's transfers in this range could be traced to a loan officer, so there is nothing to score."
+            : !need
+              ? "Too few of this CLR's transfers in this range could be read to judge placement."
+              : `Only ${scored} of this CLR's transfers in this range could be read, and ${need} are needed before a placement share means anything. Try a longer range.`;
+        return `${ruleOff} ${why}`;
+      }
+      const pieces: string[] = [];
+      if (ramped > 0) pieces.push(`${ramped} judged on ordinary placement`);
+      if (filled > 0) {
+        pieces.push(`${filled} that could not be traced to a loan officer, counted at the floor's own`
+          + ` average of ${Math.round((valuedAt as number) * 100)}%`);
+      }
+      const breakdown = pieces.length
+        ? `This share is the mean of ${behind} ${behind === 1 ? "transfer" : "transfers"}: ${pieces.join("; ")}.`
+        : "";
+      const left = dropped > 0
+        ? `${dropped} more could not be traced to a loan officer, and with no ordinary placement on the`
+          + ` floor to value them at they are left out of the share.`
+        : "";
+      return [ruleOff, breakdown, left].filter(Boolean).join(" ");
     }
 
     // WHAT THE NUMBER IS MADE OF, and it has to add up to every transfer
@@ -518,7 +543,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     // INVESTMENT_PROPERTY_LOAS in server/transfer-priority.ts.
     { key: "placement",    label: "Placed",    get: r => r.placementScore ?? null, better: true,
       fmt: r => r.placementScore == null ? "—" : `${r.placementScore}%`,
-      title: "Where transfers were PUT, not how many. Each one is judged against the floor as it stood on the morning it was made: the lightest few loan officers actually taking work are worth 100%, the busiest is worth 0%, and everyone between them ramps. Transfers the app recorded as Investment/2nd Home are not ramped at all — they had to reach one of Chris's assistants Justin, Mateo or John, so they score 100% when the transfer records one of those three and 0% for anything else, however starved the loan officer was. A flagged transfer with a different assistant, or with no assistant recorded at all, scores zero. Everything else is compared with the WHOLE floor: nothing tells this stat which loan officers were licensed for the borrower's state. On any range longer than a day the floor is counted over a fortnight PLUS the range, so this column and the wall's Starved page can name different people as starved. If the roster cannot resolve those three, the rule stops for everybody and the column shows a dash rather than a 0% nobody earned. The cell itself says when a number came from that routing rule; hover it for the full breakdown of what the share is the mean of.",
+      title: "Where transfers were PUT, not how many. Each one is judged against the floor as it stood on the morning it was made: the lightest few loan officers actually taking work are worth 100%, the busiest is worth 0%, and everyone between them ramps. Transfers the app recorded as Investment/2nd Home are not ramped at all — they had to reach one of Chris's assistants Justin, Mateo or John, so they score 100% when the transfer records one of those three and 0% for anything else, however starved the loan officer was. A flagged transfer with a different assistant, or with no assistant recorded at all, scores zero. Everything else is compared with the WHOLE floor: nothing tells this stat which loan officers were licensed for the borrower's state. On any range longer than a day the floor is counted over a fortnight PLUS the range, so this column and the wall's Starved page can name different people as starved. If the roster cannot resolve those three, the rule stops for everybody and those Investment/2nd Home transfers are scored as ordinary placement instead — the cell notes "routing rule off", but the share still shows. The cell itself says when a number came from that routing rule; hover it for the full breakdown of what the share is the mean of.",
       cellTitle: placementNote, cellNote: placementCellNote },
   ];
   // Nulls are excluded, and a column with nothing but nulls has no range at all.
