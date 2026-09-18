@@ -54,6 +54,7 @@ import {
   formatTransferCount,
   TRANSFER_CREDIT_SQL,
 } from "@shared/transfer-credit";
+import { transferCreditExclusionSql } from "@shared/stats-exclusions";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import {
   filterRecipients, suppressionFromHistory, suppressionWindowArg,
@@ -1060,7 +1061,7 @@ function buildCompSummaryHtml(startDate: string, endDate: string, opts: { projec
              u.transfer_comp_cents AS transferCompCents
       FROM (${TRANSFER_CREDIT_SQL}) tc
       LEFT JOIN users u ON u.id = tc.user_id
-      WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL
+      WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL
       GROUP BY tc.user_id
       ORDER BY transfers DESC
     `).all(startDate, endDate) as any[];
@@ -14110,7 +14111,7 @@ ${note}` : daysLine;
     for (const r of sqlite.prepare(`
       SELECT tc.user_id AS uid, SUM(tc.credit) AS credit
       FROM (${TRANSFER_CREDIT_SQL}) tc
-      WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
+      WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
       GROUP BY tc.user_id
     `).all(month.startDate, month.endDate) as any[]) {
       const uid = Number(r.uid);
@@ -14420,7 +14421,7 @@ ${note}` : daysLine;
       for (const r of sqlite.prepare(`
         SELECT tc.user_id AS uid, SUM(tc.credit) AS credit
         FROM (${TRANSFER_CREDIT_SQL}) tc
-        WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
+        WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
         GROUP BY tc.user_id
       `).all(startDate, endDate) as any[]) {
         const uid = Number(r.uid);
@@ -14507,7 +14508,7 @@ ${note}` : daysLine;
           SELECT tc.user_id AS assistant_id, SUM(tc.credit) AS n
           FROM (${TRANSFER_CREDIT_SQL}) tc
           JOIN lead_outcomes o ON o.id = tc.outcome_id
-          WHERE o.bulk_texter=1 AND tc.date >= ? AND tc.date <= ?
+          WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND o.bulk_texter=1 AND tc.date >= ? AND tc.date <= ?
             AND tc.user_id IS NOT NULL${exClauseTc}
           GROUP BY tc.user_id
         `).all(startDate, endDate) as any[];
@@ -14959,7 +14960,7 @@ ${note}` : daysLine;
         (sqlite.prepare(`
           SELECT tc.user_id AS assistant_id, tc.date AS date, SUM(tc.credit) AS count
           FROM (${TRANSFER_CREDIT_SQL}) tc
-          WHERE tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
+          WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.date >= ? AND tc.date <= ? AND tc.user_id IS NOT NULL${exClauseTc}
           GROUP BY tc.user_id, tc.date
         `).all(startDate, endDate) as any[]).map((r: any) => ({ ...r, outcome_type: "transfer" })),
       );
@@ -19984,15 +19985,17 @@ ${note}` : daysLine;
 
     const thisWeek = weekStartOf(today);
     const thisMonth = monthStartOf(today);
-    const availability = paceHalfDayContext(db, orgId, from, today).availability;
+    const paceCtx = paceHalfDayContext(db, orgId, from, today);
+    const availability = paceCtx.availability;
+    const creditExcludedKeys = new Set(paceCtx.excludedDays.map((e) => `${e.userId}:${e.date}`));
 
     res.json({
       generatedAt: new Date().toISOString(),
       today,
       from,
       helper: { name: helperName, resolved: helperUserId != null, excludedFromTeamFigures: helperUserId != null },
-      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, availability),
-      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, availability),
+      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, availability, creditExcludedKeys),
+      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, availability, creditExcludedKeys),
       definitions: definitionsFor(helperName, helperUserId != null),
     });
 
@@ -22832,7 +22835,7 @@ ${note}` : daysLine;
     const transferRows = sqlite.prepare(
       `SELECT tc.user_id AS assistant_id, tc.date AS date, tc.credit AS credit
          FROM (${TRANSFER_CREDIT_SQL}) tc
-        WHERE tc.org_id=? AND tc.user_id IS NOT NULL`,
+        WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.org_id=? AND tc.user_id IS NOT NULL`,
     ).all(orgId) as any[];
     const transfersByUser = new Map<number, Array<{ date: string; credit: number }>>();
     for (const row of transferRows) {
@@ -23171,7 +23174,7 @@ ${note}` : daysLine;
                 SUM(CASE WHEN tc.date = ? THEN tc.credit ELSE 0 END) AS today,
                 SUM(tc.credit) AS week
            FROM (${TRANSFER_CREDIT_SQL}) tc
-          WHERE tc.org_id=? AND tc.date >= ?
+          WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.org_id=? AND tc.date >= ?
             AND tc.user_id IN (${ids.map(() => "?").join(",")})
           GROUP BY tc.user_id`,
       ).all(today, orgId, weekStart, ...ids) as any[];
@@ -23196,7 +23199,7 @@ ${note}` : daysLine;
           `SELECT tc.user_id AS assistant_id, MAX(o.created_at) AS at
              FROM (${TRANSFER_CREDIT_SQL}) tc
              JOIN lead_outcomes o ON o.id = tc.outcome_id
-            WHERE tc.org_id=? AND tc.user_id IN (${holes})
+            WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.org_id=? AND tc.user_id IN (${holes})
             GROUP BY tc.user_id`,
         ).all(orgId, ...ids) as any[]) if (r.at) lastTransfer.set(Number(r.assistant_id), String(r.at));
       } catch { /* no history is fine */ }
@@ -23219,7 +23222,7 @@ ${note}` : daysLine;
         `SELECT assistant_id, MAX(c) AS best FROM (
            SELECT tc.user_id AS assistant_id, tc.date AS date, SUM(tc.credit) AS c
              FROM (${TRANSFER_CREDIT_SQL}) tc
-            WHERE tc.org_id=? AND tc.date < ?
+            WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.org_id=? AND tc.date < ?
             GROUP BY tc.user_id, tc.date
          ) GROUP BY assistant_id`,
       ).all(orgId, today) as any[];
@@ -23430,7 +23433,7 @@ ${note}` : daysLine;
                   SUM(CASE WHEN tc.date >= ? THEN tc.credit ELSE 0 END) AS week,
                   SUM(CASE WHEN tc.date >= ? THEN tc.credit ELSE 0 END) AS month
              FROM (${TRANSFER_CREDIT_SQL}) tc LEFT JOIN users u ON u.id = tc.user_id
-            WHERE tc.org_id = ? AND tc.date >= ? AND tc.user_id IS NOT NULL
+            WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.org_id = ? AND tc.date >= ? AND tc.user_id IS NOT NULL
             GROUP BY tc.user_id
            UNION ALL
            SELECT NULL AS id, NULL AS name,
@@ -23515,7 +23518,7 @@ ${note}` : daysLine;
         const credits = sqlite.prepare(
           `SELECT tc.user_id AS user_id, tc.date AS d, SUM(tc.credit) AS credit
              FROM (${TRANSFER_CREDIT_SQL}) tc
-            WHERE tc.org_id=? AND tc.user_id IN (${marks}) AND tc.date >= ? AND tc.date <= ?
+            WHERE (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.org_id=? AND tc.user_id IN (${marks}) AND tc.date >= ? AND tc.date <= ?
             GROUP BY tc.user_id, tc.date`,
         ).all(orgId, ...paceIds, from, w.today) as any[];
         const paceCtx = paceHalfDayContext(sqlite, orgId, from, w.today);

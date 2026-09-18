@@ -14,6 +14,7 @@
  * Pure: the server hands it rows and people, the tests hand it fixtures.
  */
 import { transferCreditFor } from "./transfer-credit";
+import { STATS_EXCLUDED_FROM, isStatsExcluded } from "./stats-exclusions";
 
 /**
  * Whether a tournament is on. On for 17 Sep 2026 (12:30–5:30 PT) — Ethan:
@@ -33,22 +34,11 @@ export const LAST_TOURNAMENT_DATE = "2026-09-14";
 export const TOURNAMENT_EXCLUDED_NAME_RE = /\belleine\b/i;
 
 /**
- * Date-scoped exclusions: from this Pacific calendar day inclusive forward.
- * Jordon Chang (also "Jordan Chang") — Ethan 18 Sep 2026: "jordon shouldn't
- * count since wednesday" (2026-09-16 PT). Match jordon as a whole word, or
- * "jordan chang" so demo LO "Jordan Rivera" is not pulled in.
+ * Date-scoped tournament exclusions — same source of truth as all-stats
+ * exclusions (shared/stats-exclusions.ts). Jordon from 2026-09-16 PT.
  */
-export const TOURNAMENT_EXCLUDED_FROM: readonly {
-  nameRe: RegExp;
-  fromDate: string;
-  reason: string;
-}[] = [
-  {
-    nameRe: /\bjordon\b|\bjordan\s+chang\b/i,
-    fromDate: "2026-09-16",
-    reason: "Ethan: Jordon shouldn't count since Wednesday (2026-09-16 PT)",
-  },
-];
+export const TOURNAMENT_EXCLUDED_FROM = STATS_EXCLUDED_FROM;
+
 
 /**
  * Whether this display name is out of tournament scoring / live UI.
@@ -62,10 +52,7 @@ export function isTournamentExcluded(
   const n = String(name ?? "").trim();
   if (TOURNAMENT_EXCLUDED_NAME_RE.test(n)) return true;
   const day = (date && String(date).trim()) || todayInTz();
-  for (const rule of TOURNAMENT_EXCLUDED_FROM) {
-    if (day >= rule.fromDate && rule.nameRe.test(n)) return true;
-  }
-  return false;
+  return isStatsExcluded(n, day);
 }
 
 /** Home tab / sidebar: tournament is on AND this user is not excluded today. */

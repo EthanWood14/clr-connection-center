@@ -1,5 +1,6 @@
 import { TV_RACE_GUEST_USER_ID } from "../shared/tv-race-participation";
 import { TRANSFER_CREDIT_SQL } from "../shared/transfer-credit";
+import { transferCreditExclusionSql } from "../shared/stats-exclusions";
 
 /** Do not promote a TV-only guest into the CLR scorecard, payroll or averages. */
 export function withTvRaceGuests<T extends { id: number }>(db: any, orgId: number, roster: T[]): T[] {
@@ -18,7 +19,7 @@ export function tvRaceCreditsForEvents(db: any, orgId: number, today: string, ou
   if (!ids.length) return credits;
   const rows = db.prepare(`SELECT tc.outcome_id, tc.user_id, SUM(tc.credit) AS credit
     FROM (${TRANSFER_CREDIT_SQL}) tc
-    WHERE tc.org_id=? AND tc.date=? AND tc.outcome_id IN (${ids.map(() => "?").join(",")})
+    WHERE tc.org_id=? AND tc.date=? AND (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")}) AND tc.outcome_id IN (${ids.map(() => "?").join(",")})
     GROUP BY tc.outcome_id, tc.user_id ORDER BY tc.outcome_id, tc.user_id`)
     .all(orgId, today, ...ids) as any[];
   for (const row of rows) {

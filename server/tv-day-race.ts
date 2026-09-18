@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { TRANSFER_CREDIT_SQL } from "../shared/transfer-credit";
+import { transferCreditExclusionSql } from "../shared/stats-exclusions";
 import { officeHourFromIso, type DayRaceHourCredit } from "../shared/tv-day-race";
 
 /**
@@ -19,7 +20,7 @@ export function loadDayRaceHourCredits(
                      strftime('%Y-%m-%dT%H:%M:%fZ', o.created_at)) AS at
        FROM (${TRANSFER_CREDIT_SQL}) tc
        JOIN lead_outcomes o ON o.id = tc.outcome_id
-      WHERE tc.org_id = ? AND tc.date = ?`,
+      WHERE tc.org_id = ? AND tc.date = ? AND (${transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id")})`,
   ).all(orgId, today) as { userId: unknown; credit: unknown; at: unknown }[];
 
   const out: DayRaceHourCredit[] = [];
