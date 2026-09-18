@@ -14205,7 +14205,7 @@ ${note}` : daysLine;
    */
   const placementPct = (cell?: PlacementCell): number | null =>
     !cell || !cell.ranked ? null : cell.pct;
-  const placementCache = new Map<string, { at: number; rows: Map<number, PlacementCell> }>();
+  const placementCache = new Map<string, { at: number; rows: Map<number, PlacementCell>; problem: string | null }>();
 
   app.get("/api/manager-dashboard", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
@@ -14871,12 +14871,18 @@ ${note}` : daysLine;
       // keeps paying instead of quietly becoming a penalty. Every rule lives in
       // server/transfer-priority.ts; this only feeds it rows.
       const placementByUser = new Map<number, PlacementCell>();
+      // Null when the investment ladder resolved (or the input is off). Otherwise
+      // the module's own problem sentence — stamped onto every leaderboard row
+      // and the range block as `placementRoutingProblem` so the Placed hover
+      // can name what failed without sending the manager to Railway logs.
+      let placementRoutingProblem: string | null = null;
       const placementOrg = currentOrgId() ?? 1;
       const placementKey = `${placementOrg}|${startDate}|${endDate}`;
       const placementHit = placementCache.get(placementKey);
       const placementFresh = !!placementHit && Date.now() - placementHit.at < PLACEMENT_CACHE_TTL_MS;
       if (placementHit && placementFresh) {
         placementHit.rows.forEach((v, k) => placementByUser.set(k, v));
+        placementRoutingProblem = placementHit.problem ?? null;
       } else try {
         // THE RECIPIENTS ARE COUNTED OVER A RUN-UP AS WELL AS THE RANGE, and
         // that is the one thing about this query that is load-bearing.
@@ -14995,6 +15001,17 @@ ${note}` : daysLine;
           receiving: false,
         }));
         const placementRecipients = [...placementLos, ...placementLoas];
+        // Soft-deleted assistants (active=0) are NOT destinations and are not
+        // admitted to the routing keys — but when a sought first name matches
+        // nobody active, knowing an inactive row still answers to that name is
+        // the difference between "renamed past recognition" and "somebody
+        // deactivated the LOA". Queried for the problem sentence only.
+        const inactivePlacementLoas = (sqlite.prepare(
+          `SELECT a.full_name AS name
+             FROM loan_officer_assistants a
+             JOIN loan_officers lo ON lo.id = a.lo_id
+            WHERE a.active = 0 AND lo.org_id = ?`,
+        ).all(placementOrg) as any[]).map((r: any) => ({ name: String(r.name ?? "") }));
         // The routing requirement, resolved from the ROSTER: the ids of the
         // three assistants an investment property was required to reach, and the
         // one loan officer's desk all three of them sit at. Their first names
@@ -15022,12 +15039,20 @@ ${note}` : daysLine;
         // there is no second answer here that could disagree with the one the
         // numbers were built from.
         const investmentRouting = INVESTMENT_PROPERTY_INPUT_AVAILABLE
-          ? resolveInvestmentRouting(placementRecipients)
+          ? resolveInvestmentRouting(placementRecipients, { inactiveAssistants: inactivePlacementLoas })
           : null;
+        // Travels on every leaderboard row and on the range block so the Placed
+        // hover can name the concrete failure without a second round-trip, and
+        // so a manager reading one CLR's cell sees the same sentence the log has.
+        placementRoutingProblem = investmentRouting?.problem ?? null;
         if (investmentRouting && !investmentRouting.keys) {
+          const activeFirsts = placementLoas
+            .map((r) => String(r.name ?? "").trim().split(/\s+/)[0])
+            .filter(Boolean);
           console.warn(
             "[manager-dashboard] investment routing not scored: " +
-            (investmentRouting.problem ?? "the roster resolves none of the named assistants"),
+            (investmentRouting.problem ?? "the roster resolves none of the named assistants") +
+            `; active LOA first names: ${activeFirsts.length ? activeFirsts.join(", ") : "(none)"}`,
           );
         }
         // EVERY transfer in the range, deliberately including the CLRs the
@@ -15115,7 +15140,7 @@ ${note}` : daysLine;
         placementCache.forEach((v, k) => {
           if (cachedAt - v.at >= PLACEMENT_CACHE_TTL_MS) placementCache.delete(k);
         });
-        placementCache.set(placementKey, { at: cachedAt, rows: cached });
+        placementCache.set(placementKey, { at: cachedAt, rows: cached, problem: placementRoutingProblem });
       } catch (e: any) {
         // Context, never a reason to fail the dashboard — the same bargain the
         // write-up scan above makes.
@@ -15260,6 +15285,11 @@ ${note}` : daysLine;
             // roster could not resolve it. Non-zero keeps the "routing rule
             // off" cell note; the score above still shows ordinary placement.
             placementUnscored: placementByUser.get(u.id)?.investmentUnscored ?? 0,
+            // The module's own problem sentence when the ladder could not
+            // resolve, or null when it did. Same value on every row of the
+            // range — a roster fact, not a CLR fact — so the Placed hover can
+            // name it without a range-level prop.
+            placementRoutingProblem,
           };
         })
         .sort((a: any, b: any) => b.transfers - a.transfers || b.calls - a.calls);
@@ -15440,7 +15470,7 @@ ${note}` : daysLine;
           .slice(0, 8);
       } catch (e) { /* phone_number column may not exist on older DBs */ }
 
-      return { trend, clrTrend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, textTransfersTotal, heatmap, callsHeatmap, topStates, statesDiagnostics };
+      return { trend, clrTrend, outcomeBreakdown, fellThroughReasons, topLos, leaderboard, textTransfersTotal, heatmap, callsHeatmap, topStates, statesDiagnostics, placementRoutingProblem };
     }
 
     const byRange: Record<string, any> = {};

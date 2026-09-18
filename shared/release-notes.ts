@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.14",
+    headline: "Manager Placed hover names why investment routing is off.",
+    items: [
+      { text: "On the Manager Transfer Scorecard, when MTD Placed notes \"routing rule off\", the hover now shows the concrete roster reason (for example, no active assistant named Mateo) instead of only pointing at server logs.", audience: "manager" },
+      { text: "When Justin, John, or Mateo is missing as active but still exists inactive on the roster, that reason says so — so soft-delete is not mistaken for a rename.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.13",
     headline: "Shotgun Dialpad opens reliably after you verify — even on phones.",
     items: [
