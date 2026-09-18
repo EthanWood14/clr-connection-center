@@ -95,34 +95,75 @@ test("cancellation closes the blank reservation once and can never launch later"
   assert.equal(deniedLaunch.open(), false);
 });
 
-test("blocked, closed and throwing popup paths return false for an explicit retry link", () => {
-  for (const opener of [() => null, () => { throw new Error("blocked"); }]) {
-    const launch = reserveDialpadLaunch("9495550100", opener);
-    assert.equal(launch.url, dialpadCallUrl("9495550100"));
-    assert.equal(launch.open(), false); assert.equal(launch.open(), false);
+test("blocked, closed and throwing popup paths fall back to window.open once, then settle", () => {
+  const fallbackCalls: unknown[][] = [];
+  const fallbackPopup = popupFixture();
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    open: (...args: unknown[]) => { fallbackCalls.push(args); return fallbackPopup.open(); },
+  } });
+  try {
+    for (const opener of [() => null, () => { throw new Error("blocked"); }]) {
+      fallbackCalls.length = 0;
+      const launch = reserveDialpadLaunch("9495550100", opener);
+      assert.equal(launch.url, dialpadCallUrl("9495550100"));
+      assert.equal(launch.open(), true, "direct window.open fallback must succeed when blank reservation failed");
+      assert.deepEqual(fallbackCalls, [[dialpadCallUrl("9495550100"), "_blank"]]);
+      assert.equal(launch.open(), false, "a settled success is not silently retried");
+    }
+    fallbackCalls.length = 0;
+    const closed = popupFixture(), closedLaunch = reserveDialpadLaunch("9495550100", closed.open);
+    closed.popup.closed = true;
+    assert.equal(closedLaunch.open(), true);
+    assert.deepEqual(fallbackCalls, [[dialpadCallUrl("9495550100"), "_blank"]]);
+    assert.deepEqual(closed.navigations, [], "closed blank must not be navigated");
+    closed.popup.closed = false;
+    assert.equal(closedLaunch.open(), false, "a settled success is not silently retried");
+
+    fallbackCalls.length = 0;
+    const throws = popupFixture({ navigationThrows: true }), throwingLaunch = reserveDialpadLaunch("9495550100", throws.open);
+    assert.equal(throwingLaunch.open(), true, "navigation failure still falls back to a fresh window.open");
+    assert.deepEqual(throws.events, ["reserve", "navigate", "close"]);
+    assert.deepEqual(throws.navigations, []);
+    assert.deepEqual(fallbackCalls, [[dialpadCallUrl("9495550100"), "_blank"]]);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
   }
-  const closed = popupFixture(), closedLaunch = reserveDialpadLaunch("9495550100", closed.open);
-  closed.popup.closed = true;
-  assert.equal(closedLaunch.open(), false);
-  closed.popup.closed = false;
-  assert.equal(closedLaunch.open(), false, "a settled failure is not silently retried");
-  assert.deepEqual(closed.navigations, []);
-  const throws = popupFixture({ navigationThrows: true }), throwingLaunch = reserveDialpadLaunch("9495550100", throws.open);
-  assert.equal(throwingLaunch.open(), false);
-  assert.deepEqual(throws.events, ["reserve", "navigate", "close"]);
-  assert.deepEqual(throws.navigations, []);
+});
+
+test("when the fallback window.open is also blocked, open returns false for the toast retry link", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    open: () => null,
+  } });
+  try {
+    const launch = reserveDialpadLaunch("9495550100", () => null);
+    assert.equal(launch.open(), false);
+    assert.equal(launch.open(), false);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
 test("popup preparation errors close the reservation without navigating", () => {
-  for (const field of ["opener", "document"] as const) {
-    const fixture = popupFixture();
-    Object.defineProperty(fixture.popup, field, field === "opener"
-      ? { set() { throw new Error("opener denied"); } }
-      : { get() { throw new Error("document denied"); } });
-    const launch = reserveDialpadLaunch("9495550100", fixture.open);
-    assert.equal(launch.open(), false);
-    assert.deepEqual(fixture.navigations, []);
-    assert.deepEqual(fixture.events, ["reserve", "close"]);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { open: () => null } });
+  try {
+    for (const field of ["opener", "document"] as const) {
+      const fixture = popupFixture();
+      Object.defineProperty(fixture.popup, field, field === "opener"
+        ? { set() { throw new Error("opener denied"); } }
+        : { get() { throw new Error("document denied"); } });
+      const launch = reserveDialpadLaunch("9495550100", fixture.open);
+      assert.equal(launch.open(), false);
+      assert.deepEqual(fixture.navigations, []);
+      assert.deepEqual(fixture.events, ["reserve", "close"]);
+    }
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
   }
 });
 
@@ -183,10 +224,17 @@ function handlerFixture(component: typeof components[number], invalidPhone = fal
 
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 
-test("all call buttons reserve synchronously but complete only after their server check succeeds", async () => {
+test("claim-then-dial buttons complete only after ownership succeeds; already-claimed open-phone completes in the click", async () => {
   for (const component of components) {
     const fixture = handlerFixture(component);
     fixture.handler();
+    if (component.mutation === "openPhone") {
+      // Claimed-lead verify path: Dialpad opens immediately; open-phone audit is best-effort.
+      assert.deepEqual(fixture.events, ["reserve", "complete", "server-check"]);
+      fixture.accept(); await settle();
+      assert.deepEqual(fixture.events, ["reserve", "complete", "server-check"]);
+      continue;
+    }
     assert.deepEqual(fixture.events, ["reserve", "server-check"]);
     await settle();
     assert.deepEqual(fixture.events, ["reserve", "server-check"], "no external launch while ownership/compliance is unresolved");
@@ -201,7 +249,15 @@ test("all call buttons reserve synchronously but complete only after their serve
 test("rejected claims, confirms and compliance checks cancel without completing", async () => {
   for (const component of components) {
     const fixture = handlerFixture(component);
-    fixture.handler(); fixture.reject(new Error("lead moved or compliance failed")); await settle();
+    fixture.handler();
+    if (component.mutation === "openPhone") {
+      // Already completed in the click; a failed open-phone audit must not cancel Dialpad.
+      assert.deepEqual(fixture.events, ["reserve", "complete", "server-check"]);
+      fixture.reject(new Error("audit failed")); await settle();
+      assert.deepEqual(fixture.events, ["reserve", "complete", "server-check"]);
+      continue;
+    }
+    fixture.reject(new Error("lead moved or compliance failed")); await settle();
     assert.deepEqual(fixture.events, ["reserve", "server-check", "cancel"]);
   }
 });
@@ -250,6 +306,15 @@ test("a late successful server response after dock unmount never opens Dialpad",
   for (const component of components) {
     const hook = hookFixture(), fixture = handlerFixture(component, false, hook.prepare);
     fixture.handler();
+    if (component.mutation === "openPhone") {
+      // Already-claimed path completes in the click, before any unmount can cancel it.
+      assert.deepEqual(hook.events, ["reserve:1", "open:1"], component.handler);
+      hook.unmount();
+      fixture.accept(); await settle();
+      assert.deepEqual(hook.events, ["reserve:1", "open:1", "dismiss:1"], component.handler);
+      assert.equal(hook.prepare("9495550100"), null, "stale closures cannot reserve another phone tab");
+      continue;
+    }
     assert.deepEqual(hook.events, ["reserve:1"]);
     hook.unmount();
     fixture.accept(); await settle();
@@ -284,3 +349,15 @@ test("retry UI is explicit and secure; affected components never silently fall b
     assert.match(source, /const prepareDialpadCall = useDialpadCall\(\)/);
   }
 });
+
+test("Dialpad launch fallback is wired in reserveDialpadLaunch.open and toast sits above Shotgun docks", () => {
+  const launch = read("client/src/lib/dialpad-launch.ts");
+  assert.match(launch, /window\.open\(url, "_blank"\)/);
+  assert.match(launch, /Reserved blank gone or navigation failed/);
+  const toast = read("client/src/components/ui/toast.tsx");
+  assert.match(toast, /z-\[200\]/, "Dialpad success/failure toasts must clear Shotgun docks (z-45) and bottom nav (z-50)");
+  const resultCard = read("client/src/components/shotgun-result-card.tsx");
+  assert.match(resultCard, /dialpad\.complete\(\);\s*void openPhone\.mutateAsync\(\)\.catch/);
+  assert.doesNotMatch(resultCard, /openPhone\.mutateAsync\(\)\.then\(\(\) => dialpad\.complete\(\)\)/);
+});
+

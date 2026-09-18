@@ -46,12 +46,17 @@ export function ShotgunCallLeadButton({ lead }: { lead: ShotgunLead }) {
   const prohibited = callStatus.status === "prohibited";
   const openPhone = useMutation({
     mutationFn: () => apiRequest("POST", `/api/shotgun/${lead.id}/open-phone`, {}),
-    onError: (error: any) => toast({ title: "Could not open Dialpad", description: error.message, variant: "destructive" }),
+    // Ownership is already claimed; open-phone is audit-only. Soft toast if the
+    // audit fails after Dialpad has already been launched in the click gesture.
+    onError: (error: any) => toast({ title: "Dialpad opened — C3 could not record the call attempt", description: error.message, variant: "destructive" }),
   });
   const callVerifiedLead = () => {
     const dialpad = prepareDialpadCall(lead.phone);
     if (!dialpad) return;
-    void openPhone.mutateAsync().then(() => dialpad.complete()).catch(() => dialpad.cancel());
+    // Complete in the click gesture so mobile cannot close the reserved blank
+    // tab during the open-phone round-trip. Audit is best-effort afterward.
+    dialpad.complete();
+    void openPhone.mutateAsync().catch(() => {});
   };
   if (!lead.phone) return null;
   return (

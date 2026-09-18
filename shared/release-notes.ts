@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.13",
+    headline: "Shotgun Dialpad opens reliably after you verify — even on phones.",
+    items: [
+      { text: "Verified — open Dialpad on a claimed lead opens Dialpad in the same tap (the open-phone audit still runs in the background), so the launch tab is not closed mid-request on mobile.", audience: "everyone" },
+      { text: "If the browser closed the waiting Dialpad tab during confirm / Grab back / bounceback, C3 retries opening Dialpad once and keeps the Open Dialpad toast above Shotgun docks and the bottom nav.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.12",
     headline: "Call any Shotgun lead number in Dialpad from every Shotgun surface.",
     items: [
