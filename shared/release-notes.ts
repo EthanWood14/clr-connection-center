@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.8",
+    headline: "Transfer Scorecard emails now label the separate helper section Other CLRs.",
+    items: [
+      { text: "The separate Transfer Scorecard email section is now labeled Other CLRs.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.7",
     headline: "Elleine appears in her own bottom category on Transfer Scorecard emails.",
     items: [

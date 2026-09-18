@@ -267,7 +267,7 @@ test("digest HTML puts helpers in their own bottom section while keeping team to
     row("Elleine Asuncion", 40, 8, 1, 2),
     row("Matthew Rosas", 50, 5, 0, 1),
   ], { helperAssisted: { name: "Elleine", count: 4 } });
-  const helperIndex = html.indexOf(">Helper</p>");
+  const helperIndex = html.indexOf(">Other CLRs</p>");
   assert.ok(helperIndex > html.indexOf("Matthew Rosas"), "helper section is below the CLR table");
   assert.ok(html.indexOf("Matthew Rosas") < helperIndex, "Matthew remains in the ranked CLR table");
   assert.ok(html.indexOf("Elleine Asuncion", helperIndex) > helperIndex, "Elleine is shown in the helper section");
@@ -284,7 +284,7 @@ test("configured helper names are separated from CLR ranking", () => {
     row("Pat Helper", 30, 9, 2),
     row("Regular CLR", 20, 1, 0),
   ], { helperName: "Pat" });
-  const helperIndex = html.indexOf(">Helper</p>");
+  const helperIndex = html.indexOf(">Other CLRs</p>");
   assert.ok(helperIndex > html.indexOf("Regular CLR"));
   assert.ok(html.indexOf("Pat Helper", helperIndex) > helperIndex);
   assert.ok(html.indexOf("Pat Helper") > helperIndex, "configured helper is not ranked with CLRs");

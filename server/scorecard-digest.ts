@@ -133,7 +133,7 @@ export function buildScorecardDigestHtml(
     </tr>`).join("");
 
   const helperSection = helperRows.length ? `
-    <p style="margin:16px 0 6px;font-size:13px;font-weight:700;color:#1A2B4A">Helper</p>
+    <p style="margin:16px 0 6px;font-size:13px;font-weight:700;color:#1A2B4A">Other CLRs</p>
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
       <thead><tr style="background:#f8fafc">
         <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">Name</th>
