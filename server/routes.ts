@@ -13908,11 +13908,11 @@ ${note}` : daysLine;
   // with unreadable records, and a tooltip that breaks a number down without
   // them cannot be reconciled with the number above it.
   //
-  // `investmentUnscored` is the case where the rule did not run at all. Those
-  // transfers were required to reach the busiest desk on the floor, so reading
-  // them as ordinary placement scores perfect compliance at 0 — a confident red
-  // cell that is an artefact of a roster problem. The column shows a dash and
-  // the reason instead, which is what this count is for.
+  // `investmentUnscored` is the case where the rule did not run at all (roster
+  // could not resolve Justin/Mateo/John under one shared LO desk). Those
+  // transfers still fall through into ordinary placement scoring in the module;
+  // the count is kept so the cell can note "routing rule off" without blanking
+  // a share the floor already earned on the ordinary mean.
   type PlacementCell = {
     pct: number | null; scored: number; ranked: boolean;
     investment: number; breaches: number;
@@ -13922,13 +13922,13 @@ ${note}` : daysLine;
   /**
    * The percentage the Placed column may print, or null for a dash.
    *
-   * Two suppressions, both of them the same bargain: a number nobody earned is
-   * worse than no number. `ranked` is the module's minimum-sample rule, and
-   * `investmentUnscored` is the routing rule having been switched off by a
-   * roster it could not resolve — see PlacementCell above.
+   * Suppression is only the module's minimum-sample rule (`ranked`). When the
+   * investment routing ladder cannot resolve, `investmentUnscored` stays > 0 so
+   * the UI can note "routing rule off", but the ordinary/scored mean is still
+   * shown — those transfers were scored as placement, not hidden.
    */
   const placementPct = (cell?: PlacementCell): number | null =>
-    !cell || !cell.ranked || cell.investmentUnscored > 0 ? null : cell.pct;
+    !cell || !cell.ranked ? null : cell.pct;
   const placementCache = new Map<string, { at: number; rows: Map<number, PlacementCell> }>();
 
   app.get("/api/manager-dashboard", requireAuth, async (req: any, res) => {
@@ -14950,13 +14950,12 @@ ${note}` : daysLine;
             // null when they logged no transfers in the range — nothing to
             // measure is not the same as measured badly.
             writeUpPct: writeUpByUser.has(u.id) ? writeUpByUser.get(u.id) : null,
-            // The same bargain for placement, three times over: null when
-            // nothing they sent could be read, because "we cannot say" is not
-            // "you placed badly"; null again when too few of their transfers
-            // could be read to judge, because a share of two is not a verdict;
-            // and null once more when the investment routing rule could not run,
-            // because a red 0% that is really a roster problem is the sharpest
-            // lie this column could tell. All three live in placementPct.
+            // The same bargain for placement, twice over: null when nothing
+            // they sent could be read, because "we cannot say" is not "you
+            // placed badly"; null again when too few of their transfers could
+            // be read to judge, because a share of two is not a verdict. When
+            // the investment routing rule could not run, the share still shows
+            // (ordinary placement); placementUnscored carries the note.
             placementScore: placementPct(placementByUser.get(u.id)),
             // How many of their transfers this stat could actually read, and
             // how many it needs, so the cell can explain a dash instead of
@@ -14982,8 +14981,8 @@ ${note}` : daysLine;
             placementUnplaced: placementByUser.get(u.id)?.unplaced ?? 0,
             placementUnplacedValuedAt: placementByUser.get(u.id)?.unplacedValuedAt ?? null,
             // Flagged transfers the routing rule never judged, because the
-            // roster could not resolve it. Non-zero is why the score above is a
-            // dash, and the cell says which of the reasons it was.
+            // roster could not resolve it. Non-zero keeps the "routing rule
+            // off" cell note; the score above still shows ordinary placement.
             placementUnscored: placementByUser.get(u.id)?.investmentUnscored ?? 0,
           };
         })
