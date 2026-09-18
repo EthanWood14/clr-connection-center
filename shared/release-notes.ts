@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.6",
+    headline: "Elleine's transfers show on bi-hourly Transfer Scorecard emails.",
+    items: [
+      { text: "Bi-hourly (and midweek/end-of-week) Transfer Scorecard emails now include Elleine as a ranked row with her normal transfer credit, even though she stays off TV race, tournament, and manager MTD boards.", audience: "manager" },
+      { text: "Those emails also note how many transfers she assisted on in the window (helper-assisted count from Input Results).", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.4",
     headline: "Office TV Play race is 4× faster, by the minute, without the transfer camera sweep.",
     items: [

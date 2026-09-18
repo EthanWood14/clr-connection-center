@@ -34,6 +34,37 @@ export type ScorecardRow = {
   fellThrough: number;
 };
 
+export type ScorecardDigestHelperAssisted = {
+  /** Display name from email_settings.helper_name (default Elleine). */
+  name: string;
+  /** lead_outcomes rows in the window with helper_assisted=1. */
+  count: number;
+};
+
+/**
+ * Elleine (and whoever currently sits in the configured helper seat) still
+ * belongs on the emailed Transfer Scorecard even when exclude_from_stats is
+ * set. TV race, tournament, and manager MTD boards keep excluding her — only
+ * this digest path opts her back in.
+ *
+ * Match either the hard-coded Elleine whole-word (historical seat) or the
+ * resolved helper user id / configured helper name.
+ */
+export function isScorecardDigestHelperException(
+  name: string,
+  opts?: { userId?: number; helperUserId?: number | null; helperName?: string },
+): boolean {
+  if (/\belleine\b/i.test(name)) return true;
+  const helperUserId = opts?.helperUserId;
+  const userId = opts?.userId;
+  if (helperUserId != null && userId != null && Number(helperUserId) === Number(userId)) return true;
+  const helperName = String(opts?.helperName ?? "").trim();
+  if (!helperName) return false;
+  // Whole-word on the helper setting so "Elle" cannot claim "Elleine".
+  const escaped = helperName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(name);
+}
+
 /** Monday of the week containing `date` (ISO YYYY-MM-DD, weeks start Monday). */
 export function mondayOf(date: string): string {
   const dow = new Date(`${date}T12:00:00Z`).getUTCDay(); // 0=Sun
@@ -64,7 +95,12 @@ export function rankScorecardRows(rows: ScorecardRow[]): ScorecardRow[] {
 const esc = (v: unknown) =>
   String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export function buildScorecardDigestHtml(windowLabel: string, dateLabel: string, rows: ScorecardRow[]): string {
+export function buildScorecardDigestHtml(
+  windowLabel: string,
+  dateLabel: string,
+  rows: ScorecardRow[],
+  extras?: { helperAssisted?: ScorecardDigestHelperAssisted },
+): string {
   const ranked = rankScorecardRows(rows);
   const tot = (f: keyof Omit<ScorecardRow, "name">) => ranked.reduce((s, r) => s + r[f], 0);
   const pct = (r: { transfers: number; calls: number }) =>
@@ -80,6 +116,12 @@ export function buildScorecardDigestHtml(windowLabel: string, dateLabel: string,
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#dc2626">${r.fellThrough}</td>
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#64748b">${pct(r)}</td>
     </tr>`).join("");
+
+  const assisted = extras?.helperAssisted;
+  const assistedLine = assisted
+    ? `
+    <p style="margin:12px 0 0;font-size:12px;color:#64748b">${esc(assisted.name)} assisted: ${Number(assisted.count) || 0}</p>`
+    : "";
 
   return `
     <p style="margin:0 0 4px;font-size:15px;font-weight:600;color:#1A2B4A">Transfer Scorecard — ${esc(windowLabel)}</p>
@@ -104,5 +146,5 @@ export function buildScorecardDigestHtml(windowLabel: string, dateLabel: string,
         <td style="padding:8px 12px;font-size:13px;text-align:center">${tot("fellThrough")}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center">${pct({ transfers: tot("transfers"), calls: tot("calls") })}</td>
       </tr></tfoot>
-    </table>`;
+    </table>${assistedLine}`;
 }
