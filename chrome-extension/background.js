@@ -57,4 +57,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }).then(sendResponse);
     return true;
   }
+  // Prospects / conversations opened in Bonzo (unique per CLR per day).
+  if (msg && msg.type === "c3shotgun.view" && msg.event) {
+    c3("/api/bonzo-views", {
+      method: "POST",
+      body: JSON.stringify({ events: [msg.event] }),
+    }).then(sendResponse);
+    return true;
+  }
 });

@@ -123,6 +123,7 @@ type RangeBlock = {
     transfers: number; textTransfers?: number; appointments: number; fellThrough: number;
     totalOutcomes: number; calls: number; messages: number; dialpadTexts?: number; conversionRate: number;
     callToolsContacts?: number; callToolsConversations?: number; callToolsActiveSeconds?: number;
+    bonzoCalls?: number; bonzoContacts?: number; bonzoConversations?: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
     shotgunOffers?: number; shotgunAccepted?: number; shotgunResponded?: number;
@@ -443,9 +444,12 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     { key: "calls",        label: "Calls",     get: r => r.calls ?? 0,             better: true,  fmt: r => String(r.calls ?? 0) },
     { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
     { key: "dialpadTexts", label: "DP Texts",  get: r => r.dialpadTexts ?? 0,      better: true,  fmt: r => String(r.dialpadTexts ?? 0) },
-    { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0) },
-    { key: "conversations", label: "Convos", get: r => r.callToolsConversations ?? 0, better: true, fmt: r => String(r.callToolsConversations ?? 0) },
-    { key: "activeTime", label: "Active", get: r => r.callToolsActiveSeconds ?? 0, better: true, fmt: r => `${Math.floor((r.callToolsActiveSeconds ?? 0) / 3600)}h ${Math.floor(((r.callToolsActiveSeconds ?? 0) % 3600) / 60)}m` },
+    { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0), title: "Dialpad Call Tools contacts" },
+    { key: "conversations", label: "Convos", get: r => r.callToolsConversations ?? 0, better: true, fmt: r => String(r.callToolsConversations ?? 0), title: "Dialpad Call Tools conversations" },
+    { key: "activeTime", label: "Active", get: r => r.callToolsActiveSeconds ?? 0, better: true, fmt: r => `${Math.floor((r.callToolsActiveSeconds ?? 0) / 3600)}h ${Math.floor(((r.callToolsActiveSeconds ?? 0) % 3600) / 60)}m`, title: "Dialpad Call Tools active time" },
+    { key: "bonzoCalls", label: "Bonzo Calls", get: r => r.bonzoCalls ?? 0, better: true, fmt: r => String(r.bonzoCalls ?? 0), title: "Calls placed inside Bonzo (C3 extension)" },
+    { key: "bonzoContacts", label: "Bonzo Contacts", get: r => r.bonzoContacts ?? 0, better: true, fmt: r => String(r.bonzoContacts ?? 0), title: "Unique Bonzo prospects opened (C3 extension)" },
+    { key: "bonzoConversations", label: "Bonzo Convos", get: r => r.bonzoConversations ?? 0, better: true, fmt: r => String(r.bonzoConversations ?? 0), title: "Unique Bonzo conversations opened (C3 extension)" },
     // Transfer CREDIT — half a transfer each when a shotgun lead is published by
     // one CLR and closed by another — so this cell can legitimately read 4.5 and
     // must never be rounded to a whole. See shared/transfer-credit.ts.

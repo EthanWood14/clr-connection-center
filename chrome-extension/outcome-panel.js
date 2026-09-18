@@ -1,4 +1,4 @@
-// Isolated-world script: the "Log result in C3" panel on a Bonzo prospect.
+// Isolated-world script: step-through "Log result in C3" wizard on a Bonzo prospect.
 //
 // Everything Input Results asks — the result, the loan officer, the lead
 // source, the qualification questions and the lead card — asked here, on the
@@ -69,7 +69,7 @@
       display: "flex", flexDirection: "column", font,
     });
     const head = el("div", { padding: "14px 16px", background: "linear-gradient(180deg,#0ea5e9,#0284c7)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between" });
-    head.appendChild(el("div", { font: "800 15px/1.2 system-ui, sans-serif" }, "📋 Log result in C3"));
+    head.appendChild(el("div", { font: "800 15px/1.2 system-ui, sans-serif" }, "📋 Log result — step by step"));
     const x = el("button", { border: "none", background: "rgba(255,255,255,.15)", color: "#fff", borderRadius: "999px", width: "28px", height: "28px", cursor: "pointer", font: "700 14px/1 system-ui" }, "✕");
     x.type = "button"; x.onclick = close; head.appendChild(x);
     root.appendChild(head);
@@ -101,62 +101,76 @@
     const who = (f && (f.fullName || [f.firstName, f.lastName].filter(Boolean).join(" "))) || "this prospect";
 
     body.appendChild(el("div", { font: "800 16px/1.2 system-ui, sans-serif", marginBottom: "2px" }, who));
-    body.appendChild(el("div", { color: "#64748b", fontSize: "12px" }, [f && f.phone, f && f.state].filter(Boolean).join(" · ") || `Bonzo prospect ${ctx.prospectId}`));
-    body.appendChild(el("div", { color: "#64748b", fontSize: "11px", marginTop: "2px" }, `Logged as ${o.me.name || "you"} for ${o.date}`));
+    body.appendChild(el("div", { color: "#64748b", fontSize: "12px" }, [f && f.phone, f && f.state].filter(Boolean).join(" · ") || ("Bonzo prospect " + ctx.prospectId)));
+    body.appendChild(el("div", { color: "#64748b", fontSize: "11px", marginTop: "2px" }, "Logged as " + (o.me.name || "you") + " for " + o.date));
 
-    // Result
-    body.appendChild(label("Result"));
-    body.appendChild(pillGroup(values, "outcomeType", o.outcomeTypes.map((t) => t.value), o.outcomeTypes.map((t) => t.label)));
+    const progress = el("div", { display: "flex", gap: "3px", margin: "12px 0 6px" });
+    body.appendChild(progress);
+    const stepLabel = el("div", { font: "700 12px/1.2 system-ui, sans-serif", color: "#0369a1", marginBottom: "8px" });
+    body.appendChild(stepLabel);
+
+    const steps = [];
+    const mkStep = (title, when) => {
+      const s = el("div", { display: "none" });
+      s.dataset.title = title;
+      if (when) s.dataset.when = when;
+      steps.push(s);
+      body.appendChild(s);
+      return s;
+    };
+
+    const sResult = mkStep("Result");
+    sResult.appendChild(label("Result"));
+    sResult.appendChild(pillGroup(values, "outcomeType", o.outcomeTypes.map((t) => t.value), o.outcomeTypes.map((t) => t.label)));
     const transferWrap = el("div");
     transferWrap.appendChild(label("Transfer type"));
     transferWrap.appendChild(pillGroup(values, "transferType", o.transferTypes.map((t) => t.value), o.transferTypes.map((t) => t.label)));
-    body.appendChild(transferWrap);
+    sResult.appendChild(transferWrap);
     const apptWrap = el("div");
     apptWrap.appendChild(label("Appointment date & time"));
     const appt = input("appointmentDatetime", { type: "datetime-local" });
     appt.oninput = () => { values.appointmentDatetime = appt.value; };
     apptWrap.appendChild(appt);
-    body.appendChild(apptWrap);
+    sResult.appendChild(apptWrap);
 
-    // Loan officer — today's assigned first, then everyone.
-    body.appendChild(label("Loan officer"));
+    const sLo = mkStep("Loan officer");
+    sLo.appendChild(label("Loan officer"));
     const lo = el("select", { width: "100%", padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: "8px", font, background: "#fff" });
     const none = el("option", null, "— pick the loan officer —"); none.value = ""; lo.appendChild(none);
     o.los.forEach((l) => { const op = el("option", null, (l.assignedToday ? "★ " : "") + l.name); op.value = String(l.id); lo.appendChild(op); });
     lo.onchange = () => { values.loId = lo.value; };
-    body.appendChild(lo);
+    sLo.appendChild(lo);
 
-    // Lead source
-    body.appendChild(label("Lead source"));
-    body.appendChild(pillGroup(capture, "leadSource", [...o.leadSources, "other"], [...o.leadSources, "Other…"]));
+    const sSource = mkStep("Lead source", "card");
+    sSource.appendChild(label("Lead source"));
+    sSource.appendChild(pillGroup(capture, "leadSource", [...o.leadSources, "other"], [...o.leadSources, "Other…"]));
     const other = input("leadSourceOther", { placeholder: "Which source?" });
     other.style.marginTop = "6px"; other.style.display = "none";
     other.oninput = () => { capture.leadSourceOther = other.value; };
-    body.appendChild(other);
+    sSource.appendChild(other);
 
-    // Qualification
-    const cardWrap = el("div");
-    cardWrap.appendChild(label("Qualification"));
+    const sQual = mkStep("Qualification", "card");
+    sQual.appendChild(label("Qualification"));
     o.qualQuestions.forEach((q) => {
-      cardWrap.appendChild(el("div", { fontSize: "12px", marginTop: "6px" }, q.label + (q.cue ? ` (${q.cue})` : "")));
-      if (q.hint) cardWrap.appendChild(el("div", { fontSize: "11px", color: "#b45309" }, q.hint));
-      cardWrap.appendChild(pillGroup(capture, q.name, ["yes", "no"], ["Yes", "No"]));
+      sQual.appendChild(el("div", { fontSize: "12px", marginTop: "6px" }, q.label + (q.cue ? (" (" + q.cue + ")") : "")));
+      if (q.hint) sQual.appendChild(el("div", { fontSize: "11px", color: "#b45309" }, q.hint));
+      sQual.appendChild(pillGroup(capture, q.name, ["yes", "no"], ["Yes", "No"]));
     });
 
-    // Lead card, by section, with the section toggles.
     const sections = [];
     o.infoFields.forEach((fld) => { if (!sections.includes(fld.section)) sections.push(fld.section); });
     sections.forEach((section) => {
-      cardWrap.appendChild(label(section));
+      const sInfo = mkStep(section, "card");
+      sInfo.appendChild(label(section));
       const toggle = (o.sectionToggles || []).find((t) => t.section === section);
       const fields = o.infoFields.filter((fld) => fld.section === section);
       const holder = el("div");
       if (toggle) {
-        const t = el("label", { display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", margin: "2px 0 6px", cursor: "pointer" });
+        const t = el("label", { display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", margin: "4px 0 10px", cursor: "pointer", padding: "10px 12px", background: "#e2e8f0", borderRadius: "10px", fontWeight: "600" });
         const cb = el("input"); cb.type = "checkbox";
         cb.onchange = () => { capture[toggle.name] = cb.checked ? "yes" : ""; holder.style.display = cb.checked ? "none" : ""; };
-        t.appendChild(cb); t.appendChild(el("span", null, toggle.label));
-        cardWrap.appendChild(t);
+        t.appendChild(cb); t.appendChild(el("span", null, toggle.label + " — skip this section"));
+        sInfo.appendChild(t);
       }
       fields.forEach((fld) => {
         holder.appendChild(el("div", { fontSize: "12px", marginTop: "6px", color: "#334155" }, fld.label));
@@ -175,43 +189,110 @@
           holder.appendChild(n);
         }
       });
-      cardWrap.appendChild(holder);
+      sInfo.appendChild(holder);
     });
-    body.appendChild(cardWrap);
 
-    // Transfer extras
-    const extras = el("div");
-    extras.appendChild(label("Was anyone else part of this transfer?"));
-    extras.appendChild(el("div", { fontSize: "12px", marginTop: "4px" }, "Bulk texter"));
-    extras.appendChild(pillGroup(values, "bulkTexter", ["yes", "no"], ["Yes", "No"]));
-    extras.appendChild(el("div", { fontSize: "12px", marginTop: "6px" }, "Helper assisted (Elleine)"));
-    extras.appendChild(pillGroup(values, "helperAssisted", ["yes", "no"], ["Yes", "No"]));
-    body.appendChild(extras);
+    const sExtras = mkStep("Transfer extras", "transfer");
+    sExtras.appendChild(label("Was anyone else part of this transfer?"));
+    sExtras.appendChild(el("div", { fontSize: "12px", marginTop: "4px" }, "Bulk texter"));
+    sExtras.appendChild(pillGroup(values, "bulkTexter", ["yes", "no"], ["Yes", "No"]));
+    sExtras.appendChild(el("div", { fontSize: "12px", marginTop: "6px" }, "Helper assisted (Elleine)"));
+    sExtras.appendChild(pillGroup(values, "helperAssisted", ["yes", "no"], ["Yes", "No"]));
 
-    // Notes
-    body.appendChild(label("Other notes"));
-    const notes = el("textarea", { width: "100%", boxSizing: "border-box", minHeight: "72px", padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: "8px", font, background: "#fff" });
+    const sNotes = mkStep("Notes");
+    sNotes.appendChild(label("Other notes"));
+    const notes = el("textarea", { width: "100%", boxSizing: "border-box", minHeight: "96px", padding: "8px 10px", border: "1px solid #cbd5e1", borderRadius: "8px", font, background: "#fff" });
     notes.placeholder = "Anything the LO should know that the card doesn't say";
     notes.oninput = () => { values.notes = notes.value; };
-    body.appendChild(notes);
+    sNotes.appendChild(notes);
 
-    // Submit
-    const msg = el("div", { marginTop: "10px", fontSize: "12px", minHeight: "16px" });
-    const submit = el("button", { width: "100%", marginTop: "8px", padding: "12px", border: "none", borderRadius: "10px", background: "linear-gradient(180deg,#22c55e,#16a34a)", color: "#fff", font: "800 14px/1 system-ui, sans-serif", cursor: "pointer" }, "Log it in C3");
+    const sReview = mkStep("Submit");
+    const reviewSummary = el("div", { color: "#334155", fontSize: "13px", marginBottom: "8px" });
+    sReview.appendChild(reviewSummary);
+    const msg = el("div", { marginTop: "8px", fontSize: "12px", minHeight: "16px", color: "#b91c1c" });
+    const submit = el("button", { width: "100%", marginTop: "8px", padding: "12px", border: "none", borderRadius: "10px", background: "linear-gradient(180deg,#22c55e,#16a34a)", color: "#fff", font: "800 14px/1 system-ui, sans-serif", cursor: "pointer", display: "none" }, "Log it in C3");
     submit.type = "button";
-    body.appendChild(msg); body.appendChild(submit);
+    sReview.appendChild(msg); sReview.appendChild(submit);
+
+    const nav = el("div", { display: "flex", gap: "8px", marginTop: "12px", position: "sticky", bottom: "0", background: "#f8fafc", paddingTop: "8px" });
+    const back = el("button", { flex: "1", padding: "11px", border: "1px solid #cbd5e1", borderRadius: "10px", background: "#fff", font: "700 13px/1 system-ui", cursor: "pointer" }, "Back");
+    back.type = "button";
+    const next = el("button", { flex: "2", padding: "11px", border: "none", borderRadius: "10px", background: "linear-gradient(180deg,#0ea5e9,#0284c7)", color: "#fff", font: "800 13px/1 system-ui", cursor: "pointer" }, "Next");
+    next.type = "button";
+    nav.appendChild(back); nav.appendChild(next);
+    body.appendChild(nav);
+
+    let stepIdx = 0;
+
+    const visibleSteps = () => {
+      const t = values.outcomeType;
+      return steps.filter((s) => {
+        const when = s.dataset.when;
+        if (when === "card") return t === "transfer" || t === "appointment";
+        if (when === "transfer") return t === "transfer";
+        return true;
+      });
+    };
+
+    const validate = () => {
+      const list = visibleSteps();
+      const s = list[stepIdx];
+      if (!s) return "Something went wrong.";
+      if (s.dataset.title === "Result") {
+        if (!values.outcomeType) return "Pick a result.";
+        if (values.outcomeType === "transfer" && !values.transferType) return "Direct or appointment transfer?";
+        if (values.outcomeType === "appointment" && !values.appointmentDatetime) return "Set the appointment date and time.";
+      }
+      if (s.dataset.title === "Loan officer" && !values.loId && values.outcomeType !== "appointment") return "Pick the loan officer.";
+      return "";
+    };
 
     const refresh = () => {
       const t = values.outcomeType;
       transferWrap.style.display = t === "transfer" ? "" : "none";
       apptWrap.style.display = t === "appointment" ? "" : "none";
-      cardWrap.style.display = t === "transfer" || t === "appointment" ? "" : "none";
-      extras.style.display = t === "transfer" ? "" : "none";
       other.style.display = capture.leadSource === "other" ? "" : "none";
-      submit.textContent = t === "transfer" ? "Log the transfer in C3" : t ? `Log "${(o.outcomeTypes.find((x) => x.value === t) || {}).label}" in C3` : "Log it in C3";
+      const typeLabel = (o.outcomeTypes.find((x) => x.value === t) || {}).label || t;
+      submit.textContent = t === "transfer" ? "Log the transfer in C3" : t ? ('Log "' + typeLabel + '" in C3') : "Log it in C3";
+      const loRow = (o.los || []).find((l) => String(l.id) === String(values.loId));
+      reviewSummary.textContent = "";
+      reviewSummary.appendChild(el("div", { font: "700 14px/1.3 system-ui", marginBottom: "6px" }, "Ready to log"));
+      reviewSummary.appendChild(el("div", null, "Result: " + (typeLabel || "—")));
+      if (values.transferType) {
+        const tl = (o.transferTypes.find((x) => x.value === values.transferType) || {}).label || values.transferType;
+        reviewSummary.appendChild(el("div", null, "Transfer: " + tl));
+      }
+      if (loRow) reviewSummary.appendChild(el("div", null, "LO: " + loRow.name));
+      if (capture.leadSource) reviewSummary.appendChild(el("div", null, "Source: " + (capture.leadSource === "other" ? (capture.leadSourceOther || "other") : capture.leadSource)));
     };
-    onChange = refresh;
-    refresh();
+
+    const render = () => {
+      const list = visibleSteps();
+      if (stepIdx >= list.length) stepIdx = list.length - 1;
+      if (stepIdx < 0) stepIdx = 0;
+      steps.forEach((s) => { s.style.display = "none"; });
+      const s = list[stepIdx];
+      s.style.display = "";
+      progress.textContent = "";
+      list.forEach((_, i) => {
+        progress.appendChild(el("div", { flex: "1", height: "4px", borderRadius: "2px", background: i <= stepIdx ? "#0284c7" : "#e2e8f0" }));
+      });
+      stepLabel.textContent = "Step " + (stepIdx + 1) + " of " + list.length + " — " + s.dataset.title;
+      back.style.visibility = stepIdx === 0 ? "hidden" : "visible";
+      const last = stepIdx === list.length - 1;
+      next.style.display = last ? "none" : "";
+      submit.style.display = last ? "" : "none";
+      msg.textContent = "";
+      refresh();
+    };
+
+    onChange = () => { refresh(); };
+    back.onclick = () => { stepIdx -= 1; render(); };
+    next.onclick = () => {
+      const err = validate();
+      if (err) { msg.textContent = err; return; }
+      stepIdx += 1; render();
+    };
 
     submit.onclick = async () => {
       msg.style.color = "#b91c1c"; msg.textContent = "";
@@ -228,18 +309,21 @@
         notes: values.notes, bulkTexter: values.bulkTexter || null, helperAssisted: values.helperAssisted || null,
         capture,
       } });
-      submit.disabled = false; refresh();
+      submit.disabled = false; refresh(); render();
       if (!resp) { msg.textContent = "Extension error — reload this tab and try again."; return; }
-      if (!resp.ok) { msg.textContent = (resp.body && resp.body.error) || `C3 error (HTTP ${resp.status || "?"})`; return; }
+      if (!resp.ok) { msg.textContent = (resp.body && resp.body.error) || ("C3 error (HTTP " + (resp.status || "?") + ")"); return; }
       body.textContent = "";
       const c = resp.body.celebration;
       body.appendChild(el("div", { font: "800 20px/1.2 system-ui, sans-serif", marginTop: "24px", textAlign: "center" }, c ? c.headline : "✓ Logged in C3"));
-      body.appendChild(el("div", { textAlign: "center", marginTop: "8px", color: "#334155" }, c ? c.message : `${resp.body.borrowerName}${resp.body.loName ? " → " + resp.body.loName : ""}`));
-      if (c) body.appendChild(el("div", { textAlign: "center", marginTop: "6px", color: "#64748b", fontSize: "12px" }, `${c.dailyTotal} today · ${c.monthlyTotal} this month · #${c.dailyRank} today`));
+      body.appendChild(el("div", { textAlign: "center", marginTop: "8px", color: "#334155" }, c ? c.message : (resp.body.borrowerName + (resp.body.loName ? " → " + resp.body.loName : ""))));
+      if (c) body.appendChild(el("div", { textAlign: "center", marginTop: "6px", color: "#64748b", fontSize: "12px" }, c.dailyTotal + " today · " + c.monthlyTotal + " this month · #" + c.dailyRank + " today"));
       const done = el("button", { display: "block", margin: "20px auto 0", padding: "10px 18px", border: "none", borderRadius: "999px", background: "#0284c7", color: "#fff", font: "700 13px/1 system-ui", cursor: "pointer" }, "Done");
       done.type = "button"; done.onclick = close; body.appendChild(done);
     };
+
+    render();
   }
+
 
   window.addEventListener("c3:open-outcome", (ev) => { open(ev.detail || {}); });
   document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && root) close(); });
