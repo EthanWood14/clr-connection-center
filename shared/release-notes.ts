@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.1",
+    headline: "Markus Wood is prioritized for transfers through Sep 25.",
+    items: [
+      { text: "On boot, Markus Wood is automatically flagged needs-transfers (the state-view pin) for Pacific calendar dates 2026-09-18 through 2026-09-25 — no manager login required.", audience: "everyone" },
+      { text: "After 2026-09-25 Pacific, the next boot clears that timed pin so it does not stick forever. Other loan officers' pins are left alone.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.0",
     headline: "C3 ↔ Bonzo helper: log results, track views, and show Bonzo stats on the scorecard.",
     items: [
