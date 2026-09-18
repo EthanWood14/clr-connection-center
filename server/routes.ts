@@ -138,6 +138,7 @@ import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/
 import {
   ensureHalfDaySchema, ensureSeededHalfDays,
   isHalfDayExcusedFromLate, paceHalfDayContext, parseDayPortionBody,
+  sumDayPortions, sumWorkedDayPortions,
 } from "./half-day";
 import { metaConversion } from "./leadvault-meta-conversion";
 import { foldLoSplitRows, helperNoticeFor, resolveHelperUserId, totalsFor } from "./lo-transfer-split";
@@ -14801,8 +14802,10 @@ ${note}` : daysLine;
       // one number instead of everything.
       let workedDaysByUser = new Map<number, number>();
       try {
+        // Distinct (assistant, day) pairs — then sum day portions so half days
+        // count as 0.5 in Transfers / day worked (not 1.0 or 0).
         const workedRows = sqlite.prepare(`
-          SELECT assistant_id, COUNT(DISTINCT d) AS days FROM (
+          SELECT assistant_id, d FROM (
             SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
             UNION SELECT assistant_id, log_date FROM daily_call_logs WHERE org_id=? AND calls_made>0
             UNION SELECT assistant_id, activity_date FROM callsync_activity_events WHERE org_id=?
@@ -14814,9 +14817,13 @@ ${note}` : daysLine;
             UNION SELECT assistant_id, report_date FROM eod_reports WHERE
               (calls_made>0 OR messages_sent>0 OR additional_conversations>0 OR calltools_conversations>0
                OR calltools_active_seconds>0 OR dialpad_calls>0 OR transfers>0 OR appointments>0)
-          ) WHERE d BETWEEN ? AND ? GROUP BY assistant_id
+          ) WHERE d BETWEEN ? AND ?
         `).all(...Array(7).fill(workOrg), startDate, endDate) as any[];
-        workedDaysByUser = new Map(workedRows.map(r => [Number(r.assistant_id), Number(r.days)]));
+        const halfCtx = paceHalfDayContext(sqlite, workOrg, startDate, endDate);
+        workedDaysByUser = sumWorkedDayPortions(
+          workedRows.map((r) => ({ userId: Number(r.assistant_id), date: String(r.d) })),
+          halfCtx.halfDays,
+        );
       } catch (e: any) {
         console.error("[manager-dashboard] worked-days rollup failed:", e?.message ?? e);
       }
@@ -19961,14 +19968,15 @@ ${note}` : daysLine;
 
     const thisWeek = weekStartOf(today);
     const thisMonth = monthStartOf(today);
+    const halfDays = paceHalfDayContext(db, orgId, from, today).halfDays;
 
     res.json({
       generatedAt: new Date().toISOString(),
       today,
       from,
       helper: { name: helperName, resolved: helperUserId != null, excludedFromTeamFigures: helperUserId != null },
-      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth),
-      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek),
+      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, halfDays),
+      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, halfDays),
       definitions: definitionsFor(helperName, helperUserId != null),
     });
 
@@ -22688,8 +22696,8 @@ ${note}` : daysLine;
     // UNION deduplicates a normal day that appears in several sources. Weekend
     // activity remains visible in stats but does not advance the 20-workday
     // training clock.
-    const activeRows = sqlite.prepare(
-      `SELECT assistant_id, COUNT(*) AS days FROM (
+    const activeDateRows = sqlite.prepare(
+      `SELECT DISTINCT assistant_id, d FROM (
          SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
          UNION
          SELECT assistant_id, log_date AS d FROM daily_call_logs WHERE org_id=? AND calls_made > 0
@@ -22709,26 +22717,44 @@ ${note}` : daysLine;
          UNION
          SELECT user_id AS assistant_id, date(clock_in) AS d FROM time_clock_entries WHERE org_id=?
        )
-       WHERE d IS NOT NULL AND strftime('%w', d) NOT IN ('0', '6')
-       GROUP BY assistant_id`,
+       WHERE d IS NOT NULL AND strftime('%w', d) NOT IN ('0', '6')`,
     ).all(orgId, orgId, orgId, orgId, orgId, orgId, orgId) as any[];
 
     const byId = <T extends { assistant_id: any }>(rows: T[]) =>
       new Map<number, T>(rows.map((r) => [Number(r.assistant_id), r]));
-    const oMap = byId(outcomeRows), cMap = byId(callRows), aMap = byId(activeRows);
+    const oMap = byId(outcomeRows), cMap = byId(callRows);
+    const datesByUser = new Map<number, string[]>();
+    let earliest = "9999-12-31";
+    let latest = "0000-01-01";
+    for (const row of activeDateRows) {
+      const id = Number(row.assistant_id);
+      const d = String(row.d);
+      if (!Number.isFinite(id) || !d) continue;
+      (datesByUser.get(id) ?? datesByUser.set(id, []).get(id)!).push(d);
+      if (d < earliest) earliest = d;
+      if (d > latest) latest = d;
+    }
+    const halfDays = (earliest <= latest)
+      ? paceHalfDayContext(sqlite, orgId, earliest, latest).halfDays
+      : new Set<string>();
     const minIso = (a: string | null, b: string | null) => (a && b ? (a < b ? a : b) : a || b);
     const maxIso = (a: string | null, b: string | null) => (a && b ? (a > b ? a : b) : a || b);
 
     return roster.map((u: any): ClrTotals => {
-      const o = oMap.get(Number(u.id)) as any, c = cMap.get(Number(u.id)) as any;
+      const id = Number(u.id);
+      const o = oMap.get(id) as any, c = cMap.get(id) as any;
+      const dates = datesByUser.get(id) ?? [];
       return {
-        userId: Number(u.id),
+        userId: id,
         name: String(u.name ?? ""),
         calls: Number(c?.calls) || 0,
         transfers: Number(o?.transfers) || 0,
         appointments: Number(o?.appointments) || 0,
         fellThrough: Number(o?.fell_through) || 0,
-        activeDays: Number((aMap.get(Number(u.id)) as any)?.days) || 0,
+        // Distinct weekdays for the training clock / sample size.
+        activeDays: dates.length,
+        // Transfers/day denominator: half days count as 0.5.
+        workedDays: sumDayPortions(id, dates, halfDays),
         firstDay: minIso(o?.first_day ?? null, c?.first_day ?? null),
         lastDay: maxIso(o?.last_day ?? null, c?.last_day ?? null),
       };
@@ -22812,6 +22838,17 @@ ${note}` : daysLine;
       const set = trainerByUser.get(id) ?? trainerByUser.set(id, new Set()).get(id)!;
       try { for (const d of JSON.parse(row.training_dates)) if (typeof d === "string") set.add(d); } catch { /* malformed row claims nothing */ }
     }
+    let earliest = "9999-12-31";
+    let latest = "0000-01-01";
+    activeByUser.forEach((dates) => {
+      for (const d of dates) {
+        if (d < earliest) earliest = d;
+        if (d > latest) latest = d;
+      }
+    });
+    const halfDays = (earliest <= latest)
+      ? paceHalfDayContext(sqlite, orgId, earliest, latest).halfDays
+      : new Set<string>();
     const out = new Map<number, ClrWorkdayRate>();
     for (const u of clrRoster()) {
       const id = Number(u.id);
@@ -22819,6 +22856,8 @@ ${note}` : daysLine;
         activeDates: activeByUser.get(id) ?? [],
         trainerDates: trainerByUser.get(id) ?? new Set(),
         transferDates: transfersByUser.get(id) ?? [],
+        userId: id,
+        halfDays,
       }));
     }
     return out;
@@ -24560,7 +24599,7 @@ ${note}` : daysLine;
         lifetime: (() => {
           const all = clrAllTimeTotals(orgId);
           const mine = all.find((t) => t.userId === userId)
-            ?? { userId, name: String(u.name ?? ""), calls: 0, transfers: 0, appointments: 0, fellThrough: 0, activeDays: 0, firstDay: null, lastDay: null };
+            ?? { userId, name: String(u.name ?? ""), calls: 0, transfers: 0, appointments: 0, fellThrough: 0, activeDays: 0, workedDays: 0, firstDay: null, lastDay: null };
           // The baseline excludes people marked non-counted — they are on the
           // roster for other reasons and would skew what "typical" means.
           const counted = new Set(

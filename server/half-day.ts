@@ -10,6 +10,8 @@ import {
   normalizeDayPortion,
   resolveRosterUserIds,
   standingHalfDayUserIds,
+  sumDayPortions,
+  sumWorkedDayPortions,
   type DayPortion,
 } from "@shared/half-day";
 
@@ -18,6 +20,8 @@ export {
   isHalfDayPortion,
   normalizeDayPortion,
   standingHalfDayUserIds,
+  sumDayPortions,
+  sumWorkedDayPortions,
 };
 
 /** Additive migration — safe to call on every boot. */

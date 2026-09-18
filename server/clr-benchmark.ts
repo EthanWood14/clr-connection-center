@@ -23,7 +23,13 @@ export type ClrTotals = {
   transfers: number;
   appointments: number;
   fellThrough: number;
+  /** Distinct active weekdays (training clock / sample size). */
   activeDays: number;
+  /**
+   * Days worked for transfers/day: sum of day portions (full=1, half=0.5).
+   * Falls back to activeDays when omitted (older callers / tests).
+   */
+  workedDays?: number;
   firstDay: string | null;
   lastDay: string | null;
 };
@@ -51,7 +57,8 @@ const round = (n: number, dp = 2) => {
 };
 
 export function metricsFor(t: ClrTotals): Record<MetricKey, number> {
-  const d = t.activeDays || 0;
+  // Prefer workedDays (day-portion sum) so half days count as 0.5 in rates.
+  const d = (t.workedDays ?? t.activeDays) || 0;
   const settled = t.transfers + t.fellThrough;
   return {
     transfersPerDay: d ? round(t.transfers / d) : 0,

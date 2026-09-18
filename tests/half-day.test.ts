@@ -1,15 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import {
   HALF_DAY_WEIGHT, PACE_EXCLUDED_PERSON_DAYS, SEEDED_HALF_DAYS,
-  buildPaceExclusions, nameMatchesWho, paceDayWeight, standingHalfDayUserIds,
+  buildPaceExclusions, dayPortionWeight, nameMatchesWho, paceDayWeight,
+  standingHalfDayUserIds, sumDayPortions, sumWorkedDayPortions,
 } from "../shared/half-day";
 import { weeklyPace } from "../shared/weekly-pace";
 import {
   approvedFullDayTimeOffUserIds, ensureHalfDaySchema, ensureSeededHalfDays,
   halfDayUserIdsForDate, isHalfDayExcusedFromLate, paceHalfDayContext,
 } from "../server/half-day";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("roster names resolve carefully", () => {
   assert.equal(nameMatchesWho("Jeremy Lapiz", "jeremy"), true);
@@ -46,6 +52,23 @@ test("half day halves the pace weight, exclusions zero it", () => {
     userId: 740, date: "2026-09-17", today: "2026-09-18",
     excluded: [{ userId: 740, date: "2026-09-17" }],
   }), 0);
+});
+
+
+test("days worked is the sum of day portions (full=1, half=0.5)", () => {
+  const half = new Set(["9:2026-09-17", "9:2026-09-18"]);
+  assert.equal(dayPortionWeight(1, "2026-09-17", half), 1);
+  assert.equal(dayPortionWeight(9, "2026-09-17", half), 0.5);
+  assert.equal(sumDayPortions(9, ["2026-09-16", "2026-09-17", "2026-09-18"], half), 2);
+  assert.equal(sumDayPortions(1, ["2026-09-16", "2026-09-17"], half), 2);
+  const byUser = sumWorkedDayPortions([
+    { userId: 9, date: "2026-09-17" },
+    { userId: 9, date: "2026-09-17" }, // duplicate ignored
+    { userId: 9, date: "2026-09-18" },
+    { userId: 1, date: "2026-09-17" },
+  ], half);
+  assert.equal(byUser.get(9), 1);
+  assert.equal(byUser.get(1), 1);
 });
 
 test("weeklyPace drops Jeremy's excluded day and halves Rosas", () => {
@@ -106,4 +129,15 @@ test("seeded half days and standing Rosas wire through sqlite", (t) => {
   assert.ok(ctx.halfDays.has("4:2026-09-18"));
   assert.ok(ctx.excludedDays.some((e) => e.userId === 1 && e.date === "2026-09-17"));
   assert.ok(SEEDED_HALF_DAYS.length >= 2);
+});
+
+test("manager dashboard, agent stats, and Ask C3 wire day-portion days worked", () => {
+  const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
+  const ask = readFileSync(join(root, "server/ask-c3.ts"), "utf8");
+  const dash = readFileSync(join(root, "client/src/pages/manager-dashboard.tsx"), "utf8");
+  assert.match(routes, /sumWorkedDayPortions\(/, "scorecard Transfers / day worked");
+  assert.match(routes, /rollUp\([\s\S]*?halfDays\)/, "agent stats feed");
+  assert.match(routes, /workedDays: sumDayPortions\(/, "CLR lifetime rates");
+  assert.match(ask, /sumDayPortions\(id, stat\?\.days/, "Ask C3 team metrics");
+  assert.match(dash, /half day=0\.5/, "scorecard tooltip names the rule");
 });
