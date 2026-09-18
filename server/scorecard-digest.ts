@@ -99,10 +99,15 @@ export function buildScorecardDigestHtml(
   windowLabel: string,
   dateLabel: string,
   rows: ScorecardRow[],
-  extras?: { helperAssisted?: ScorecardDigestHelperAssisted },
+  extras?: { helperAssisted?: ScorecardDigestHelperAssisted; helperName?: string },
 ): string {
-  const ranked = rankScorecardRows(rows);
-  const tot = (f: keyof Omit<ScorecardRow, "name">) => ranked.reduce((s, r) => s + r[f], 0);
+  const helperName = extras?.helperName ?? extras?.helperAssisted?.name;
+  const isHelper = (r: ScorecardRow) => isScorecardDigestHelperException(r.name, { helperName });
+  const helperRows = rows.filter(isHelper);
+  const ranked = rankScorecardRows(rows.filter((r) => !isHelper(r)));
+  // Team totals intentionally include helper rows even though they are not in
+  // the CLR ranking above.
+  const tot = (f: keyof Omit<ScorecardRow, "name">) => rows.reduce((s, r) => s + r[f], 0);
   const pct = (r: { transfers: number; calls: number }) =>
     r.calls > 0 ? `${Math.round((r.transfers / r.calls) * 1000) / 10}%` : "—";
 
@@ -116,6 +121,30 @@ export function buildScorecardDigestHtml(
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#dc2626">${r.fellThrough}</td>
       <td style="padding:8px 12px;font-size:13px;text-align:center;color:#64748b">${pct(r)}</td>
     </tr>`).join("");
+
+  const helperBody = helperRows.map((r, i) => `
+    <tr style="background:${i % 2 === 0 ? "#ffffff" : "#f8fafc"}">
+      <td style="padding:8px 12px;font-size:13px;font-weight:600;color:#1e293b">${esc(r.name)}</td>
+      <td style="padding:8px 12px;font-size:13px;text-align:center;color:#0369a1">${r.calls}</td>
+      <td style="padding:8px 12px;font-size:13px;text-align:center;font-weight:700;color:#16a34a">${formatTransferCount(r.transfers)}</td>
+      <td style="padding:8px 12px;font-size:13px;text-align:center;color:#2563eb">${r.appointments}</td>
+      <td style="padding:8px 12px;font-size:13px;text-align:center;color:#dc2626">${r.fellThrough}</td>
+      <td style="padding:8px 12px;font-size:13px;text-align:center;color:#64748b">${pct(r)}</td>
+    </tr>`).join("");
+
+  const helperSection = helperRows.length ? `
+    <p style="margin:16px 0 6px;font-size:13px;font-weight:700;color:#1A2B4A">Helper</p>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+      <thead><tr style="background:#f8fafc">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">Name</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">Calls</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">Transfers</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">Appts</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">Fell Through</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">C&gt;T%</th>
+      </tr></thead>
+      <tbody>${helperBody}</tbody>
+    </table>` : "";
 
   const assisted = extras?.helperAssisted;
   const assistedLine = assisted
@@ -146,5 +175,5 @@ export function buildScorecardDigestHtml(
         <td style="padding:8px 12px;font-size:13px;text-align:center">${tot("fellThrough")}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center">${pct({ transfers: tot("transfers"), calls: tot("calls") })}</td>
       </tr></tfoot>
-    </table>${assistedLine}`;
+    </table>${helperSection}${assistedLine}`;
 }

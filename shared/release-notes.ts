@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.7",
+    headline: "Elleine appears in her own bottom category on Transfer Scorecard emails.",
+    items: [
+      { text: "Transfer Scorecard emails now show Elleine (or the configured helper) in a separate Helper section instead of ranking her with CLRs.", audience: "manager" },
+      { text: "Helper activity is still included in the Team totals, while TV race, tournament, and manager MTD exclusions are unchanged.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.6",
     headline: "Elleine's transfers show on bi-hourly Transfer Scorecard emails.",
     items: [
