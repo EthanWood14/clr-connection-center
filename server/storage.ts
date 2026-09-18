@@ -1089,6 +1089,8 @@ try {
   `);
 } catch {}
 try { sqlite.exec(`ALTER TABLE organizations ADD COLUMN portal_code TEXT`); } catch {}
+// Optional C3-internal label; null keeps legacy `name` as the operator-facing fallback.
+try { sqlite.exec(`ALTER TABLE organizations ADD COLUMN nickname TEXT`); } catch {}
 try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_portal_code ON organizations(portal_code) WHERE portal_code IS NOT NULL AND portal_code <> ''`); } catch {}
 
 try {

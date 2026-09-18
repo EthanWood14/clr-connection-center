@@ -73,6 +73,8 @@ type RosterResp = {
   enabled: boolean;
   networkConfigured: boolean;
   networkMode?: "enforce" | "record" | "off";
+  /** Client-facing company name for this portal's organization. */
+  companyName?: string;
   roster: Who[];
 };
 
@@ -405,7 +407,7 @@ export default function Portal() {
           <div className="absolute -right-8 -top-10 opacity-[0.07]"><UserCheck className="w-40 h-40" /></div>
           <div className="relative">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-white/50">West Capital Lending</p>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-white/50">{rosterQ.data?.companyName || "West Capital Lending"}</p>
               {rosterQ.data?.date && (
                 <p className="text-[11px] text-white/55 text-right">{fmtDay(rosterQ.data.date)} · {timeZoneLabel}</p>
               )}

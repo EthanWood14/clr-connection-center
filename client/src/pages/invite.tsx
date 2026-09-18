@@ -86,7 +86,11 @@ export default function InviteAccept() {
         <CardHeader>
           <CardTitle>Join {invite?.orgName}</CardTitle>
           <p className="text-sm text-muted-foreground mt-2">
-            You've been invited to join <strong>{invite?.orgName}</strong> on CLR Connection Center as {invite?.role}.
+            You've been invited to join <strong>{invite?.orgName}</strong>
+            {invite?.orgCompanyName && invite.orgCompanyName !== invite.orgName
+              ? <> ({invite.orgCompanyName})</>
+              : null}
+            {" "}on CLR Connection Center as {invite?.role}.
           </p>
         </CardHeader>
         <CardContent>

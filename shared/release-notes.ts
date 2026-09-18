@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.120.0",
+    headline: "Companies can have a client-facing name and a C3 nickname.",
+    items: [
+      { text: "Super Admin / SA Console: each organization now has a client-facing company name (what clients and emails see) and an optional nickname for C3 operators — so you can track West Capital — Victory and West Capital — Retail as separate teams under the same legal company.", audience: "manager" },
+      { text: "C3 lists, impersonation, and org filters use the nickname when set; the portal and outbound email still use the client-facing company name. Search matches either.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.119.2",
     headline: "Chris Redoble Retail leads go straight to Shotgun.",
     items: [

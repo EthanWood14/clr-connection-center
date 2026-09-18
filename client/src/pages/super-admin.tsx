@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
+import { orgInternalLabel, orgClientFacingName, orgMatchesQuery } from "@shared/org-names";
 import { copyToClipboard } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +20,7 @@ interface Org {
   name: string;
   slug: string;
   company_name: string;
+  nickname: string | null;
   plan: string;
   logo_url: string | null;
   user_count: number;
@@ -30,6 +32,7 @@ export default function SuperAdmin() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [createOpen, setCreateOpen] = useState(false);
+  const [orgFilter, setOrgFilter] = useState("");
   const [createResult, setCreateResult] = useState<{
     adminEmail: string; tempPassword: string; name: string;
   } | null>(null);
@@ -132,19 +135,29 @@ export default function SuperAdmin() {
             <div className="text-sm text-muted-foreground">Loading…</div>
           ) : (
             <div className="space-y-2">
+              <Input
+                value={orgFilter}
+                onChange={(e) => setOrgFilter(e.target.value)}
+                placeholder="Filter by nickname or company…"
+                className="mb-2"
+                data-testid="input-org-filter"
+              />
               <div className="grid grid-cols-12 text-xs text-muted-foreground px-3 py-2 border-b font-medium">
-                <div className="col-span-4">Name</div>
+                <div className="col-span-4">Nickname / Company</div>
                 <div className="col-span-2">Plan</div>
                 <div className="col-span-1 text-right">Users</div>
                 <div className="col-span-1 text-right">CLRs</div>
                 <div className="col-span-2">Created</div>
                 <div className="col-span-2 text-right">Actions</div>
               </div>
-              {orgs.map(o => (
+              {orgs.filter((o) => orgMatchesQuery(o, orgFilter)).map(o => {
+                const label = orgInternalLabel(o);
+                const client = orgClientFacingName(o);
+                return (
                 <div key={o.id} className="grid grid-cols-12 items-center px-3 py-3 rounded-md border hover:bg-accent/30 text-sm">
                   <div className="col-span-4">
-                    <div className="font-medium">{o.name}</div>
-                    <div className="text-xs text-muted-foreground">{o.slug}</div>
+                    <div className="font-medium">{label}</div>
+                    <div className="text-xs text-muted-foreground">{client} · {o.slug}</div>
                   </div>
                   <div className="col-span-2">
                     <Badge variant={o.plan === "active" ? "default" : o.plan === "suspended" ? "destructive" : "secondary"}>
@@ -162,14 +175,14 @@ export default function SuperAdmin() {
                     </Button>
                     {o.plan !== "suspended" && (
                       <Button size="sm" variant="ghost"
-                        onClick={() => { if (confirm(`Suspend ${o.name}?`)) suspend.mutate(o.id); }}
+                        onClick={() => { if (confirm(`Suspend ${label}?`)) suspend.mutate(o.id); }}
                         data-testid={`button-suspend-${o.id}`}>
                         <Pause className="w-3 h-3" />
                       </Button>
                     )}
                   </div>
                 </div>
-              ))}
+              );})}
             </div>
           )}
         </CardContent>
@@ -300,17 +313,22 @@ function CreateOrgDialog({
   const { toast } = useToast();
   const [name, setName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [nickname, setNickname] = useState("");
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
 
   const create = useMutation({
     mutationFn: () => apiRequest("POST", "/api/super-admin/orgs", {
-      name, companyName: companyName || name, adminName, adminEmail,
+      name,
+      companyName: companyName || name,
+      nickname: nickname.trim() || null,
+      adminName,
+      adminEmail,
     }),
     onSuccess: (data: any) => {
       onOpenChange(false);
       onCreated({ adminEmail: data.adminEmail, tempPassword: data.tempPassword, name: data.name });
-      setName(""); setCompanyName(""); setAdminName(""); setAdminEmail("");
+      setName(""); setCompanyName(""); setNickname(""); setAdminName(""); setAdminEmail("");
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -322,11 +340,17 @@ function CreateOrgDialog({
         <div className="space-y-3">
           <div>
             <Label>Organization Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Mortgage" data-testid="input-org-name" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="West Capital — Victory" data-testid="input-org-name" />
           </div>
           <div>
-            <Label>Company Name (shown in app)</Label>
-            <Input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Acme Mortgage" data-testid="input-company-name" />
+            <Label>Client-facing company name</Label>
+            <Input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="West Capital Lending" data-testid="input-company-name" />
+            <p className="text-xs text-muted-foreground mt-1">What clients and emails see.</p>
+          </div>
+          <div>
+            <Label>Nickname (C3 internal, optional)</Label>
+            <Input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Defaults to organization name" data-testid="input-org-nickname" />
+            <p className="text-xs text-muted-foreground mt-1">What C3 operators see in lists and boards.</p>
           </div>
           <div>
             <Label>Admin Name</Label>
