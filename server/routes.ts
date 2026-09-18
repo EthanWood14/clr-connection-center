@@ -99,6 +99,7 @@ import { normalizeStateCode, extractProspectId, buildBonzoManagerNotes, cleanBon
 import { resolveEmailTransferCompRateCents } from "./comp-rate";
 import { ensureRecurringTaskOccurrences, nextOverdueReminderAt, nextTaskOccurrenceForRow, overdueEmailRetryAt, spawnNextTaskOccurrence } from "./clr-task-scheduler";
 import { formatTaskDueLabel, notifyTaskAssignment, taskAssigneeChanged, type TaskAssignmentReason } from "./clr-task-assignment-email";
+import { overdueTaskEmailRecipients } from "./clr-task-overdue-email";
 import {
   evaluateCheckinIp,
   normalizeAllowedIps,
@@ -8351,10 +8352,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // that mail was sent: only a real Resend acceptance advances this to the
       // next daily reminder. Failures retry after 5, 10, 20, 40, then 60 min.
       const assigneeEmail = String(assignee?.email ?? "").trim().toLowerCase();
-      const recipients = Array.from(new Set([
-        ...(assigneeEmail.includes("@") ? [assigneeEmail] : []),
-        ...attendanceManagerEmails(Number(task.org_id)),
-      ]));
+      // Manager recipients go through overdueTaskEmailRecipients so Chris
+      // (credoble@) can stay off this late/overdue path without losing other
+      // manager mail. Assignee is always kept.
+      const recipients = overdueTaskEmailRecipients({
+        assigneeEmail,
+        managerEmails: attendanceManagerEmails(Number(task.org_id)),
+      });
       const attempts = Number(task.email_attempts ?? 0);
       if (!recipients.length) {
         taskSqlite().prepare(`UPDATE clr_task_alerts SET email_attempts=email_attempts+1,next_email_at=?,last_email_error=?

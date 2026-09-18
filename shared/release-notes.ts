@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.16",
+    headline: "Chris no longer gets overdue-task emails when work is finished late.",
+    items: [
+      { text: "Daily Overdue CLR task emails no longer go to Chris Redoble (credoble@). Assignees still get them, and Scott and other configured managers still do.", audience: "manager" },
+      { text: "In-app overdue notices, push alerts, task assignment emails, and every other manager digest are unchanged.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.14",
     headline: "Manager Placed hover names why investment routing is off.",
     items: [

@@ -54,8 +54,10 @@ test("an overdue occurrence alerts once in-app and retries email until accepted"
   assert.match(alert, /if \(claimed\.changes\)/, "in-app and push alert only on first overdue detection");
   assert.match(alert, /for \(const manager of managers\)/);
   assert.match(alert, /userId: Number\(task\.assigned_user_id\), type: "task_overdue"/);
+  assert.match(alert, /overdueTaskEmailRecipients\(/,
+    "manager overdue recipients go through the opt-out helper (Chris off, Scott on)");
   assert.match(alert, /attendanceManagerEmails\(Number\(task\.org_id\)\)/,
-    "configured manager recipients such as Scott receive overdue-task email too");
+    "configured manager recipients such as Scott still feed the overdue-task email list");
   assert.match(alert, /sendPushToUsers/);
   assert.match(alert, /\{ immediate: true \}/, "the alert is not marked sent before Resend accepts it");
   assert.match(alert, /nextOverdueReminderAt/);
