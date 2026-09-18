@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { applyW2OnlyExclusions } from "@shared/w2-only-states";
 import { TRANSFER_CREDIT_SQL, transferCreditIn } from "@shared/transfer-credit";
+import { transferCreditExclusionSql } from "@shared/stats-exclusions";
 import { SELF_REPORTED_CUTOFF } from "@shared/self-reported";
 import { BONZO_CALLS_BY_DAY_SQL, classifyBonzoCallEvent, type BonzoCallKind } from "@shared/bonzo-calls";
 import {
@@ -2369,6 +2370,8 @@ function transferCreditQuery(f: TransferCreditFilters, select: string, groupBy: 
   // user_id IS NULL happens on a transfer nobody is named on. It credits
   // nobody, exactly as the old COUNT ... GROUP BY assistant_id skipped it.
   wheres.push(`tc.user_id IS NOT NULL`);
+  // Jordon from-date + approved half/full time off + standing Rosas half days.
+  wheres.push(transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id"));
   const sqlText = `SELECT ${select} FROM (${TRANSFER_CREDIT_SQL}) tc WHERE ${wheres.join(" AND ")}${groupBy}`;
   return sqlite.prepare(sqlText).all(...params) as any[];
 }
@@ -2420,6 +2423,7 @@ export function getCreditedTransfers(
   if (f.endDate) { wheres.push(`tc.date <= ?`); params.push(f.endDate); }
   const oid = f.orgId === undefined ? currentOrgId() : f.orgId;
   if (oid != null) { wheres.push(`tc.org_id = ?`); params.push(Number(oid)); }
+  wheres.push(transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id"));
   return sqlite.prepare(
     `SELECT o.*, tc.credit AS credit
        FROM (${TRANSFER_CREDIT_SQL}) tc

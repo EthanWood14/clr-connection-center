@@ -429,7 +429,12 @@ test("the transfers-per-working-day rate is fed credit, not rows", () => {
 });
 
 test("Ask C3 quotes credit for a person and a count for the team", () => {
-  assert.match(askC3, /transferCreditByUser\(outcomes\)\.forEach/);
+  // Date-scoped credit exclusions (Jordon / half / full off) re-sum per person
+  // instead of a bare transferCreditByUser.forEach — still shotgun halves.
+  assert.match(askC3, /isCreditExcludedPersonDay/);
+  assert.match(askC3, /creditExcludedDayKeys\(paceCtx\.excludedDays\)/);
+  assert.match(askC3, /add\(maker, 0\.5\)/);
+  assert.match(askC3, /add\(sender, 0\.5\)/);
   assert.match(askC3, /const credit = transferCreditFor\(row, assistantId\);/);
   assert.match(askC3, /if \(type === "transfer"\) \{ if \(!assistantId\) bucket\.transfers\+\+; \}/);
   // And it is told the rule, so it never explains a 4.5 away as a rounding bug.

@@ -10,6 +10,7 @@
  */
 import type { RankRow } from "./tv-overtake";
 import { officeClock } from "./tv-hourly-race";
+import { isStatsExcluded } from "./stats-exclusions";
 
 /** Wall time each non-empty office hour occupies on the replay. */
 export const DAY_RACE_SECONDS_PER_HOUR = 8;
@@ -20,12 +21,20 @@ export const DAY_RACE_SECONDS_PER_HOUR = 8;
  */
 export const DAY_RACE_EXCLUDED_NAME_RE = /\b(elleine|ellaine|eliane)\b/i;
 
-export function isDayRaceExcluded(name: string | null | undefined): boolean {
-  return DAY_RACE_EXCLUDED_NAME_RE.test(String(name ?? "").trim());
+export function isDayRaceExcluded(
+  name: string | null | undefined,
+  date?: string | null,
+): boolean {
+  const n = String(name ?? "").trim();
+  if (DAY_RACE_EXCLUDED_NAME_RE.test(n)) return true;
+  return isStatsExcluded(n, date);
 }
 
-export function filterDayRaceField<T extends { name: string }>(people: readonly T[]): T[] {
-  return people.filter((person) => !isDayRaceExcluded(person.name));
+export function filterDayRaceField<T extends { name: string }>(
+  people: readonly T[],
+  date?: string | null,
+): T[] {
+  return people.filter((person) => !isDayRaceExcluded(person.name, date));
 }
 
 export type DayRaceHourCredit = {
@@ -64,8 +73,9 @@ function snapshot(roster: RankRow[], totals: Map<number, number>): RankRow[] {
 export function buildDayRaceTimeline(
   roster: readonly RankRow[],
   hourCredits: readonly DayRaceHourCredit[],
+  raceDate?: string | null,
 ): DayRaceFrame[] {
-  const field = filterDayRaceField(roster).map((person) => ({
+  const field = filterDayRaceField(roster, raceDate).map((person) => ({
     id: person.id,
     name: person.name,
     transfersToday: 0,
@@ -110,8 +120,8 @@ export function dayRaceMomentMs(frameCount: number): number {
 }
 
 /** Zeroed copy of a roster — the grid the first hour accelerates away from. */
-export function dayRaceStartingGrid(roster: readonly RankRow[]): RankRow[] {
-  return filterDayRaceField(roster).map((person) => ({
+export function dayRaceStartingGrid(roster: readonly RankRow[], raceDate?: string | null): RankRow[] {
+  return filterDayRaceField(roster, raceDate).map((person) => ({
     id: person.id,
     name: person.name,
     transfersToday: 0,

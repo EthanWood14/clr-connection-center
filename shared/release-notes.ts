@@ -41,6 +41,16 @@ export const RELEASE_NOTES: ReleaseNote[] = [
   },
 
   {
+    version: "4.121.1",
+    headline: "Jordon, half days, and full days off no longer count on transfer boards.",
+    items: [
+      { text: "From 2026-09-16 (Pacific) onward, Jordon Chang's transfers do not count on TV boards, scorecards, weekly pace, lifetime/workday rates, Ask C3, agent stats, tournament, or digests (Jordan Chang spelling included; Jordan Rivera is unchanged). Earlier history still credits him.", audience: "everyone" },
+      { text: "Approved full days off and approved half days (including standing half-day rules) drop that CLR's transfer credit from those same boards for that calendar date — they no longer inflate team totals or pace while off.", audience: "manager" },
+      { text: "Goal proration still treats a half day as half a weekday available; the change is about transfer credit on the boards, not wiping the 0.5 availability weight used for goals.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.121.0",
     headline: "Half days and days off now count in every rate and goal.",
     items: [

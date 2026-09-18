@@ -37,6 +37,7 @@ export type ClrPeriod = {
 };
 
 import { asAvailabilityContext, sumAvailabilityPortions, type DayAvailabilityContext } from "@shared/half-day";
+import { isCreditExcludedPersonDay } from "@shared/stats-exclusions";
 
 export type OutcomeRow = {
   date: string;
@@ -82,6 +83,8 @@ export function rollUp(
    * Full day off → 0; half → 0.5; otherwise → 1.
    */
   halfDaysOrCtx?: ReadonlySet<string> | DayAvailabilityContext | null,
+  /** Person-days (`${userId}:${date}`) whose transfers must not count. */
+  creditExcludedKeys?: ReadonlySet<string> | null,
 ): ClrPeriod[] {
   type Acc = { transfers: number; helper: number; days: Map<number, Set<string>> };
   const byPeriod = new Map<string, Acc>();
@@ -92,11 +95,13 @@ export function rollUp(
     if (!period) continue;
     const acc = byPeriod.get(period) ?? { transfers: 0, helper: 0, days: new Map() };
     const isHelper = helperId != null && Number(r.assistantId) === helperId;
+    const creditExcluded = !!(creditExcludedKeys
+      && isCreditExcludedPersonDay(Number(r.assistantId), String(r.date), creditExcludedKeys));
     if (r.outcomeType === "transfer") {
       if (isHelper) acc.helper += 1;
-      else acc.transfers += 1;
+      else if (!creditExcluded) acc.transfers += 1;
     }
-    if (!isHelper) {
+    if (!isHelper && !creditExcluded) {
       const seen = acc.days.get(Number(r.assistantId)) ?? new Set<string>();
       seen.add(String(r.date));
       acc.days.set(Number(r.assistantId), seen);
