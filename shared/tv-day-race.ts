@@ -151,6 +151,25 @@ export function buildDayRaceTimeline(
   return frames;
 }
 
+
+/**
+ * Wall seconds to continuously lerp this frame's grid toward the next credit
+ * (or a short settle after the last). Dense minutes become tiny steps; sparse
+ * gaps glide for their full wall interval so motion is not a single-frame snap.
+ */
+export function dayRaceFrameBlendSeconds(
+  frameIndex: number,
+  frames: readonly { hour: number; minute: number }[],
+  activeHours: readonly number[],
+): number {
+  if (frameIndex < 0 || frameIndex >= frames.length) return DAY_RACE_MS_PER_MINUTE / 1000;
+  const startMs = dayRaceFrameOffsetMs(frames[frameIndex], activeHours);
+  const endMs = frameIndex + 1 < frames.length
+    ? dayRaceFrameOffsetMs(frames[frameIndex + 1], activeHours)
+    : startMs + 350;
+  return Math.max(1 / 60, (endMs - startMs) / 1000);
+}
+
 /** How long the 3D scene should keep drawing for a day replay. */
 export function dayRaceRunSeconds(activeHourCount: number): number {
   if (activeHourCount <= 0) return DAY_RACE_SECONDS_PER_HOUR;

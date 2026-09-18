@@ -5,6 +5,7 @@ import {
   DAY_RACE_SECONDS_PER_HOUR,
   buildDayRaceTimeline,
   dayRaceActiveHours,
+  dayRaceFrameBlendSeconds,
   dayRaceFrameOffsetMs,
   dayRaceMomentMs,
   dayRaceRunSeconds,
@@ -65,6 +66,10 @@ test("timeline is 2 seconds per non-empty hour, by the minute, and skips empty s
   assert.equal(dayRaceFrameOffsetMs(frames[0], hours), (5 / 60) * 2000);
   assert.equal(dayRaceFrameOffsetMs(frames[1], hours), (40 / 60) * 2000);
   assert.equal(dayRaceFrameOffsetMs(frames[2], hours), 2_000 + (0 / 60) * 2000);
+  // Blend spans the wall gap to the next credit (smooth glide, not a snap).
+  assert.equal(dayRaceFrameBlendSeconds(0, frames, hours), dayRaceFrameOffsetMs(frames[1], hours) / 1000 - dayRaceFrameOffsetMs(frames[0], hours) / 1000);
+  assert.ok(dayRaceFrameBlendSeconds(0, frames, hours) > 0.5, "9:05→9:40 spans most of a second at 2s/hour");
+  assert.ok(Math.abs(dayRaceFrameBlendSeconds(frames.length - 1, frames, hours) - 0.35) < 1e-9);
 });
 
 test("credits without minute default to :00 so older feeds still build", () => {

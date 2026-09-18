@@ -100,7 +100,7 @@ test("a transfer moves the cars in place; only a new NAME rebuilds the corner", 
   // change rather than from the start of a scene that began hours ago.
   assert.match(scene, /currentDrivers=next;transitionStart=lastElapsed;/);
   assert.match(scene, /const transitionTime=options\.reduced\?12:Math\.max\(0,elapsed-transitionStart\);/);
-  assert.match(scene, /const position=interpolateRaceTransition\(transition,transitionTime\);/);
+  assert.match(scene, /const position=transitionBlendSeconds!=null\?interpolateRaceTransitionBlend\(transition,transitionTime,transitionBlendSeconds\):interpolateRaceTransition\(transition,transitionTime\);/);
 });
 
 // "When someone is in first, have the trail camera look backwards."
