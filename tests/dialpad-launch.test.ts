@@ -137,6 +137,8 @@ const components = [
   { path: "client/src/components/assigned-lo-lead-alert.tsx", handler: "callLead", mutation: "claim", argument: "lead-123" },
   { path: "client/src/components/shotgun-offer-alert.tsx", handler: "callOfferedLead", mutation: "confirm", argument: 123 },
   { path: "client/src/components/shotgun-result-card.tsx", handler: "callVerifiedLead", mutation: "openPhone", argument: undefined },
+  { path: "client/src/components/shotgun-bounceback-prompt.tsx", handler: "callBouncebackLead", mutation: "accept", argument: 123 },
+  { path: "client/src/components/shotgun-reclaim-prompt.tsx", handler: "callReclaimLead", mutation: "reclaim", argument: 123 },
 ] as const;
 
 function extractedHandler(component: typeof components[number], dependencies: Record<string, unknown>) {
@@ -172,6 +174,7 @@ function handlerFixture(component: typeof components[number], invalidPhone = fal
     },
     lead: { externalId: "lead-123", id: 123, phone: "+19495550100" },
     offered: { id: 123, phone: "+19495550100" },
+    target: { id: 123, phone: "+19495550100" },
     [component.mutation]: mutation, identity, storageKey: "org1-user1",
     dismiss: () => events.push("dismiss"),
   });

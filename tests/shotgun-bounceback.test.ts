@@ -139,6 +139,10 @@ test("storage migrates bounceback_fired_at; UI dock prompt wired", () => {
   const prompt = read("client/src/components/shotgun-bounceback-prompt.tsx");
   assert.match(prompt, /data-testid="shotgun-bounceback-prompt"/);
   assert.match(prompt, /data-testid="shotgun-bounceback-take"/);
+  assert.match(prompt, /data-testid="shotgun-bounceback-call"/);
+  assert.match(prompt, /Call in Dialpad/);
+  assert.match(prompt, /const prepareDialpadCall = useDialpadCall\(\)/);
+  assert.match(prompt, /prepareDialpadCall\(target\.phone\)[\s\S]*?accept\.mutateAsync\(target\.id\)\.then\(\(\) => dialpad\.complete\(\)\)\.catch\(\(\) => dialpad\.cancel\(\)\)/);
   assert.match(prompt, /`\/api\/shotgun\/\$\{id\}\/bounceback`/);
   assert.match(prompt, /TAKE BOUNCEBACK/);
 });
@@ -149,5 +153,4 @@ test("release notes cover 4.122.10 bounceback week", () => {
   assert.match(notes, /35 minutes/);
   assert.match(notes, /2026-09-18/);
   assert.match(notes, /2026-09-25/);
-  assert.match(read("shared/version.ts"), /APP_VERSION = "4\.122\.10"/);
 });

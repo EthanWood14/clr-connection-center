@@ -5,7 +5,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { STATE_CALL_RULES } from "@/data/state-call-hours";
-import { ShotgunResultCard } from "@/components/shotgun-result-card";
+import { ShotgunCallLeadButton, ShotgunResultCard } from "@/components/shotgun-result-card";
+import { useDialpadCall } from "@/lib/dialpad-call";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -127,7 +128,7 @@ function ManagerLeadActions({ lead, requeue, cancel }: { lead: ShotgunLead; requ
   );
 }
 
-function LeadHeader({ lead }: { lead: ShotgunLead }) {
+function LeadHeader({ lead, dialpad }: { lead: ShotgunLead; dialpad?: boolean }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
@@ -137,8 +138,10 @@ function LeadHeader({ lead }: { lead: ShotgunLead }) {
           {lead.stateCode && <Badge variant="secondary">{lead.stateCode}</Badge>}
           {lead.source && <Badge variant="outline">{lead.source}</Badge>}
         </div>
-        <div className="mt-2 flex flex-wrap gap-4 text-sm">
-          {lead.phone && <span className="flex items-center gap-1.5 font-semibold"><Phone className="h-4 w-4" />{lead.phone}</span>}
+        <div className="mt-2 flex flex-wrap items-center gap-4 text-sm">
+          {lead.phone && (dialpad
+            ? <ShotgunCallLeadButton lead={lead} />
+            : <span className="flex items-center gap-1.5 font-semibold"><Phone className="h-4 w-4" />{lead.phone}</span>)}
           {lead.email && <a className="flex items-center gap-1.5 text-blue-600 hover:underline" href={`mailto:${lead.email}`}><Mail className="h-4 w-4" />{lead.email}</a>}
         </div>
         {lead.managerNotes && <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">{lead.managerNotes}</p>}
@@ -153,6 +156,7 @@ function LeadHeader({ lead }: { lead: ShotgunLead }) {
 
 export default function Shotgun() {
   const { user } = useAuth();
+  const prepareDialpadCall = useDialpadCall();
   const { toast } = useToast();
   const [leadName, setLeadName] = useState("");
   const [phone, setPhone] = useState("");
@@ -352,11 +356,17 @@ export default function Shotgun() {
                         ? `Offered to ${item.currentAssigneeName} — grab it back if you are still on the phone.`
                         : "Back in the rotation — grab it back if you are still on the phone with them."}
                     </p>
-                    {item.phone && <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold"><Phone className="h-4 w-4" />{item.phone}</p>}
+                    {item.phone && <p className="mt-2 flex items-center gap-2 text-sm font-semibold"><Phone className="h-4 w-4 shrink-0" /><button type="button" disabled={reclaim.isPending}
+                      onClick={() => {
+                        const dialpad = prepareDialpadCall(item.phone);
+                        if (!dialpad) return;
+                        void reclaim.mutateAsync(item.id).then(() => dialpad.complete()).catch(() => dialpad.cancel());
+                      }}
+                      className="min-h-11 text-left text-sky-700 underline decoration-sky-400 underline-offset-2 hover:text-sky-900 disabled:opacity-50 dark:text-sky-300" data-testid={`shotgun-reclaim-call-${item.id}`}>{reclaim.isPending ? "Grabbing…" : `Call in Dialpad · ${item.phone}`}</button></p>}
                   </div>
                   <Button
                     size="lg"
-                    className="gap-2 bg-sky-600 hover:bg-sky-700"
+                    className="min-h-11 gap-2 bg-sky-600 hover:bg-sky-700"
                     disabled={reclaim.isPending}
                     onClick={() => reclaim.mutate(item.id)}
                     data-testid={`shotgun-grab-back-${item.id}`}
@@ -370,12 +380,12 @@ export default function Shotgun() {
           </section>
         )}
 
-        {myActive.length > 0 && <section className="space-y-3"><h2 className="text-xl font-black">Your active leads</h2>{myActive.map((lead) => <Card key={lead.id} className="border-2 border-blue-400 shadow-lg shadow-blue-500/10"><CardContent className="p-5"><LeadHeader lead={lead} /><ShotgunResultCard lead={lead} /></CardContent></Card>)}</section>}
+        {myActive.length > 0 && <section className="space-y-3"><h2 className="text-xl font-black">Your active leads</h2>{myActive.map((lead) => <Card key={lead.id} className="border-2 border-blue-400 shadow-lg shadow-blue-500/10"><CardContent className="p-5"><LeadHeader lead={lead} dialpad /><ShotgunResultCard lead={lead} /></CardContent></Card>)}</section>}
 
         <section className="space-y-3">
           <div className="flex items-center justify-between"><h2 className="text-xl font-black">{payload.canManage ? "Live board" : payload.canPublish ? "Recent Shotgun activity (last 10 min) + yours" : "Your Shotgun history"}</h2><span className="flex items-center gap-1 text-xs text-muted-foreground"><RefreshCw className="h-3 w-3" /> Live</span></div>
           {payload.leads.length === 0 ? <Card className="border-dashed"><CardContent className="py-14 text-center text-muted-foreground"><Zap className="mx-auto mb-3 h-12 w-12 opacity-20" />No Shotgun leads yet.</CardContent></Card> : payload.leads.map((lead) => (
-            <Card key={lead.id}><CardContent className="p-5"><LeadHeader lead={lead} />{(payload.canManage || payload.canPublish) && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>Published by {lead.createdByName}</span>{payload.canManage && <ManagerLeadActions lead={lead} requeue={(id) => requeue.mutate(id)} cancel={(id) => cancel.mutate(id)} />}</div>}{lead.status === "done" && lead.resultNotes && <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm dark:bg-emerald-950/20">{lead.transferOutcomeId && <p className="mb-1 flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-200"><ArrowRightLeft className="h-4 w-4" /> Transfer logged · {lead.transferLoName ?? "Loan officer"} · {lead.transferType === "appointment" ? "Appointment" : "Direct"}</p>}<strong>Result:</strong> {lead.called ? "Called · " : ""}{lead.texted ? "Texted · " : ""}{lead.resultNotes}</div>}</CardContent></Card>
+            <Card key={lead.id}><CardContent className="p-5"><LeadHeader lead={lead} dialpad={lead.status === "claimed" && lead.currentAssigneeId === user?.id} />{(payload.canManage || payload.canPublish) && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>Published by {lead.createdByName}</span>{payload.canManage && <ManagerLeadActions lead={lead} requeue={(id) => requeue.mutate(id)} cancel={(id) => cancel.mutate(id)} />}</div>}{lead.status === "done" && lead.resultNotes && <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm dark:bg-emerald-950/20">{lead.transferOutcomeId && <p className="mb-1 flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-200"><ArrowRightLeft className="h-4 w-4" /> Transfer logged · {lead.transferLoName ?? "Loan officer"} · {lead.transferType === "appointment" ? "Appointment" : "Direct"}</p>}<strong>Result:</strong> {lead.called ? "Called · " : ""}{lead.texted ? "Texted · " : ""}{lead.resultNotes}</div>}</CardContent></Card>
           ))}
         </section>
       </div>

@@ -79,10 +79,16 @@ test("Grab back UI is global and on the Shotgun page with an on-the-phone confir
   assert.match(app, /ShotgunPresencePrompt \/>\s*\n\s*<ShotgunReclaimPrompt \/>/);
   assert.match(prompt, /data-testid="shotgun-reclaim-prompt"/);
   assert.match(prompt, /data-testid="shotgun-grab-back"/);
+  assert.match(prompt, /data-testid="shotgun-reclaim-call"/);
+  assert.match(prompt, /Call in Dialpad/);
+  assert.match(prompt, /const prepareDialpadCall = useDialpadCall\(\)/);
+  assert.match(prompt, /prepareDialpadCall\(target\.phone\)[\s\S]*?reclaim\.mutateAsync\(target\.id\)\.then\(\(\) => dialpad\.complete\(\)\)\.catch\(\(\) => dialpad\.cancel\(\)\)/);
   assert.match(prompt, /onThePhone: true/);
   assert.match(prompt, /I AM ON THE PHONE — GRAB BACK/);
   assert.match(page, /shotgun-reclaimable-section/);
   assert.match(page, /I am on the phone — Grab back/);
+  assert.match(page, /shotgun-reclaim-call-/);
+  assert.match(page, /Call in Dialpad/);
   assert.match(page, /`\/api\/shotgun\/\$\{id\}\/reclaim`/);
   assert.match(page, /onThePhone: true/);
 });
