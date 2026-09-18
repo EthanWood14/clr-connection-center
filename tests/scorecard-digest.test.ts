@@ -7,6 +7,7 @@ import { transformSync } from "esbuild";
 
 import {
   mondayOf, scorecardWindow, scorecardSnapshotLabel, SCORECARD_INTRADAY_CRON, rankScorecardRows, buildScorecardDigestHtml,
+  isScorecardDigestHelperException,
   type ScorecardRow, type ScorecardDigestKind,
 } from "../server/scorecard-digest";
 import { formatTransferCount } from "../shared/transfer-credit";
@@ -134,7 +135,9 @@ function sendHarness(rows: ScorecardRow[], instant: string, recipients = ["manag
     BUSINESS_DAY_DEFAULT_TZ: "America/Los_Angeles",
     scorecardWindow, scorecardSnapshotLabel, formatTransferCount, buildScorecardDigestHtml,
     buildScorecardDigestRows: (orgId: number, from: string, to: string) => { windows.push({ orgId, from, to }); return rows; },
+    scorecardDigestHelperAssistedCount: (_orgId: number, _from: string, _to: string) => 3,
     scorecardManagerEmails: (orgId: number) => { recipientOrgs.push(orgId); return recipients; },
+    storageExtra: { getEmailSettings: () => ({ helper_name: "Elleine" }) },
     buildEmail: ({ body }: { body: string }) => body,
     sendEmail: async (message: typeof mail[number]) => { mail.push(message); },
     console: { log: () => {} },
@@ -247,4 +250,47 @@ test("malformed or empty tenant recipient settings cannot suppress managers or i
   const empty = recipientHarness("[]", []);
   assert.deepEqual(empty.resolve(2), []);
   assert.deepEqual(empty.attendanceOrgs, [], "an empty tenant stays empty; there is no fallback to WCL");
+});
+
+test("Elleine (and the configured helper) is an exclude_from_stats exception for digests only", () => {
+  assert.equal(isScorecardDigestHelperException("Elleine Asuncion"), true);
+  assert.equal(isScorecardDigestHelperException("elleine"), true);
+  assert.equal(isScorecardDigestHelperException("Matthew Rosas"), false);
+  assert.equal(isScorecardDigestHelperException("Elle"), false, "prefix must not claim Elleine");
+  assert.equal(isScorecardDigestHelperException("Matthew Rosas", { userId: 9, helperUserId: 9, helperName: "Elleine" }), true, "resolved helper id wins");
+  assert.equal(isScorecardDigestHelperException("Pat Helper", { helperName: "Pat" }), true);
+  assert.equal(isScorecardDigestHelperException("Patricia Helper", { helperName: "Pat" }), false, "Pat must be a whole word");
+});
+
+test("digest HTML can surface the helper-assisted count under the table", () => {
+  const html = buildScorecardDigestHtml("Today so far", "2026-09-18", [
+    row("Elleine Asuncion", 40, 8, 1),
+    row("Matthew Rosas", 50, 5, 0),
+  ], { helperAssisted: { name: "Elleine", count: 4 } });
+  assert.match(html, /Elleine assisted: 4/);
+  assert.ok(html.indexOf("Elleine Asuncion") < html.indexOf("Matthew Rosas"), "Elleine ranks on transfers");
+  assert.ok(!buildScorecardDigestHtml("Today so far", "2026-09-18", [row("A", 1, 1, 0)]).includes("assisted:"), "omit the line when not supplied");
+});
+
+test("buildScorecardDigestRows opts the helper back in despite exclude_from_stats", () => {
+  const fn = routes.slice(routes.indexOf("function buildScorecardDigestRows"), routes.indexOf("function scorecardManagerEmails"));
+  assert.match(fn, /isScorecardDigestHelperException/);
+  assert.match(fn, /resolveHelperUserId/);
+  assert.match(fn, /helper_name/);
+  assert.match(fn, /excludeFromStats/);
+  assert.ok(!/\.filter\(\(u\) => u\.isActive && !u\.excludeFromStats && clrRoleMatches\(u\)\)/.test(fn),
+    "must not keep the blanket exclude_from_stats drop");
+});
+
+test("sendScorecardDigest passes helper-assisted count into the HTML builder", () => {
+  const fn = routes.slice(routes.indexOf("async function sendScorecardDigest"), routes.indexOf("function scheduleScorecardDigest"));
+  assert.match(fn, /scorecardDigestHelperAssistedCount\(orgId, w\.from, w\.to\)/);
+  assert.match(fn, /buildScorecardDigestHtml\(windowLabel, dateLabel, rows, \{ helperAssisted \}\)/);
+  assert.match(routes, /helper_assisted=1/);
+});
+
+test("intraday mail body includes the helper-assisted line from the harness", async () => {
+  const harness = sendHarness([row("Elleine Asuncion", 10, 3, 0)], "2026-07-15T15:00:00Z");
+  assert.equal(await harness.send(37, "intraday"), "sent");
+  assert.match(harness.mail[0].html, /Elleine assisted: 3/);
 });

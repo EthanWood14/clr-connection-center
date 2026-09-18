@@ -84,7 +84,7 @@ import { normalizeOutboundSms, verifyDialpadJwt } from "./dialpad-sms";
 import { foldLapNoteBatch, type LapNoteBatchEntry } from "./lap-note-batch";
 import { type DigestSubject, digestStatus, anyoneExpected, buildCheckinDigestHtml } from "./checkin-digest";
 import { auditDetails, detailsHasPlaintextSecret, AUDIT_MASK } from "./audit-details";
-import { type ScorecardDigestKind, SCORECARD_INTRADAY_CRON, scorecardSnapshotLabel, scorecardWindow, buildScorecardDigestHtml } from "./scorecard-digest";
+import { type ScorecardDigestKind, SCORECARD_INTRADAY_CRON, scorecardSnapshotLabel, scorecardWindow, buildScorecardDigestHtml, isScorecardDigestHelperException } from "./scorecard-digest";
 import { notesToBonzoHtml, transferNoteMarker, appointmentNoteMarker, notePlainText, escapeHtml } from "./bonzo-notes";
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
@@ -17032,8 +17032,20 @@ ${note}` : daysLine;
 
   function buildScorecardDigestRows(orgId: number, from: string, to: string) {
     const sqlite = storageExtra.getRawSqlite();
-    const clrs = (storage.getUsers() as any[])
-      .filter((u) => u.isActive && !u.excludeFromStats && clrRoleMatches(u));
+    // Elleine carries exclude_from_stats so she stays off TV/tournament/MTD
+    // boards, but managers still want her on the emailed Transfer Scorecard
+    // (bi-hourly + midweek/eow share this builder). Opt her (or whoever is
+    // configured as helper_name) back in for this path only.
+    const helperName = String((storageExtra.getEmailSettings() as any)?.helper_name || "Elleine");
+    const allUsers = storage.getUsers() as any[];
+    const helperUserId = resolveHelperUserId(allUsers, helperName);
+    const clrs = allUsers.filter((u) => {
+      if (!u.isActive || !clrRoleMatches(u)) return false;
+      if (!u.excludeFromStats) return true;
+      return isScorecardDigestHelperException(String(u.name ?? ""), {
+        userId: Number(u.id), helperUserId, helperName,
+      });
+    });
     // shotgun_sender_id rides along because the transfer column below is
     // CREDIT, not a row count: half a transfer each to the CLR who published a
     // shotgun lead and the one who claimed it. See shared/transfer-credit.ts.
@@ -17061,6 +17073,18 @@ ${note}` : daysLine;
         fellThrough: count("fell_through"),
       };
     });
+  }
+
+  /** Org-wide helper_assisted=1 count for the digest window (Elleine's assists). */
+  function scorecardDigestHelperAssistedCount(orgId: number, from: string, to: string): number {
+    try {
+      const row = storageExtra.getRawSqlite().prepare(
+        `SELECT COUNT(*) AS n FROM lead_outcomes
+          WHERE org_id=? AND outcome_type='transfer' AND helper_assisted=1
+            AND date >= ? AND date <= ?`,
+      ).get(orgId, from, to) as any;
+      return Number(row?.n ?? 0);
+    } catch { return 0; }
   }
 
   function scorecardManagerEmails(orgId: number): string[] {
@@ -17098,11 +17122,16 @@ ${note}` : daysLine;
     if (!managers.length) return "skipped";
     const dateLabel = w.from === w.to ? w.from : `${w.from} → ${w.to}`;
     const totalTransfers = rows.reduce((s, r) => s + r.transfers, 0);
+    const helperName = String((storageExtra.getEmailSettings() as any)?.helper_name || "Elleine");
+    const helperAssisted = {
+      name: helperName,
+      count: scorecardDigestHelperAssistedCount(orgId, w.from, w.to),
+    };
     const subject = `Transfer Scorecard — ${windowLabel} · ${dateLabel} (${formatTransferCount(totalTransfers)} transfers)`;
     const html = buildEmail({
       subject,
       preheader: `${formatTransferCount(totalTransfers)} transfers · ${rows.reduce((s, r) => s + r.appointments, 0)} appointments`,
-      body: buildScorecardDigestHtml(windowLabel, dateLabel, rows),
+      body: buildScorecardDigestHtml(windowLabel, dateLabel, rows, { helperAssisted }),
     });
     await sendEmail({ to: managers, subject, html });
     console.log(`[scorecard-digest] org ${orgId} ${kind}: sent to ${managers.length} manager(s), ${formatTransferCount(totalTransfers)} transfers ${w.from}..${w.to}`);
