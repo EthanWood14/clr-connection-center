@@ -31,6 +31,7 @@ import {
 import { transferCreditByUser, transferCreditFor } from "@shared/transfer-credit";
 import { sumAvailabilityPortions } from "@shared/half-day";
 import { paceHalfDayContext } from "./half-day";
+import { creditExcludedDayKeys, isCreditExcludedPersonDay, isStatsExcluded } from "@shared/stats-exclusions";
 
 // ── Model tiers ──────────────────────────────────────────────────────────────
 // Entry order is the client dropdown order. Fable runs at effort "high": its
@@ -350,11 +351,36 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
       // loop above could never have found it. Summed over everyone the halves
       // add back to one per transfer, so `totalTransfers` below is unchanged.
       // See shared/transfer-credit.ts.
-      transferCreditByUser(outcomes).forEach((credit, id) => {
-        let entry = statsByClr.get(id);
-        if (!entry) { entry = { transfers: 0, appointments: 0, fellThrough: 0, total: 0, days: new Set() }; statsByClr.set(id, entry); }
-        entry.transfers = credit;
-      });
+      const paceCtx = paceHalfDayContext(getRawSqlite(), user.orgId, start, end);
+      const creditExcludedKeys = creditExcludedDayKeys(paceCtx.excludedDays);
+      // Per-person credit with date-scoped exclusions (Jordon / half / full off).
+      {
+        const creditById = new Map<number, number>();
+        for (const o of outcomes as any[]) {
+          if ((o.outcomeType ?? o.outcome_type) !== "transfer") continue;
+          const date = String(o.date ?? "");
+          const maker = Number(o.assistantId ?? o.assistant_id) || 0;
+          const sender = Number(o.shotgunSenderId ?? o.shotgun_sender_id) || 0;
+          const add = (uid: number, amount: number) => {
+            if (!uid || amount <= 0) return;
+            if (isCreditExcludedPersonDay(uid, date, creditExcludedKeys)) return;
+            if (isStatsExcluded(String(usersById.get(uid)?.name ?? ""), date)) return;
+            creditById.set(uid, (creditById.get(uid) ?? 0) + amount);
+          };
+          if (sender > 0 && sender !== maker) {
+            add(maker, 0.5);
+            add(sender, 0.5);
+          } else if (maker > 0) {
+            add(maker, 1);
+          }
+        }
+        creditById.forEach((credit, id) => {
+          let entry = statsByClr.get(id);
+          if (!entry) { entry = { transfers: 0, appointments: 0, fellThrough: 0, total: 0, days: new Set() }; statsByClr.set(id, entry); }
+          entry.transfers = credit;
+        });
+      }
+
       const callsByClr = new Map<number, any>(calls.map((row) => [Number(row.assistant_id ?? row.assistantId), row]));
 
       // Rows = the CLR roster UNION anyone with activity in the range, so a
@@ -367,7 +393,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         if (active && clrLike && portal !== "lap" && portal !== "lop") ids.add(id);
       }
 
-      const availability = paceHalfDayContext(getRawSqlite(), user.orgId, start, end).availability;
+      const availability = paceCtx.availability;
       const perClr = [...ids].map((id) => {
         const u = usersById.get(id);
         const stat = statsByClr.get(id);

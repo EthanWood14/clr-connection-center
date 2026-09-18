@@ -24,6 +24,7 @@ import {
   type DayAvailabilityContext,
   type DayPortion,
 } from "@shared/half-day";
+import { buildCreditExcludedPersonDays } from "@shared/stats-exclusions";
 
 export {
   asAvailabilityContext,
@@ -242,11 +243,23 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
   // Full day off wins over standing/approved half on the same person-day.
   for (const key of fullOffDays) halfDays.delete(key);
 
-  const excludedDays = buildPaceExclusions(users).map(({ userId, date }) => ({ userId, date }));
+  // Jeremy one-offs + Jordon from-date + EVERY half day + EVERY full off —
+  // credit/score boards drop these person-days entirely (Ethan 18 Sep 2026).
+  // availability.halfDays still carries 0.5 for display-only goal proration.
+  const paceOneOffs = buildPaceExclusions(users).map(({ userId, date }) => ({ userId, date }));
+  const excludedDays = buildCreditExcludedPersonDays({
+    users,
+    from,
+    to: today,
+    halfDays,
+    fullOffDays,
+    extra: paceOneOffs,
+  });
   const availability: DayAvailabilityContext = {
     halfDays,
     fullOffDays,
-    excludedDays: excludedDayKeys(excludedDays),
+    // Goals/availability keep Jeremy-style one-offs here; half stays 0.5 weight.
+    excludedDays: excludedDayKeys(paceOneOffs),
   };
 
   const pick = (who: "jeremy" | "jackie" | "chris") => {
