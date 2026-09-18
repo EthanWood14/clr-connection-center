@@ -94,6 +94,10 @@ export function planTransferRaces<T extends TransferRaceEvent>(
   const seen = new Set<string>();
   const transfers = events.filter(event => {
     if (event.kind !== "transfer" || !showsFieldRace(event.id) || seen.has(event.id) || played.has(event.id)) return false;
+    // No celebration when there is no actual transfer credit for today —
+    // metadata edits, old-date rows, and empty feeds must not fire the race.
+    const creditRows = event.raceCredits ?? [];
+    if (!creditRows.some(row => Number(row.credit) > 0)) return false;
     seen.add(event.id);
     return true;
   });

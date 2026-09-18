@@ -30,6 +30,8 @@ interface TimeOffRequest {
   startDate: string;
   endDate: string;
   reason: string;
+  dayPortion?: "full" | "half";
+  halfDay?: boolean;
   status: "pending" | "approved" | "denied" | "cancelled";
   reviewedBy: number | null;
   reviewerName: string | null;
@@ -129,6 +131,7 @@ export default function TimeOff() {
   const isAdmin = !!(user && (user.role === "admin" || (user as any).superAdmin));
 
   const [startDate, setStartDate] = useState("");
+  const [halfDayRequest, setHalfDayRequest] = useState(false);
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
@@ -162,7 +165,7 @@ export default function TimeOff() {
   }
 
   const createMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/time-off", { startDate, endDate, reason, onBehalfOf: forUserId ? Number(forUserId) : undefined }),
+    mutationFn: () => apiRequest("POST", "/api/time-off", { startDate, endDate, reason, dayPortion: halfDayRequest ? "half" : "full", onBehalfOf: forUserId ? Number(forUserId) : undefined }),
     onSuccess: (d: any) => {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3500);
@@ -170,10 +173,10 @@ export default function TimeOff() {
       toast({
         title: d?.status === "approved" ? "Vacation scheduled" : "Request sent! 🎉",
         description: d?.status === "approved" && who
-          ? `${who} will be excluded from daily assignments for the selected dates.`
+          ? (halfDayRequest ? `${who}: half day scheduled — still gets LO assignments, halved transfers/day, not marked late.` : `${who} will be excluded from daily assignments for the selected dates.`)
           : (who ? ("Submitted for " + who + (d?.emailedTo ? " — emailed to " + d.emailedTo : "") + ".") : (d?.emailedTo ? "Emailed to " + d.emailedTo + " for approval." : "Sit tight — your manager will review it shortly.")),
       });
-      setStartDate(""); setEndDate(""); setReason(""); setForUserId("");
+      setStartDate(""); setEndDate(""); setReason(""); setForUserId(""); setHalfDayRequest(false);
       refresh();
     },
     onError: (e: any) => toast({ title: "Could not submit", description: e?.message ?? "Try again.", variant: "destructive" }),
@@ -339,6 +342,21 @@ export default function TimeOff() {
             </div>
           )}
           <div className="flex items-center justify-end">
+            <label className="flex items-start gap-2.5 rounded-lg border border-sky-200/80 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-800 px-3 py-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={halfDayRequest}
+                onChange={(e) => setHalfDayRequest(e.target.checked)}
+                data-testid="checkbox-timeoff-half-day"
+              />
+              <span className="text-[13px] leading-snug">
+                <span className="font-medium text-foreground">Half day</span>
+                <span className="block text-muted-foreground text-[12px] mt-0.5">
+                  Halves your transfers/day weight, still gives you LO assignments, and will not mark you late. Full days still pull you off the daily rotation.
+                </span>
+              </span>
+            </label>
             <Button onClick={() => createMutation.mutate()} disabled={!canSubmit} className="gap-1.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white shadow-sm" data-testid="button-submit-timeoff">
               <Plane className="w-4 h-4" /> {createMutation.isPending ? "Sending…" : (isManager && forUserId ? "Schedule CLR Vacation" : "Request My Time Off")}
             </Button>
@@ -368,7 +386,7 @@ export default function TimeOff() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold">{r.userName}</span>
-                        <StatusBadge status={r.status} />
+                        {(r.halfDay || r.dayPortion === "half") && <Badge className="text-xs px-2 py-0.5 bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300">Half day</Badge>}<StatusBadge status={r.status} />
                       </div>
                       <p className="text-sm text-foreground mt-0.5">
                         {fmtDate(r.startDate)} &rarr; {fmtDate(r.endDate)}
@@ -454,7 +472,7 @@ export default function TimeOff() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-medium">{fmtDate(r.startDate)} &rarr; {fmtDate(r.endDate)}</span>
-                    <StatusBadge status={r.status} />
+                    {(r.halfDay || r.dayPortion === "half") && <Badge className="text-xs px-2 py-0.5 bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300">Half day</Badge>}<StatusBadge status={r.status} />
                     <span className="text-xs text-muted-foreground">{dayCount(r.startDate, r.endDate)} day(s)</span>
                   </div>
                   {r.reason && <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-wrap">{r.reason}</p>}

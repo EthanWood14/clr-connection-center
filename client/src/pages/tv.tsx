@@ -132,6 +132,15 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
     });
     for (const ev of data.events) {
       if (played.current.has(ev.id)) continue;
+      // False transfer moments: a transfer-shaped event with no today's credit
+      // must not play the celebration/race. Remember the id so it stays quiet.
+      if (ev.kind === "transfer") {
+        const credits = (ev as { raceCredits?: Array<{ credit: number }> }).raceCredits ?? [];
+        if (!credits.some((row) => Number(row.credit) > 0)) {
+          remember(ev.id);
+          continue;
+        }
+      }
       const race = races.get(ev.id);
       // The race IS this transfer's moment, not a second sampled celebration.
       // Keep its original ID so an edit or refresh cannot replay an old result.

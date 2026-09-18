@@ -1,14 +1,12 @@
+import { approvedFullDayTimeOffUserIds } from "./half-day";
+
+/** @deprecated Prefer approvedFullDayTimeOffUserIds — half days still get LOs. */
 export function approvedTimeOffUserIds(db: any, orgId: number, date: string): Set<number> {
-  const rows = db.prepare(`
-    SELECT DISTINCT user_id
-    FROM time_off_requests
-    WHERE org_id=? AND status='approved' AND start_date<=? AND end_date>=?
-  `).all(orgId, date, date) as Array<{ user_id: number }>;
-  return new Set(rows.map(row => Number(row.user_id)));
+  return approvedFullDayTimeOffUserIds(db, orgId, date);
 }
 
 export function assignmentClrsForDate(users: any[], db: any, orgId: number, date: string): any[] {
-  const away = approvedTimeOffUserIds(db, orgId, date);
+  const away = approvedFullDayTimeOffUserIds(db, orgId, date);
   return users.filter(user => {
     const userOrgId = Number(user.orgId ?? user.org_id ?? 1) || 1;
     const isActive = !!(user.isActive ?? user.is_active);

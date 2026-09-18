@@ -1,4 +1,4 @@
-﻿// Single source of truth for the app version (semver, "X.Y.Z").
+// Single source of truth for the app version (semver, "X.Y.Z").
 //
 // Bump this on every deploy. The client bakes this value into its bundle at
 // build time, and the server serves it from GET /api/version. When a new build
@@ -7,4 +7,4 @@
 //
 // Convention: patch (3.11.x) for fixes/small features, minor (3.x.0) for larger
 // features, major (x.0.0) for big releases.
-export const APP_VERSION = "4.119.3";
+export const APP_VERSION = "4.119.4";
