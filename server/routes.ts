@@ -154,6 +154,13 @@ import {
 } from "@shared/lead-capture";
 import { presenceReleaseCutoff } from "@shared/shotgun-presence";
 import { canReclaimShotgunLead } from "@shared/shotgun-reclaim";
+import {
+  canAcceptShotgunBounceback,
+  fireShotgunBouncebacks,
+  isShotgunBouncebackWeekActive,
+  leadHasTransferOrAppointment,
+  pacificCalendarDate as shotgunBouncebackPacificDate,
+} from "./shotgun-bounceback";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -8424,6 +8431,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     offerExpiresAt: row.offer_expires_at ? String(row.offer_expires_at) : null,
     claimedAt: row.claimed_at ? String(row.claimed_at) : null,
     presenceConfirmedAt: row.presence_confirmed_at ? String(row.presence_confirmed_at) : null,
+    bouncebackFiredAt: row.bounceback_fired_at ? String(row.bounceback_fired_at) : null,
     called: !!row.called, texted: !!row.texted, resultNotes: String(row.result_notes ?? ""),
     transferOutcomeId: row.transfer_outcome_id == null ? null : Number(row.transfer_outcome_id),
     transferType: row.result_transfer_type ? String(row.result_transfer_type) : null,
@@ -8525,6 +8533,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   }
 
   function advanceShotgun(nowIso = new Date().toISOString()) {
+    try {
+      fireShotgunBouncebacks(shotgunDb(), nowIso, SHOTGUN_READY_TTL_MS, ({ leadName, readyUserIds }) => {
+        const title = "Shotgun bounceback — still needs a transfer or appointment";
+        const body = `${leadName} landed 35 minutes ago and still has no transfer or appointment. Open C3 to work it again.`;
+        for (const userId of readyUserIds) {
+          try {
+            storage.createNotification({ userId, type: "shotgun_bounceback", title, message: body, isRead: false } as any);
+          } catch {}
+        }
+        if (readyUserIds.length) {
+          sendPushToUsers(readyUserIds, { title: "Shotgun bounceback", body, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+        }
+      });
+    } catch (error: any) {
+      console.error("[shotgun-bounceback] fire failed:", error?.message ?? error);
+    }
     const db = shotgunDb();
     const missed: Array<{ leadId: number; userId: number; orgId: number; leadName: string }> = [];
     const expired = db.transaction(() => {
@@ -8661,11 +8685,52 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       WHERE l.org_id=? AND l.status IN ('queued','offered')
         AND NOT (l.status='offered' AND l.current_assignee_id=?)
       ORDER BY l.updated_at DESC LIMIT 20`).all(orgId, userId, orgId, userId) as any[] : [];
+    // Timed bounceback leads Ready CLRs can grab — fired once, still live, no
+    // transfer/appointment. Opted-out CLRs never see these (isClr already false).
+    const bouncebackRows = isClr && isShotgunBouncebackWeekActive(shotgunBouncebackPacificDate())
+      ? shotgunDb().prepare(`
+      SELECT l.*, creator.name AS created_by_name, assignee.name AS current_assignee_name,
+        result_outcome.transfer_type AS result_transfer_type, result_lo.full_name AS result_lo_name,
+        result_outcome.outcome_type AS result_outcome_type
+      FROM shotgun_leads l
+      LEFT JOIN users creator ON creator.id=l.created_by_user_id
+      LEFT JOIN users assignee ON assignee.id=l.current_assignee_id
+      LEFT JOIN lead_outcomes result_outcome ON result_outcome.id=l.transfer_outcome_id AND result_outcome.org_id=l.org_id
+      LEFT JOIN loan_officers result_lo ON result_lo.id=result_outcome.lo_id AND result_lo.org_id=l.org_id
+      WHERE l.org_id=? AND l.bounceback_fired_at IS NOT NULL
+        AND l.status IN ('queued','offered')
+        AND NOT (l.status='offered' AND l.current_assignee_id=?)
+        AND (result_outcome.id IS NULL OR result_outcome.outcome_type NOT IN ('transfer','appointment'))
+      ORDER BY l.bounceback_fired_at DESC LIMIT 10`).all(orgId, userId) as any[]
+      : [];
     const seenLeadIds = new Set(rows.map((r: any) => Number(r.id)));
     const mergedLeads = rows.slice();
     for (const row of reclaimRows) {
-      if (!seenLeadIds.has(Number(row.id))) mergedLeads.push(row);
+      if (!seenLeadIds.has(Number(row.id))) {
+        mergedLeads.push(row);
+        seenLeadIds.add(Number(row.id));
+      }
     }
+    for (const row of bouncebackRows) {
+      if (!seenLeadIds.has(Number(row.id))) {
+        mergedLeads.push(row);
+        seenLeadIds.add(Number(row.id));
+      }
+    }
+    const bouncebacks = bouncebackRows
+      .filter((row: any) => !leadHasTransferOrAppointment(shotgunDb(), row))
+      .map((row: any) => ({
+        id: Number(row.id),
+        leadName: String(row.lead_name ?? ""),
+        phone: String(row.phone ?? ""),
+        stateCode: String(row.state_code ?? ""),
+        source: String(row.source ?? ""),
+        status: String(row.status),
+        bouncebackFiredAt: row.bounceback_fired_at ? String(row.bounceback_fired_at) : null,
+        createdAt: String(row.created_at ?? ""),
+        currentAssigneeId: row.current_assignee_id == null ? null : Number(row.current_assignee_id),
+        currentAssigneeName: row.current_assignee_name ? String(row.current_assignee_name) : null,
+      }));
     res.json({ canManage, canPublish, isClr, isReady, optedOut, offerSeconds: SHOTGUN_OFFER_SECONDS, serverNow: new Date().toISOString(),
       leads: mergedLeads.map(shotgunLeadJson), readyUsers,
       holding: holding ? { id: Number(holding.id), leadName: String(holding.lead_name), claimedAt: holding.claimed_at ?? null } : null,
@@ -8677,6 +8742,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
         currentAssigneeId: row.current_assignee_id == null ? null : Number(row.current_assignee_id),
         currentAssigneeName: row.current_assignee_name ? String(row.current_assignee_name) : null,
       })),
+      bouncebacks,
+      bouncebackWeekActive: isShotgunBouncebackWeekActive(shotgunBouncebackPacificDate()),
     });
   });
 
@@ -9322,6 +9389,91 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     // Do not advanceShotgun for this lead — reclaim skips the floor rotation.
     // Still advance so any offers we released above can find a new CLR.
+    advanceShotgun(now);
+    res.json({ ok: true, claimed: true });
+  });
+
+
+  // Timed bounceback accept: any Ready CLR (not opted out) may grab a fired
+  // bounceback lead that still has no transfer/appointment. Skips floor offer
+  // countdown; respects one-live-offer and unfinished claimed holds.
+  app.post("/api/shotgun/:id/bounceback", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const leadId = Number(req.params.id);
+    const me = storage.getUserById(userId) as any;
+    if (!shotgunUserIsClr(me)) return res.status(403).json({ error: "Only active CLRs can take a Shotgun bounceback." });
+    const optedOut = !!(me?.shotgunOptedOut ?? me?.shotgun_opted_out);
+    const now = new Date().toISOString();
+    const db = shotgunDb();
+    const outcome = db.transaction(() => {
+      const lead = db.prepare(`SELECT * FROM shotgun_leads WHERE id=? AND org_id=?`).get(leadId, orgId) as any;
+      if (!lead) return { status: 404 as const, error: "Shotgun lead not found." };
+      const holdingOther = db.prepare(`SELECT id,lead_name FROM shotgun_leads
+        WHERE org_id=? AND current_assignee_id=? AND status='claimed' AND id<>? ORDER BY claimed_at LIMIT 1`)
+        .get(orgId, userId, leadId) as any;
+      const decision = canAcceptShotgunBounceback({
+        status: String(lead.status),
+        currentAssigneeId: lead.current_assignee_id == null ? null : Number(lead.current_assignee_id),
+        requesterId: userId,
+        bouncebackFiredAt: lead.bounceback_fired_at,
+        hasTransferOrAppointment: leadHasTransferOrAppointment(db, lead),
+        holdingOtherClaimed: !!holdingOther,
+        optedOut,
+        weekActive: isShotgunBouncebackWeekActive(shotgunBouncebackPacificDate(new Date(now))),
+      });
+      if (!decision.ok) {
+        return { status: 409 as const, error: decision.reason,
+          blockedBy: holdingOther ? { id: Number(holdingOther.id), leadName: String(holdingOther.lead_name) } : undefined };
+      }
+      const otherOffers = db.prepare(`SELECT id,current_assignee_id FROM shotgun_leads
+        WHERE org_id=? AND status='offered' AND current_assignee_id=? AND id<>?`).all(orgId, userId, leadId) as any[];
+      for (const other of otherOffers) {
+        db.prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
+          WHERE id=? AND status='offered' AND current_assignee_id=?`).run(now, other.id, userId);
+        db.prepare(`UPDATE shotgun_offers SET response='bounceback_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, other.id, userId);
+        db.prepare(`UPDATE shotgun_offer_events SET response='bounceback_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, other.id, userId);
+      }
+      const priorAssignee = lead.current_assignee_id == null ? null : Number(lead.current_assignee_id);
+      if (String(lead.status) === "offered" && priorAssignee && priorAssignee !== userId) {
+        db.prepare(`UPDATE shotgun_offers SET response='bounceback_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, priorAssignee);
+        db.prepare(`UPDATE shotgun_offer_events SET response='bounceback_away',responded_at=?
+          WHERE lead_id=? AND user_id=? AND response='pending'`).run(now, leadId, priorAssignee);
+      }
+      const changed = db.prepare(`UPDATE shotgun_leads SET status='claimed',current_assignee_id=?,offer_expires_at=NULL,
+          claimed_at=?,presence_confirmed_at=?,called=0,texted=0,result_notes='',transfer_outcome_id=NULL,done_at=NULL,updated_at=?
+        WHERE id=? AND org_id=? AND status IN ('queued','offered')
+          AND bounceback_fired_at IS NOT NULL
+          AND NOT (status='offered' AND current_assignee_id=?)`).run(userId, now, now, now, leadId, orgId, userId);
+      if (!changed.changes) return { status: 409 as const, error: "This lead moved before the bounceback could be taken." };
+      const expiresAt = now;
+      db.prepare(`INSERT INTO shotgun_offers (lead_id,org_id,user_id,offered_at,expires_at,response,responded_at)
+        VALUES (?,?,?,?,?,'bounceback_accepted',?)
+        ON CONFLICT(lead_id,user_id) DO UPDATE SET
+          offered_at=excluded.offered_at, expires_at=excluded.expires_at,
+          response='bounceback_accepted', responded_at=excluded.responded_at`)
+        .run(leadId, orgId, userId, now, expiresAt, now);
+      db.prepare(`INSERT INTO shotgun_offer_events (lead_id,org_id,user_id,offered_at,expires_at,response,responded_at)
+        VALUES (?,?,?,?,?,'bounceback_accepted',?)`).run(leadId, orgId, userId, now, expiresAt, now);
+      return { status: 200 as const, priorAssignee, leadName: String(lead.lead_name ?? "") };
+    })();
+    if (outcome.status !== 200) {
+      return res.status(outcome.status).json({ error: outcome.error, blockedBy: (outcome as any).blockedBy });
+    }
+    audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
+      entityId: leadId, entityLabel: outcome.leadName || "Shotgun lead",
+      details: JSON.stringify({ action: "bounceback_accept", priorAssigneeId: outcome.priorAssignee ?? null }) });
+    if (outcome.priorAssignee && outcome.priorAssignee !== userId) {
+      try {
+        storage.createNotification({ userId: outcome.priorAssignee, type: "shotgun_requeued",
+          title: "Shotgun offer moved to bounceback",
+          message: `${outcome.leadName} was taken on bounceback by another Ready CLR.`, isRead: false } as any);
+      } catch {}
+      sendPushToUser(outcome.priorAssignee, { title: "Shotgun offer moved", body: `${outcome.leadName} was taken on bounceback.`, url: "/#/shotgun", portal: "c3" }).catch(() => {});
+    }
     advanceShotgun(now);
     res.json({ ok: true, claimed: true });
   });

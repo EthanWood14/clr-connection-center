@@ -887,6 +887,9 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // "Still there?" answered on a claimed lead (shared/shotgun-presence.ts).
   // NULL past the window means the CLR walked away and the lead goes back.
   try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN presence_confirmed_at TEXT`); } catch {}
+  // Timed bounceback (shared/shotgun-bounceback.ts): set once when the 35-minute
+  // re-offer fires or is skipped for outcome/cancel. NULL means not yet decided.
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN bounceback_fired_at TEXT`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_leads_org_status ON shotgun_leads(org_id, status, created_at DESC)`); } catch {}
   try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shotgun_transfer_outcome ON shotgun_leads(transfer_outcome_id) WHERE transfer_outcome_id IS NOT NULL`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_offers_lead ON shotgun_offers(lead_id, offered_at)`); } catch {}

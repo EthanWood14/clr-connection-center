@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.10",
+    headline: "Shotgun bounceback: work a lead again 35 minutes later if it still has no transfer or appointment.",
+    items: [
+      { text: "For Pacific dates 2026-09-18 through 2026-09-25, a Shotgun lead that still has no transfer and no appointment 35 minutes after it entered the queue gets a bounceback popup for Ready CLRs — take it and work it again.", audience: "everyone" },
+      { text: "Bounceback fires once per lead. It skips if a transfer or appointment was already logged for that lead (Shotgun write-up or matching phone). After 2026-09-25 Pacific the feature turns off automatically. Grab back, one-live-offer, and opt-out are unchanged.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.9",
     headline: "Lost a Shotgun lead while on the phone? Grab it back.",
     items: [
