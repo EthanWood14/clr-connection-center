@@ -25,6 +25,7 @@ import { GoalNudge } from "@/components/goal-nudge";
 import { TransferCelebration } from "@/components/transfer-celebration";
 import { ShotgunOfferAlert } from "@/components/shotgun-offer-alert";
 import { ShotgunPresencePrompt } from "@/components/shotgun-presence-prompt";
+import { ShotgunReclaimPrompt } from "@/components/shotgun-reclaim-prompt";
 import { AssignedLoLeadAlert } from "@/components/assigned-lo-lead-alert";
 import { LeadPopupDock } from "@/components/lead-popup-dock";
 import { ShotgunResultPrompt } from "@/components/shotgun-result-prompt";
@@ -449,6 +450,7 @@ function AuthenticatedApp() {
                     <LeadPopupDock key={`${user.orgId}:${user.id}`}>
                       <ShotgunOfferAlert />
                       <ShotgunPresencePrompt />
+                      <ShotgunReclaimPrompt />
                       <AssignedLoLeadAlert />
                     </LeadPopupDock>
                     <ShotgunResultPrompt />

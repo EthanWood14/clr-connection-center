@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.9",
+    headline: "Lost a Shotgun lead while on the phone? Grab it back.",
+    items: [
+      { text: "If you already grabbed a Shotgun lead and then lost it (still-there timeout, requeue, or it moved on), and you are still on the phone with that borrower, use Grab back — it reassigns the lead to you without waiting through the floor rotation.", audience: "everyone" },
+      { text: "Grab back only works for the CLR who previously accepted that lead, and only while the lead is still live (queued or offered — not already claimed by someone else, finished, or cancelled). The button asks you to confirm you are on the phone.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.8",
     headline: "Transfer Scorecard emails now label the separate helper section Other CLRs.",
     items: [
