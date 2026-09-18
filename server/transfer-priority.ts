@@ -1002,7 +1002,28 @@ export interface InvestmentRouting {
  * running it on part of the roster, because a rule running on two names out of
  * three reads the third's compliant transfers as flat zeroes.
  */
-export function resolveInvestmentRouting(recipients: RecipientRow[]): InvestmentRouting {
+/** Optional extras for sharpening the problem sentence — never for admitting keys. */
+export interface ResolveInvestmentRoutingOpts {
+  /**
+   * Inactive assistant roster rows (name only is enough). When a sought name
+   * matches nobody ACTIVE, and one of these answers to that first name, the
+   * problem says so — soft-delete is the common way a name "disappears" from
+   * the active query while the row is still on the roster.
+   */
+  inactiveAssistants?: Array<{ name?: string | null }>;
+}
+
+/** True when `name` answers to the sought first name (full name or first word). */
+/** `soughtLower` must already be lowercased. */
+function firstNameMatches(name: string | null | undefined, soughtLower: string): boolean {
+  const n = String(name ?? "").trim().toLowerCase();
+  return n === soughtLower || n.split(/\s+/)[0] === soughtLower;
+}
+
+export function resolveInvestmentRouting(
+  recipients: RecipientRow[],
+  opts: ResolveInvestmentRoutingOpts = {},
+): InvestmentRouting {
   const stopped = (problem: string): InvestmentRouting => ({ keys: null, desk: null, problem });
   // Only assistants, and only ones with an id a transfer could name.
   const rows = (recipients ?? []).filter((r) => r && r.kind === "loa" && hasId(r.id));
@@ -1010,16 +1031,25 @@ export function resolveInvestmentRouting(recipients: RecipientRow[]): Investment
     const first = named.toLowerCase();
     // Their full name, or the first word of it: "Justin" and "Justin Alvarez"
     // are the same person, and the roster carries whichever HR typed.
-    const matches = rows.filter((r) => {
-      const name = String(r.name ?? "").trim().toLowerCase();
-      return name === first || name.split(/\s+/)[0] === first;
-    });
+    const matches = rows.filter((r) => firstNameMatches(r.name, first));
     const desks = matches.filter((r) => hasId(r.deskId)).map((r) => recipientKey("lo", r.deskId as number | string));
     return { named, matches, desks: Array.from(new Set(desks)) };
   });
 
   const missing = sought.filter((s) => !s.matches.length).map((s) => s.named);
-  if (missing.length) return stopped(`the roster has no active assistant named ${andList(missing)}`);
+  if (missing.length) {
+    const inactive = opts.inactiveAssistants ?? [];
+    const inactiveHits = missing.filter((named) =>
+      inactive.some((r) => firstNameMatches(r.name, named.toLowerCase())));
+    if (inactiveHits.length) {
+      return stopped(
+        `the roster has no active assistant named ${andList(missing)}`
+        + ` (${andList(inactiveHits)} ${inactiveHits.length === 1 ? "is" : "are"}`
+        + ` on the roster but inactive)`,
+      );
+    }
+    return stopped(`the roster has no active assistant named ${andList(missing)}`);
+  }
 
   const deskless = sought.filter((s) => !s.desks.length).map((s) => s.named);
   if (deskless.length) return stopped(`the roster records no loan officer's desk for ${andList(deskless)}`);

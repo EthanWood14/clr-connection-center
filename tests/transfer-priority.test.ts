@@ -1052,6 +1052,24 @@ test("HIGH — every way the desk cannot be resolved STOPS the rule and names wh
     /sit together at 2 different loan officers' desks/);
 });
 
+test("HIGH — a missing name that still exists inactive is named as inactive, not as gone", () => {
+  // Soft-delete is how LOAs leave the active placement query while the row
+  // stays on the roster. Without this hint the problem reads like a rename;
+  // with it, whoever is fixing the roster knows to reactivate rather than recreate.
+  const gone = recipients.filter((r) => !(r.kind === "loa" && r.id === MATEO_LOA));
+  const r = resolveInvestmentRouting(gone, {
+    inactiveAssistants: [{ name: "Mateo" }, { name: "Somebody Else" }],
+  });
+  assert.equal(r.keys, null);
+  assert.match(r.problem ?? "", /no active assistant named Mateo/);
+  assert.match(r.problem ?? "", /Mateo is on the roster but inactive/);
+  // Inactive hints never admit keys — only sharpen the sentence.
+  assert.equal(
+    resolveInvestmentRouting(gone, { inactiveAssistants: [{ name: "Teo" }] }).problem,
+    "the roster has no active assistant named Mateo",
+  );
+});
+
 test("HIGH — `investmentUnscored` fires when the roster cannot resolve the three, and only then", () => {
   // The counter the dashboard's dash hangs on. A roster that cannot resolve the
   // three leaves every flagged transfer to fall through to the reading its
@@ -1440,7 +1458,9 @@ test("nothing in this module reads note text or matches a keyword", () => {
   assert.ok(!/\.includes\(\s*["'`]/.test(code), "no substring matching against a literal");
   // The one place a name is compared is the assistant resolver, and it is the
   // only case-folding in the file.
-  assert.equal((code.match(/toLowerCase/g) ?? []).length, 2,
+  // Two folds in the active match path (sought first + roster name), plus one
+  // when an inactive hint is compared — still only the resolver folds case.
+  assert.equal((code.match(/toLowerCase/g) ?? []).length, 3,
     "only resolveInvestmentRouting folds case");
 
   // The assistant column IS read now — she is the destination a prioritised
@@ -1906,12 +1926,12 @@ test("the scan is memoised, because one request builds ten windows", () => {
   // floor for every day of it, and the endpoint does that ten times per page
   // load, synchronously, for every manager with the dashboard open.
   assert.match(routes, /const PLACEMENT_CACHE_TTL_MS = 2 \* 60 \* 1000;/);
-  assert.match(routes, /const placementCache = new Map<string, \{ at: number; rows: Map<number, PlacementCell> \}>\(\);/);
+  assert.match(routes, /const placementCache = new Map<string, \{ at: number; rows: Map<number, PlacementCell>; problem: string \| null \}>\(\);/);
   const scan = placementScan();
   // Keyed on the window, so the ten windows cannot share an entry and
   // yesterday's "Today" cannot be served as today's.
   assert.match(scan, /const placementKey = `\$\{placementOrg\}\|\$\{startDate\}\|\$\{endDate\}`;/);
-  assert.match(scan, /placementCache\.set\(placementKey, \{ at: cachedAt, rows: cached \}\)/);
+  assert.match(scan, /placementCache\.set\(placementKey, \{ at: cachedAt, rows: cached, problem: placementRoutingProblem \}\)/);
   // The keys carry dates, so yesterday's can never be asked for again. A cache
   // that only ever grows is a slow leak in a process that runs for weeks.
   assert.match(scan, /if \(cachedAt - v\.at >= PLACEMENT_CACHE_TTL_MS\) placementCache\.delete\(k\);/);
@@ -2077,7 +2097,7 @@ test("the placement scan reads EVERY transfer in the range, excluded CLRs includ
 test("the route applies the investment rule; the module never guesses it", () => {
   const scan = placementScan();
   assert.match(scan, /INVESTMENT_PROPERTY_INPUT_AVAILABLE/, "one switch, honoured at the call site");
-  assert.match(scan, /resolveInvestmentRouting\(placementRecipients\)/, "the three come from the roster");
+  assert.match(scan, /resolveInvestmentRouting\(placementRecipients, \{ inactiveAssistants: inactivePlacementLoas \}\)/, "the three come from the roster");
   assert.match(scan, /isInvestmentProperty\(o\.conversation_notes\)/, "the flag from the app's own answer");
   // The FLAG travels whatever the roster managed to resolve. Gating it on the
   // routing having resolved was the same thing as hiding the failure: the
@@ -2162,9 +2182,17 @@ test("HIGH — a routing rule that could not run still shows ordinary Placed %, 
   // Cell note still flags the condition when unscored > 0.
   assert.match(mgr, /if \(Number\(r\.placementUnscored \?\? 0\) > 0\) return "routing rule off";/);
   // The warn names what failed and which assistant: the module's own sentence,
-  // not a generic one this route made up.
+  // not a generic one this route made up — and lists the active LOA first names
+  // present so a Railway log is enough to see who the resolver actually saw.
   const scan = placementScan();
   assert.match(scan, /investmentRouting\.problem/);
+  assert.match(scan, /active LOA first names/);
+  assert.match(scan, /inactiveAssistants: inactivePlacementLoas/);
+  // The concrete problem travels on the API so the Placed hover can name it.
+  assert.match(scan, /placementRoutingProblem = investmentRouting\?\.problem \?\? null/);
+  assert.match(routes, /placementRoutingProblem,/);
+  assert.match(mgr, /r\.placementRoutingProblem/);
+  assert.match(mgr, /Reason: \$\{concrete\}\./);
 });
 
 test("HIGH — a routing 0% and a placement 0% are told apart by the CELL, not by hovering", () => {

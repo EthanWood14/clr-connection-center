@@ -140,6 +140,8 @@ type RangeBlock = {
     phonesRejected: number;
     rejectedSamples: string[];
   };
+  /** Module problem when Justin/Mateo/John could not resolve; null when the ladder is on. */
+  placementRoutingProblem?: string | null;
   clrTrend?: {
     dates: string[];
     series: {
@@ -355,12 +357,17 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     // ordinary placement, not a Justin/Mateo/John routing verdict — but the
     // share itself still shows when the sample ranks.
     if (unscored > 0) {
+      const concrete = typeof r.placementRoutingProblem === "string" && r.placementRoutingProblem.trim()
+        ? r.placementRoutingProblem.trim()
+        : null;
       const ruleOff = `The investment routing rule is not running: the roster cannot resolve Chris's`
         + ` Justin, Mateo or John, so ${unscored} of this CLR's transfers that the app recorded as`
         + ` Investment/2nd Home ${unscored === 1 ? "was" : "were"} not judged on Justin/Mateo/John`
         + ` routing and ${unscored === 1 ? "was" : "were"} scored as ordinary placement instead.`
-        + ` The share shown is that ordinary mean; the cell notes "routing rule off". The server`
-        + ` log names what failed.`;
+        + ` The share shown is that ordinary mean; the cell notes "routing rule off".`
+        + (concrete
+          ? ` Reason: ${concrete}.`
+          : ` The server log names what failed.`);
       if (r.placementScore == null) {
         const why = !r.transfers
           ? "No transfers logged in this range, so there is no placement to judge."
