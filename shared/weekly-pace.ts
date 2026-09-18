@@ -17,9 +17,15 @@
  *    days."
  *  - "for this week, include today as half of a day"
  *
+ * Half days (18 Sep 2026): an approved half day — or a standing half-day rule —
+ * halves that person's day weight. A named person-day exclusion (Jeremy on
+ * 2026-09-17) drops both the day and any transfers that day from the rate.
+ *
  * Pure, so the wallboard and any report read the same numbers from the same
  * rules rather than two lots of SQL that drift.
  */
+
+import { paceDayWeight } from "./half-day";
 
 /** A CLR counts from this many days after their first recorded day of work. */
 export const PACE_RAMP_DAYS = 14;
@@ -36,7 +42,7 @@ export type PaceWeek = {
   label: string;
   /** People who worked at least one weekday that week. */
   clrs: number;
-  /** Days worked, today weighted at PACE_TODAY_WEIGHT. */
+  /** Days worked, today weighted at PACE_TODAY_WEIGHT (and half days halved). */
   clrDays: number;
   transfers: number;
   /** transfers ÷ clrDays, or null when nobody worked. */
@@ -80,9 +86,18 @@ export function weeklyPace(input: {
   today: string;
   /** How many weeks back, ending with the one today is in. */
   weeks?: number;
+  /**
+   * User ids on an approved half day (or standing half-day rule) for a given
+   * date. Keyed as `${userId}:${date}` → true.
+   */
+  halfDays?: ReadonlySet<string>;
+  /** Person-days dropped from both denominator and numerator. */
+  excludedDays?: ReadonlyArray<{ userId: number; date: string }>;
 }): PaceWeek[] {
   const { days, credits, today } = input;
   const count = Math.max(1, Math.min(52, input.weeks ?? 10));
+  const halfDays = input.halfDays ?? new Set<string>();
+  const excluded = input.excludedDays ?? [];
 
   // First day of work per person, for the ramp rule.
   const firstDay = new Map<number, string>();
@@ -108,7 +123,18 @@ export function weeklyPace(input: {
     const worked = new Map<number, number>();
     days.forEach((row) => {
       if (!inWeek(row.date) || !isWeekday(row.date) || !ramped(row.userId)) return;
-      const weight = row.date === today ? PACE_TODAY_WEIGHT : 1;
+      const halfSet = halfDays.has(`${row.userId}:${row.date}`)
+        ? new Set([row.userId])
+        : new Set<number>();
+      const weight = paceDayWeight({
+        userId: row.userId,
+        date: row.date,
+        today,
+        halfDayUserIds: halfSet,
+        excluded,
+        todayWeight: PACE_TODAY_WEIGHT,
+      });
+      if (weight <= 0) return;
       worked.set(row.userId, (worked.get(row.userId) ?? 0) + weight);
     });
 
@@ -117,6 +143,7 @@ export function weeklyPace(input: {
     let transfers = 0;
     credits.forEach((row) => {
       if (!inWeek(row.date) || !worked.has(row.userId)) return;
+      if (excluded.some((e) => e.userId === row.userId && e.date === row.date)) return;
       transfers += Number(row.credit) || 0;
     });
 

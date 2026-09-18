@@ -71,13 +71,16 @@ test("first load, day rollover and changed rosters never manufacture movement", 
   }
 });
 
-test("old-date edits, missing credit and unexplained score changes celebrate without invented passes", () => {
+test("old-date edits and missing credit do not play a transfer race at all", () => {
   const before = [driver(1, 5), driver(2, 4)], after = [driver(1, 5), driver(2, 6)];
-  for (const event of [transfer(1, 2), { ...transfer(1, 2), raceCredits: [] }, { ...transfer(1, 2), raceCredits: undefined }]) {
-    const [race] = planTransferRaces(before, after, [event]);
-    assert.deepEqual(race.before, after);
-    assert.deepEqual(race.people, after);
+  // Empty / missing raceCredits = no transfer for today → no celebration.
+  for (const event of [{ ...transfer(1, 2), raceCredits: [] }, { ...transfer(1, 2), raceCredits: undefined }]) {
+    assert.deepEqual(planTransferRaces(before, after, [event]), []);
   }
+  // Credit present but unexplained score change: still celebrate, without inventing a pass.
+  const [race] = planTransferRaces(before, after, [transfer(1, 2)]);
+  assert.deepEqual(race.before, after);
+  assert.deepEqual(race.people, after);
   const [unchanged] = planTransferRaces(after, after, [transfer(1, 2)]);
   assert.deepEqual(unchanged.before, unchanged.people);
 });
@@ -100,7 +103,12 @@ test("stable user identity selects the right car when names repeat", () => {
 
 test("malformed or duplicate credits cannot move a car", () => {
   const before = [driver(1, 4)], after = [driver(1, 5)];
-  for (const raceCredits of [[{ userId: 1, credit: NaN }], [{ userId: 1, credit: -1 }], [{ userId: 1, credit: 2 }], [{ userId: 1, credit: .5 }, { userId: 1, credit: .5 }]]) {
+  // Non-positive credit never qualifies as a transfer moment.
+  for (const raceCredits of [[{ userId: 1, credit: NaN }], [{ userId: 1, credit: -1 }]]) {
+    assert.deepEqual(planTransferRaces(before, after, [{ ...transfer(1, 1), raceCredits }]), []);
+  }
+  // Credit rows that fail validation still enqueue a still celebration (no invented pass).
+  for (const raceCredits of [[{ userId: 1, credit: 2 }], [{ userId: 1, credit: .5 }, { userId: 1, credit: .5 }]]) {
     const [race] = planTransferRaces(before, after, [{ ...transfer(1, 1), raceCredits }]);
     assert.deepEqual(race.before, race.people);
   }
@@ -170,7 +178,7 @@ test("broadcast graphics follow the actual camera and crossing instead of announ
   const wrapper=readFileSync(new URL("../client/src/components/tv/field-race.tsx", import.meta.url),"utf8");
   assert.match(wrapper,/onShot:next=>\{if\(!cancelled\)setShot\(next\);\}/);
   assert.match(wrapper,/data-broadcast-shot=\{shot\.id\}/);
-  assert.match(wrapper,/data-testid="tv-race-shot-label">\{shot\.label\}/);
+  assert.match(wrapper,/data-testid="tv-race-shot-label">\{isDayRace && hourLabel \? hourLabel : shot\.label\}/);
   assert.match(wrapper,/data-testid="tv-race-action-caption">\{caption\}/);
   assert.match(wrapper,/raceTransitionStartRank\(maneuver,maneuvers\)/);
   assert.doesNotMatch(wrapper,/MAKES THE PASS|Onboard focus|Turn 03/);

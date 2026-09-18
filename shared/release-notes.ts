@@ -29,6 +29,24 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.119.4",
+    headline: "Half days on Time Off, a cleaner transfers/day, and no false TV transfer races.",
+    items: [
+      { text: "Time Off now lets you request a half day. An approved half day halves that person's transfers/day weight, still gives them LO assignments, and does not mark them late.", audience: "everyone" },
+      { text: "Jackie is marked half day for 2026-09-17 (PT), Chris Bermudez for 2026-09-18 (PT), and Matthew Rosas has a standing half day every weekday.", audience: "manager" },
+      { text: "Jeremy Lapiz's 2026-09-17 is excluded from the office TV transfers/day pace chart.", audience: "everyone" },
+      { text: "The office TV no longer plays the transfer celebration or race when there is no transfer credit for today — false transfer moments stay quiet.", audience: "everyone" },
+    ],
+  },
+  {
+    version: "4.119.3",
+    headline: "Play today's race on the office TV, hour by hour.",
+    items: [
+      { text: "The TV Play control replays today's race at eight seconds per office hour, skips empty hours, and keeps Elleine off the field. It does not log a transfer or change scores.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.119.2",
     headline: "Chris Redoble Retail leads go straight to Shotgun.",
     items: [
