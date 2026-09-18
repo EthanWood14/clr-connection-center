@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.3",
+    headline: "Manager Placed % hover tip is readable again.",
+    items: [
+      { text: "On the Manager Transfer Scorecard, hovering Placed % again shows the full explanation of how the share is scored.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.2",
     headline: "Manager Placed % still shows when investment routing is off.",
     items: [
