@@ -35,6 +35,7 @@ export type ShotgunLead = {
   claimedAt: string | null;
   /** When the holder answered "still there?" — null until they do. */
   presenceConfirmedAt?: string | null;
+  bouncebackFiredAt?: string | null;
   called: boolean;
   texted: boolean;
   resultNotes: string;
@@ -74,6 +75,20 @@ export type ShotgunPayload = {
     currentAssigneeId: number | null;
     currentAssigneeName: string | null;
   }>;
+  /** Timed bounceback leads (one week): fired, still live, no transfer/appt. */
+  bouncebacks?: Array<{
+    id: number;
+    leadName: string;
+    phone: string;
+    stateCode: string;
+    source: string;
+    status: string;
+    bouncebackFiredAt: string | null;
+    createdAt: string;
+    currentAssigneeId: number | null;
+    currentAssigneeName: string | null;
+  }>;
+  bouncebackWeekActive?: boolean;
 };
 
 function statusStyle(status: ShotgunLead["status"]) {

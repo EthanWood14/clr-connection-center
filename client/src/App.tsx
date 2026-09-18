@@ -26,6 +26,7 @@ import { TransferCelebration } from "@/components/transfer-celebration";
 import { ShotgunOfferAlert } from "@/components/shotgun-offer-alert";
 import { ShotgunPresencePrompt } from "@/components/shotgun-presence-prompt";
 import { ShotgunReclaimPrompt } from "@/components/shotgun-reclaim-prompt";
+import { ShotgunBouncebackPrompt } from "@/components/shotgun-bounceback-prompt";
 import { AssignedLoLeadAlert } from "@/components/assigned-lo-lead-alert";
 import { LeadPopupDock } from "@/components/lead-popup-dock";
 import { ShotgunResultPrompt } from "@/components/shotgun-result-prompt";
@@ -451,6 +452,7 @@ function AuthenticatedApp() {
                       <ShotgunOfferAlert />
                       <ShotgunPresencePrompt />
                       <ShotgunReclaimPrompt />
+                      <ShotgunBouncebackPrompt />
                       <AssignedLoLeadAlert />
                     </LeadPopupDock>
                     <ShotgunResultPrompt />
