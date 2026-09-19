@@ -193,7 +193,9 @@ test("GET returns defaults and does not create a preference or audit row", (t) =
   assert.deepEqual(h.audits, []);
   assert.deepEqual([...h.routes.keys()], ["GET /api/me/tv-car", "POST /api/me/tv-car/time", "PATCH /api/me/tv-car",
     "PUT /api/me/tv-car/skin", "DELETE /api/me/tv-car/skin",
-    "POST /api/me/tv-car/wrap", "DELETE /api/me/tv-car/wrap", "GET /api/me/tv-car/wrap", "GET /api/tv/:token/cars/:userId/wrap"]);
+    "POST /api/me/tv-car/wrap", "DELETE /api/me/tv-car/wrap",
+    "GET /api/me/tv-car/shop", "POST /api/me/tv-car/shop/buy",
+    "GET /api/me/tv-car/wrap", "GET /api/tv/:token/cars/:userId/wrap"]);
 });
 
 test("Ethan can save only his own cosmetic car preferences without a CLR-role change", t => {

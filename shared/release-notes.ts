@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.19",
+    headline: "Garage shop v2: more upgrades, picture previews, steeper prices, and a one-time garage boost.",
+    items: [
+      { text: "On My TV Car → Garage shop, each upgrade now shows a picture preview tile so you can see chrome rims, neon underglow, ice headlights, and the rest before you buy.", audience: "everyone" },
+      { text: "The catalog is bigger (carbon mirrors, cabin LEDs, matte hood, champion plate, spark exhaust, and more) and prices are substantially higher, so unlocks take more earned transfers, Dialpad calls, or CallTools time.", audience: "everyone" },
+      { text: "The +5 min garage boost is no longer a permanent daily raise — each purchase adds five minutes to today only, and you can buy another boost whenever you need more time.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.18",
     headline: "Garage shop: spend transfers, Dialpad calls, and CallTools time on car upgrades.",
     items: [

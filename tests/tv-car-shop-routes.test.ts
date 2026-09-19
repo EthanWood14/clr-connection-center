@@ -4,18 +4,19 @@ import { readFileSync } from "node:fs";
 import express from "express";
 import Database from "better-sqlite3";
 import { registerTvCarRoutes } from "../server/tv-car-routes";
-import { GARAGE_PLUS_5_ITEM_ID, shopItemById } from "../shared/tv-car-shop";
+import { GARAGE_PLUS_5_ITEM_ID, GARAGE_PLUS_5_SECONDS, shopItemById } from "../shared/tv-car-shop";
+import { TV_CAR_DAILY_SECONDS } from "../shared/tv-car-budget";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-async function harness(t: TestContext, transferCredit = 100) {
+async function harness(t: TestContext, transferCredit = 500) {
   const db = new Database(":memory:");
   t.after(() => db.close());
   db.exec("ATTACH DATABASE ':memory:' AS lapfiles");
   const source = read("server/storage.ts");
   for (const table of [
     "tv_car_preferences", "tv_car_wraps", "tv_car_skins", "tv_car_garage_time",
-    "tv_car_shop_purchases", "lapfiles.tv_car_wrap_blobs",
+    "tv_car_shop_purchases", "tv_car_shop_consumable_purchases", "lapfiles.tv_car_wrap_blobs",
   ]) {
     const ddl = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table.replace(".", "\\.")} \\([\\s\\S]*?\\)\\\``));
     assert.ok(ddl, `production DDL exists for ${table}`);
@@ -32,11 +33,11 @@ async function harness(t: TestContext, transferCredit = 100) {
     is_clr INTEGER, is_active INTEGER, portal TEXT, archived_at TEXT);
   INSERT INTO users (id,org_id,name,role,is_clr,is_active,portal) VALUES
     (7,1,'Taylor','assistant',1,1,NULL);`);
-  // Seed enough Dialpad + CallTools for catalog purchases.
+  // Seed enough Dialpad + CallTools for expensive catalog purchases.
   db.prepare(`INSERT INTO dialpad_daily_stats (org_id,stat_date,agent_key,agent_name,user_id,calls,synced_at)
-    VALUES (1,'2026-09-01','taylor','Taylor',7,400,'now')`).run();
+    VALUES (1,'2026-09-01','taylor','Taylor',7,5000,'now')`).run();
   db.prepare(`INSERT INTO callsync_agent_activity_daily (org_id,assistant_id,activity_date,active_seconds)
-    VALUES (1,7,'2026-09-01',20000)`).run();
+    VALUES (1,7,'2026-09-01',200000)`).run();
 
   const app = express();
   app.use(express.json({ limit: "32kb" }));
@@ -67,44 +68,52 @@ async function harness(t: TestContext, transferCredit = 100) {
   return { db, request };
 }
 
-test("shop schema is additive and keyed so a person cannot own the same item twice", async t => {
+test("shop schema is additive and keyed so a person cannot own the same cosmetic twice", async t => {
   const { db } = await harness(t);
   const schema = db.prepare("SELECT sql FROM sqlite_master WHERE name='tv_car_shop_purchases'").get() as any;
   assert.match(schema.sql, /PRIMARY KEY \(org_id, user_id, item_id\)/);
   assert.match(schema.sql, /transfers/);
-  assert.match(schema.sql, /dialpad_calls/);
-  assert.match(schema.sql, /calltools_seconds/);
+  const consumable = db.prepare("SELECT sql FROM sqlite_master WHERE name='tv_car_shop_consumable_purchases'").get() as any;
+  assert.match(consumable.sql, /AUTOINCREMENT/);
+  assert.match(consumable.sql, /effect_seconds/);
+  const garage = db.prepare("SELECT sql FROM sqlite_master WHERE name='tv_car_garage_time'").get() as any;
+  assert.match(garage.sql, /bonus_seconds/);
 });
 
-test("GET shop reports balances from existing stats and marks affordability", async t => {
-  const { request } = await harness(t, 50);
+test("GET shop reports balances, previews, and marks affordability", async t => {
+  const { request } = await harness(t, 200);
   const res = await request("/api/me/tv-car/shop");
   assert.equal(res.status, 200);
-  assert.equal(res.body.balances.transfers, 50);
-  assert.equal(res.body.balances.dialpad_calls, 400);
-  assert.equal(res.body.balances.calltools_seconds, 20000);
+  assert.equal(res.body.balances.transfers, 200);
+  assert.equal(res.body.balances.dialpad_calls, 5000);
+  assert.equal(res.body.balances.calltools_seconds, 200000);
+  assert.ok(res.body.catalog.length >= 10);
   const gold = res.body.catalog.find((i: any) => i.id === "gold-rain-light");
   assert.equal(gold.owned, false);
   assert.equal(gold.affordable, true);
   assert.ok(gold.priceLabel.includes("transfer"));
+  assert.ok(gold.preview?.motif);
+  const boost = res.body.catalog.find((i: any) => i.id === GARAGE_PLUS_5_ITEM_ID);
+  assert.equal(boost.consumable, true);
+  assert.equal(boost.owned, false);
 });
 
-test("buying charges once, is idempotent, and attaches upgrades to the car", async t => {
-  const { db, request } = await harness(t, 50);
+test("buying cosmetics charges once, is idempotent, and attaches upgrades to the car", async t => {
+  const { db, request } = await harness(t, 200);
   const item = shopItemById("gold-rain-light")!;
   const first = await request("/api/me/tv-car/shop/buy", "POST", { itemId: item.id });
   assert.equal(first.status, 200);
   assert.equal(first.body.inserted, true);
   assert.equal(first.body.alreadyOwned, false);
   assert.deepEqual(first.body.appearance.upgrades, [item.id]);
-  assert.equal(first.body.shop.balances.transfers, 50 - item.price);
+  assert.equal(first.body.shop.balances.transfers, 200 - item.price);
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_purchases").get().n), 1);
 
   const second = await request("/api/me/tv-car/shop/buy", "POST", { itemId: item.id });
   assert.equal(second.status, 200);
   assert.equal(second.body.inserted, false);
   assert.equal(second.body.alreadyOwned, true);
-  assert.equal(second.body.shop.balances.transfers, 50 - item.price, "no second charge");
+  assert.equal(second.body.shop.balances.transfers, 200 - item.price, "no second charge");
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_purchases").get().n), 1);
 
   const car = await request("/api/me/tv-car");
@@ -119,11 +128,28 @@ test("insufficient funds refuse without writing a purchase row", async t => {
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_purchases").get().n), 0);
 });
 
-test("garage +5 purchase raises the daily budget without unlocking edit time retroactively beyond the new cap", async t => {
-  const { request } = await harness(t, 50);
+test("garage boost is a one-time today-only grant and can be rebought", async t => {
+  const { db, request } = await harness(t, 200);
   const buy = await request("/api/me/tv-car/shop/buy", "POST", { itemId: GARAGE_PLUS_5_ITEM_ID });
   assert.equal(buy.status, 200);
   assert.equal(buy.body.inserted, true);
-  assert.equal(buy.body.budget.remaining, 20 * 60);
-  assert.equal(buy.body.shop.garageDailySeconds, 20 * 60);
+  assert.equal(buy.body.budget.remaining, TV_CAR_DAILY_SECONDS + GARAGE_PLUS_5_SECONDS);
+  assert.equal(buy.body.shop.garageDailySeconds, TV_CAR_DAILY_SECONDS + GARAGE_PLUS_5_SECONDS);
+  assert.equal(buy.body.appearance.upgrades?.includes?.(GARAGE_PLUS_5_ITEM_ID) ?? false, false);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_consumable_purchases").get().n), 1);
+  assert.equal(Number(db.prepare("SELECT bonus_seconds FROM tv_car_garage_time LIMIT 1").get().bonus_seconds), GARAGE_PLUS_5_SECONDS);
+
+  // Permanent purchases table must not treat the boost as owned cosmetics.
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_purchases").get().n), 0);
+
+  const again = await request("/api/me/tv-car/shop/buy", "POST", { itemId: GARAGE_PLUS_5_ITEM_ID });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.inserted, true);
+  assert.equal(again.body.budget.remaining, TV_CAR_DAILY_SECONDS + 2 * GARAGE_PLUS_5_SECONDS);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_consumable_purchases").get().n), 2);
+
+  const shop = await request("/api/me/tv-car/shop");
+  const boost = shop.body.catalog.find((i: any) => i.id === GARAGE_PLUS_5_ITEM_ID);
+  assert.equal(boost.owned, false);
+  assert.equal(boost.timesPurchased, 2);
 });

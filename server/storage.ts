@@ -2772,12 +2772,15 @@ function runNewMigrations() {
     day TEXT NOT NULL,
     seconds INTEGER NOT NULL DEFAULT 0,
     last_tick_at TEXT NOT NULL,
+    bonus_seconds INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (org_id, user_id, day)
   )`);
+  // One-time shop boosts add to today's bonus_seconds only (never the base 15).
+  try { sqlite.exec(`ALTER TABLE tv_car_garage_time ADD COLUMN bonus_seconds INTEGER NOT NULL DEFAULT 0`); } catch {}
 
-  // Garage shop purchases. One row per item per person: re-buying is a no-op
-  // (PRIMARY KEY), and price/currency are snapshotted so a later catalog edit
-  // cannot rewrite what was already charged. Cosmetic only — never scoring.
+  // Garage shop purchases. One row per permanent cosmetic per person: re-buying
+  // is a no-op (PRIMARY KEY). Price/currency are snapshotted so a later catalog
+  // edit cannot rewrite what was already charged. Never scoring.
   sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_car_shop_purchases (
     org_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -2787,6 +2790,22 @@ function runNewMigrations() {
     purchased_at TEXT NOT NULL,
     PRIMARY KEY (org_id, user_id, item_id)
   )`);
+
+  // Rebuyable garage-time boosts (and any future consumables). Each row is one
+  // charge + one grant of effect_seconds onto that Pacific day's bonus_seconds.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_car_shop_consumable_purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    item_id TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (currency IN ('transfers','dialpad_calls','calltools_seconds')),
+    price INTEGER NOT NULL CHECK (price >= 0),
+    effect_seconds INTEGER NOT NULL CHECK (effect_seconds > 0),
+    day TEXT NOT NULL,
+    purchased_at TEXT NOT NULL
+  )`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tv_car_shop_consumables_owner
+    ON tv_car_shop_consumable_purchases (org_id, user_id, item_id)`);
 
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss
