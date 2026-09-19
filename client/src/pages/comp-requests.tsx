@@ -18,6 +18,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { formatTransferCount } from "@shared/transfer-credit";
+import { compDrawPeople } from "@shared/comp-draws";
 import {
   Wallet, Plus, Check, X, Trash2, Clock, CheckCircle2, Send, Receipt,
   CreditCard, Hourglass, Tag, BadgeDollarSign, Paperclip, Info, FileText, ArrowLeftRight, Star, Shield, UserCog, Search, ChevronDown, CalendarDays, Pencil, HelpCircle, Bell, Timer, Award, Laptop, BookOpen, Repeat,
@@ -581,11 +582,10 @@ function DrawsPanel() {
   const [drawAmount, setDrawAmount] = useState("");
   const [drawNote, setDrawNote] = useState("");
   const { data: users = [] } = useQuery<any[]>({ queryKey: ["/api/users"] });
-  const staff = useMemo(
-    () => (users ?? []).filter((u: any) => u.isActive && (u.role === "assistant" || (u.role === "admin" && u.isClr)))
-      .sort((a: any, b: any) => String(a.name ?? "").localeCompare(String(b.name ?? ""))),
-    [users]
-  );
+  // Active C3 assistants + admins (incl. non-CLR admins like Ethan Wood).
+  // Previously reused the CLR-only filter and hid admins with isClr=false from
+  // the Person dropdown even though POST /api/comp/draws already accepts them.
+  const staff = useMemo(() => compDrawPeople(users ?? []), [users]);
   const { data } = useQuery<{ draws: any[]; outstandingByUser: Record<number, number> }>({
     queryKey: ["/api/comp/draws"],
     queryFn: () => apiRequest("GET", "/api/comp/draws"),
