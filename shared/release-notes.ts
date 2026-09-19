@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.18",
+    headline: "Garage shop: spend transfers, Dialpad calls, and CallTools time on car upgrades.",
+    items: [
+      { text: "On My TV Car, open Garage shop to buy chrome rims, neon underglow, a gold rain light, trophy fin, victory plume, or +5 minutes of garage time each day.", audience: "everyone" },
+      { text: "Prices use what C3 already tracks for you — lifetime transfers, Dialpad calls, and CallTools talk time — and buying the same upgrade twice never charges you again.", audience: "everyone" },
+      { text: "Shop unlocks are cosmetic (or extra garage edit time). They do not change transfer credit, race standing, speed, or scoreboards.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.17",
     headline: "Comp Draws lets you pick yourself even if you are an admin, not a CLR.",
     items: [

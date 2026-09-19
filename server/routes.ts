@@ -128,6 +128,7 @@ import { callSyncOutcomeNotes, normalizeCallSyncPayload } from "./callsync";
 import { registerTransferDetailRoutes } from "./transfer-detail-routes";
 import { registerBonzoReassignRoutes } from "./bonzo-reassign-routes";
 import { registerTvCarRoutes, readTvCarSkinsForOrg } from "./tv-car-routes";
+import { readShopUpgradesForOrg } from "./tv-car-shop";
 import { normalizeTvCarAppearance } from "@shared/tv-car";
 import { displayTvCarWrapUrl } from "./tv-car-wrap";
 import { withTvRaceGuests, tvRaceCreditsForEvents } from "./tv-race-roster";
@@ -23317,6 +23318,7 @@ ${note}` : daysLine;
       const link = tvLink(token);
       return link ? Number(link.org_id) || null : null;
     },
+    transferCreditFor: (owner) => storageExtra.getTransferCreditForUser(owner.id, { orgId: owner.org_id }),
     audit: ({ owner, before, after }) => audit({
       userId: owner.id,
       userName: owner.name,
@@ -23537,6 +23539,7 @@ ${note}` : daysLine;
       `SELECT user_id, version FROM tv_car_wraps WHERE org_id=?`,
     ).all(orgId) as any[]).map(row => [Number(row.user_id), String(row.version)]));
     const carSkins = readTvCarSkinsForOrg(sqlite, orgId);
+    const carUpgrades = readShopUpgradesForOrg(sqlite, orgId);
     const counts = new Map<string, number>();
     if (ids.length) {
       // Appointments are counted; TRANSFERS ARE CREDITED. A shotgun transfer is
@@ -23626,6 +23629,7 @@ ${note}` : daysLine;
         ...(carWrapVersions.has(Number(c.id)) ? {
           wrapUrl: displayTvCarWrapUrl(req.params.token, Number(c.id), carWrapVersions.get(Number(c.id))!),
         } : {}),
+        ...(carUpgrades.get(Number(c.id))?.length ? { upgrades: carUpgrades.get(Number(c.id)) } : {}),
       }, Number(c.id)),
       transfersToday: counts.get(`${c.id}:transfer:today`) ?? 0,
       transfersWeek: counts.get(`${c.id}:transfer:week`) ?? 0,

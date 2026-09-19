@@ -4,6 +4,10 @@ import { removeTvCarWrap, saveTvCarWrap, selfTvCarWrapUrl, sendTvCarWrap, TvCarW
 import { isTvCarParticipant } from "../shared/tv-race-participation";
 import { validateTvCarSkin, type TvCarSkin } from "../shared/tv-car-skin";
 import { formatTvCarRemaining, TV_CAR_DAILY_SECONDS, tvCarBudget, tvCarBudgetDay, tvCarTickSeconds, type TvCarBudget } from "../shared/tv-car-budget";
+import { formatShopPrice, formatShopBalance, shopCurrencyLabel, garageDailyBonusSeconds } from "../shared/tv-car-shop";
+import {
+  buildShopSnapshot, purchaseShopItem, readOwnedShopItems, shopUpgradesForOwner,
+} from "./tv-car-shop";
 
 type CarSession = { userId?: unknown; orgId?: unknown; portal?: unknown };
 type CarOwner = { id: number; org_id: number; name: string; role: string; is_clr: number; is_active: number; portal: string | null };
@@ -14,6 +18,8 @@ export interface TvCarRouteDeps {
   sessionFor: (req: any) => CarSession | null;
   displayOrgFor?: (token: string) => number | null;
   audit: (entry: { owner: CarOwner; before: TvCarAppearance; after: TvCarAppearance }) => void;
+  /** Lifetime transfer credit for the shop currency. Injected so tests need no credit SQL. */
+  transferCreditFor?: (owner: CarOwner) => number;
 }
 
 const positiveId = (value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -58,10 +64,16 @@ function readAppearance(db: any, owner: CarOwner): TvCarAppearance {
   const wrap = db.prepare("SELECT version FROM tv_car_wraps WHERE org_id=? AND user_id=?").get(owner.org_id, owner.id);
   const skinRow = db.prepare("SELECT skin_json FROM tv_car_skins WHERE org_id=? AND user_id=?").get(owner.org_id, owner.id);
   const skin = parseStoredTvCarSkin(skinRow?.skin_json);
+  const upgrades = shopUpgradesForOwner(db, owner);
   return normalizeTvCarAppearance({ ...row,
     ...(wrap ? { wrapUrl: selfTvCarWrapUrl(wrap.version) } : {}),
     ...(skin ? { skin } : {}),
+    ...(upgrades.length ? { upgrades } : {}),
   }, owner.id);
+}
+
+function dailyGarageSeconds(db: any, owner: CarOwner): number {
+  return TV_CAR_DAILY_SECONDS + garageDailyBonusSeconds(readOwnedShopItems(db, owner));
 }
 
 /**
@@ -73,7 +85,7 @@ export function readTvCarBudget(db: any, owner: CarOwner, now = Date.now()): TvC
   const day = tvCarBudgetDay(now);
   const row = db.prepare("SELECT seconds FROM tv_car_garage_time WHERE org_id=? AND user_id=? AND day=?")
     .get(owner.org_id, owner.id, day);
-  return tvCarBudget(row?.seconds ?? 0, day);
+  return tvCarBudget(row?.seconds ?? 0, day, dailyGarageSeconds(db, owner));
 }
 
 /**
@@ -86,18 +98,19 @@ export function readTvCarBudget(db: any, owner: CarOwner, now = Date.now()): TvC
 export function spendTvCarTime(db: any, owner: CarOwner, now = Date.now()): TvCarBudget {
   const day = tvCarBudgetDay(now);
   const stamp = new Date(now).toISOString();
+  const allowance = dailyGarageSeconds(db, owner);
   const row = db.prepare("SELECT seconds, last_tick_at FROM tv_car_garage_time WHERE org_id=? AND user_id=? AND day=?")
     .get(owner.org_id, owner.id, day);
   if (!row) {
     db.prepare("INSERT INTO tv_car_garage_time (org_id,user_id,day,seconds,last_tick_at) VALUES (?,?,?,?,?)")
       .run(owner.org_id, owner.id, day, 1, stamp);
-    return tvCarBudget(1, day);
+    return tvCarBudget(1, day, allowance);
   }
   const since = now - Date.parse(String(row.last_tick_at));
-  const seconds = Math.min(TV_CAR_DAILY_SECONDS, Number(row.seconds ?? 0) + tvCarTickSeconds(since));
+  const seconds = Math.min(allowance, Number(row.seconds ?? 0) + tvCarTickSeconds(since));
   db.prepare("UPDATE tv_car_garage_time SET seconds=?, last_tick_at=? WHERE org_id=? AND user_id=? AND day=?")
     .run(seconds, stamp, owner.org_id, owner.id, day);
-  return tvCarBudget(seconds, day);
+  return tvCarBudget(seconds, day, allowance);
 }
 
 export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
@@ -261,6 +274,87 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
     } catch (error: any) {
       console.error("[tv-car] wrap removal failed:", error?.message ?? error);
       return res.status(500).json({ error: "Could not remove your car wrap." });
+    }
+  });
+
+  function transferCredit(owner: CarOwner): number {
+    try { return Math.max(0, Number(deps.transferCreditFor?.(owner) ?? 0) || 0); }
+    catch { return 0; }
+  }
+
+  function shopFor(owner: CarOwner) {
+    return buildShopSnapshot(deps.db(), owner, transferCredit(owner), formatShopPrice);
+  }
+
+  /** Balances + catalog for the garage shop. Read-only; does not spend garage time. */
+  app.get("/api/me/tv-car/shop", deps.requireAuth, (req: any, res: Response) => {
+    try {
+      const owner = ownerFor(req, res);
+      if (!owner) return;
+      const shop = shopFor(owner);
+      return res.json({
+        ...shop,
+        balanceLabels: {
+          transfers: formatShopBalance("transfers", shop.balances.transfers),
+          dialpad_calls: formatShopBalance("dialpad_calls", shop.balances.dialpad_calls),
+          calltools_seconds: formatShopBalance("calltools_seconds", shop.balances.calltools_seconds),
+        },
+        currencyLabels: {
+          transfers: shopCurrencyLabel("transfers"),
+          dialpad_calls: shopCurrencyLabel("dialpad_calls"),
+          calltools_seconds: shopCurrencyLabel("calltools_seconds"),
+        },
+      });
+    } catch (error: any) {
+      console.error("[tv-car] shop read failed:", error?.message ?? error);
+      return res.status(500).json({ error: "Could not load the garage shop." });
+    }
+  });
+
+  /**
+   * Buy one catalog item with earned stats. Idempotent: owning it already
+   * returns 200 without charging again. Buying never spends garage edit time.
+   */
+  app.post("/api/me/tv-car/shop/buy", deps.requireAuth, (req: any, res: Response) => {
+    try {
+      const owner = ownerFor(req, res);
+      if (!owner) return;
+      const itemId = req.body?.itemId ?? req.body?.id;
+      const { evaluation, snapshot, inserted } = purchaseShopItem(
+        deps.db(), owner, itemId, transferCredit(owner), formatShopPrice,
+      );
+      if (evaluation.status === "unknown_item") {
+        return res.status(400).json({ error: "That upgrade is not in the shop.", shop: snapshot });
+      }
+      if (evaluation.status === "insufficient") {
+        return res.status(402).json({
+          error: `You need ${formatShopPrice(evaluation.item)} — you have ${formatShopBalance(evaluation.item.currency, evaluation.balance)}.`,
+          shop: snapshot,
+        });
+      }
+      // already_owned and fresh purchase both 200: clients can retry safely.
+      return res.json({
+        ok: true,
+        inserted,
+        alreadyOwned: evaluation.status === "already_owned",
+        item: evaluation.item,
+        message: evaluation.status === "already_owned"
+          ? `You already own ${evaluation.item.name}.`
+          : `Purchased ${evaluation.item.name}.`,
+        shop: {
+          ...snapshot,
+          balanceLabels: {
+            transfers: formatShopBalance("transfers", snapshot.balances.transfers),
+            dialpad_calls: formatShopBalance("dialpad_calls", snapshot.balances.dialpad_calls),
+            calltools_seconds: formatShopBalance("calltools_seconds", snapshot.balances.calltools_seconds),
+          },
+        },
+        appearance: readAppearance(deps.db(), owner),
+        budget: readTvCarBudget(deps.db(), owner),
+      });
+    } catch (error: any) {
+      console.error("[tv-car] shop buy failed:", error?.message ?? error);
+      return res.status(500).json({ error: "Could not complete that purchase." });
     }
   });
 

@@ -67,6 +67,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     resources.forEach(resource => resource.dispose()); resources.clear();
   };
   try {
+    const upgrades = new Set(appearance.upgrades ?? []);
     const material = (color: string, roughness = .55, metalness = .1) => keep(new THREE.MeshStandardMaterial({ color, roughness, metalness }));
     // Race paint is lacquered, not plastic. A clearcoat over the body colour
     // is most of what makes the car read as a real one under track lights —
@@ -142,7 +143,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     // All of it is decoration: nothing here touches the wheels, the track
     // anchor or the skin panels.
     rounded("engine-cover", .62, .5, 1.25, 0, .96, -1.06, bodyPaint, .22);
-    box(root, .07, .36, 1.45, 0, 1.28, -1.45, bodyPaint).name = "shark-fin";
+    box(root, .07, .36, 1.45, 0, 1.28, -1.45, upgrades.has("trophy-fin") ? material("#f1d552", .28, .55) : bodyPaint).name = "shark-fin";
     for (const x of [-.58, .58]) {
       box(root, .2, .1, .08, x, 1, .42, black).name = "mirror";
       box(root, .3, .04, .04, x * .74, .99, .42, steel).name = "mirror-stalk";
@@ -154,7 +155,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     const exhaust = new THREE.Mesh(keep(new THREE.CylinderGeometry(.09, .12, .3, 10)), steel);
     exhaust.name = "exhaust"; exhaust.rotation.x = Math.PI / 2; exhaust.position.set(0, .74, -1.78);
     exhaust.castShadow = true; root.add(exhaust);
-    box(root, .18, .07, .05, 0, .62, -2.02, accent).name = "rain-light";
+    box(root, .18, .07, .05, 0, .62, -2.02, upgrades.has("gold-rain-light") ? material("#f1d552", .3, .4) : accent).name = "rain-light";
     box(root, .22, .08, .06, 0, 1.19, .03, black).name = "visor";
     const stripeOffsets = appearance.skin ? [] : appearance.livery === "double-stripe" ? [-.16, .16] : appearance.livery === "stripe" ? [0] : [];
     for (const x of stripeOffsets) {
@@ -173,7 +174,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       if (z > 0) frontSteering.push(mount);
       const pivot = new THREE.Group(); pivot.name = "wheel-spin"; mount.add(pivot);
       const tire = new THREE.Mesh(wheelGeometry, rubber); tire.rotation.z = Math.PI / 2; tire.castShadow = true; pivot.add(tire);
-      const rim = new THREE.Mesh(rimGeometry, accent); rim.rotation.z = Math.PI / 2; pivot.add(rim); wheels.push(pivot);
+      const rim = new THREE.Mesh(rimGeometry, upgrades.has("chrome-rims") ? steel : accent); rim.rotation.z = Math.PI / 2; pivot.add(rim); wheels.push(pivot);
       for (const turn of [0, Math.PI / 2]) {
         const spoke = new THREE.Mesh(unitBox, black); spoke.name = "wheel-spoke";
         spoke.scale.set(.4, .54, .055); spoke.rotation.x = turn; pivot.add(spoke);
@@ -195,9 +196,15 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       const halo = new THREE.Mesh(keep(new THREE.RingGeometry(2.65, 2.82, 48)), keep(new THREE.MeshBasicMaterial({ color: "#7cf5ee", transparent: true, opacity: .85, side: THREE.DoubleSide, depthWrite: false })));
       halo.name = "focus-halo"; halo.rotation.x = -Math.PI / 2; halo.position.y = .1; root.add(halo);
     }
+    if (upgrades.has("neon-underglow")) {
+      const neon = keep(new THREE.MeshBasicMaterial({ color: "#5cf0ff", transparent: true, opacity: .55, depthWrite: false }));
+      const under = new THREE.Mesh(keep(new THREE.RingGeometry(1.15, 1.55, 40)), neon);
+      under.name = "neon-underglow"; under.rotation.x = -Math.PI / 2; under.position.y = .08; root.add(under);
+    }
     const boost = new THREE.Group(); root.add(boost);
     if (focus) {
-      const glow = keep(new THREE.MeshBasicMaterial({ color: "#86fff1", transparent: true, opacity: .65, depthWrite: false }));
+      const plume = upgrades.has("victory-plume") ? "#ffb347" : "#86fff1";
+      const glow = keep(new THREE.MeshBasicMaterial({ color: plume, transparent: true, opacity: .65, depthWrite: false }));
       for (const x of [-1.25, 1.25]) box(boost, .08, .06, 5.2, x, .25, -4.7, glow);
     }
     // Articulate the sprung body without moving the track anchor or tire contact

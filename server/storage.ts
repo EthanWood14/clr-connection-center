@@ -2775,6 +2775,19 @@ function runNewMigrations() {
     PRIMARY KEY (org_id, user_id, day)
   )`);
 
+  // Garage shop purchases. One row per item per person: re-buying is a no-op
+  // (PRIMARY KEY), and price/currency are snapshotted so a later catalog edit
+  // cannot rewrite what was already charged. Cosmetic only — never scoring.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS tv_car_shop_purchases (
+    org_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    item_id TEXT NOT NULL,
+    currency TEXT NOT NULL CHECK (currency IN ('transfers','dialpad_calls','calltools_seconds')),
+    price INTEGER NOT NULL CHECK (price >= 0),
+    purchased_at TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id, item_id)
+  )`);
+
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss
   // their own, or it would just be a notification they close.

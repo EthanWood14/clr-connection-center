@@ -60,13 +60,23 @@ export function tvCarBudgetDay(nowMs: number, tz: string = TV_CAR_BUDGET_TZ): st
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
-/** What a stored second count means, clamped so bad data cannot unlock anyone. */
-export function tvCarBudget(usedSeconds: number, day: string): TvCarBudget {
+/**
+ * What a stored second count means, clamped so bad data cannot unlock anyone.
+ *
+ * `dailySeconds` defaults to the base fifteen minutes. The garage shop can
+ * permanently add time (see shared/tv-car-shop.ts); the allowance is still
+ * clamped so a corrupt bonus cannot invent an all-day session.
+ */
+export function tvCarBudget(usedSeconds: number, day: string, dailySeconds: number = TV_CAR_DAILY_SECONDS): TvCarBudget {
+  const rawDaily = Number(dailySeconds);
+  const allowance = Number.isFinite(rawDaily) && rawDaily > 0
+    ? Math.min(TV_CAR_DAILY_SECONDS + 30 * 60, Math.max(TV_CAR_DAILY_SECONDS, Math.floor(rawDaily)))
+    : TV_CAR_DAILY_SECONDS;
   const stored = Number(usedSeconds);
   // Anything that is not a real number is treated as nothing spent. A corrupt
   // row should not be able to lock somebody out of their own car.
-  const used = Number.isFinite(stored) ? Math.min(TV_CAR_DAILY_SECONDS, Math.max(0, Math.floor(stored))) : 0;
-  const remaining = Math.max(0, TV_CAR_DAILY_SECONDS - used);
+  const used = Number.isFinite(stored) ? Math.min(allowance, Math.max(0, Math.floor(stored))) : 0;
+  const remaining = Math.max(0, allowance - used);
   return { used, remaining, locked: remaining <= 0, day };
 }
 

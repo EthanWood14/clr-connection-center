@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertCircle, Check, CheckCircle2, Flag, ImagePlus, Loader2, Palette, RotateCcw, Save, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, Flag, ImagePlus, Loader2, Palette, RotateCcw, Save, ShoppingBag, Trash2, Upload } from "lucide-react";
 import { useAuth, type AuthUser } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -15,12 +15,25 @@ import { prepareTvCarWrap, type PreparedTvCarWrap } from "@/lib/tv-car-wrap";
 import { isTvCarParticipant } from "@shared/tv-race-participation";
 import { createBlankCarSkin, type TvCarSkin } from "@shared/tv-car-skin";
 import { formatTvCarRemaining, TV_CAR_TICK_MS, type TvCarBudget } from "@shared/tv-car-budget";
+import { formatShopBalance, shopCurrencyLabel, type ShopCurrency } from "@shared/tv-car-shop";
 import { CarSkinEditor } from "@/components/tv/car-skin-editor";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 const CarSkinPreview = lazy(() => import("@/components/tv/car-skin-preview"));
 
 type CarResponse = { appearance: TvCarAppearance; budget?: TvCarBudget };
+type ShopCatalogItem = {
+  id: string; name: string; description: string; currency: ShopCurrency; price: number;
+  kind: "cosmetic" | "garage"; owned: boolean; affordable: boolean; priceLabel: string;
+};
+type ShopResponse = {
+  catalog: ShopCatalogItem[];
+  balances: Record<ShopCurrency, number>;
+  owned: string[];
+  balanceLabels?: Record<ShopCurrency, string>;
+  currencyLabels?: Record<ShopCurrency, string>;
+  garageDailySeconds?: number;
+};
 const COLOR_PRESETS = [
   { name: "Papaya", color: "#ef6a35" },
   { name: "Sky", color: "#49b8ec" },
@@ -128,7 +141,7 @@ function Garage({ user }: { user: AuthUser }) {
   // A draft stays separate from query data: background refreshes must not erase paint edits.
   const [draft, setDraft] = useState<TvCarAppearance | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
-  const [garageMode, setGarageMode] = useState<"skin" | "paint">("skin");
+  const [garageMode, setGarageMode] = useState<"skin" | "paint" | "shop">("skin");
   const [blankSkin] = useState(createBlankCarSkin);
   const [skinDraft, setSkinDraft] = useState<TvCarSkin | null>(null);
   const [skinNotice, setSkinNotice] = useState<string | null>(null);
@@ -200,6 +213,30 @@ function Garage({ user }: { user: AuthUser }) {
       setSkinNotice(next ? "Skin saved. Your TV car will wear it after the next refresh." : "Pixel skin removed. Your saved paint and picture wrap are back.");
     },
   });
+  const shopQueryKey = ["/api/me/tv-car/shop", user.orgId, user.id];
+  const shop = useQuery<ShopResponse>({
+    queryKey: shopQueryKey,
+    queryFn: () => apiRequest("GET", "/api/me/tv-car/shop"),
+    retry: 1,
+  });
+  const [shopNotice, setShopNotice] = useState<string | null>(null);
+  const buy = useMutation<any, Error, string>({
+    mutationFn: (itemId) => apiRequest("POST", "/api/me/tv-car/shop/buy", { itemId }),
+    onMutate: async () => { setShopNotice(null); await queryClient.cancelQueries({ queryKey: shopQueryKey, exact: true }); },
+    onSuccess: (data) => {
+      if (data?.shop) queryClient.setQueryData(shopQueryKey, data.shop);
+      if (data?.appearance || data?.budget) {
+        queryClient.setQueryData(queryKey, (current: CarResponse | undefined) => ({
+          appearance: data.appearance ?? current?.appearance ?? saved,
+          budget: data.budget ?? current?.budget,
+        }));
+        if (data?.budget) setBudget(data.budget);
+      }
+      setShopNotice(data?.message ?? "Purchased.");
+      void shop.refetch();
+      void car.refetch();
+    },
+  });
   const liveBudget = budget ?? car.data?.budget ?? null;
   const locked = liveBudget?.locked ?? false;
   // A tick only while the tab is actually in front: time spent on a call with
@@ -217,7 +254,7 @@ function Garage({ user }: { user: AuthUser }) {
     const timer = window.setInterval(tick, TV_CAR_TICK_MS);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [locked]);
-  const busy = locked || save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin;
+  const busy = locked || save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin || buy.isPending;
   const editingSkin = skinDraft ?? saved.skin ?? blankSkin;
   const skinDirty = skinDraft !== null && JSON.stringify(skinDraft) !== JSON.stringify(saved.skin ?? blankSkin);
   const hasUnsaved = dirty || skinDirty || !!preparedWrap;
@@ -267,7 +304,7 @@ function Garage({ user }: { user: AuthUser }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="mb-1 text-xs font-semibold uppercase tracking-[.2em] text-muted-foreground">Advanced Settings / Personal</p>
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">My TV Car</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Your spot on the grid. Build a pixel skin, paint your car, or add a picture wrap.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Your spot on the grid. Build a pixel skin, paint your car, add a picture wrap, or spend earned stats in the garage shop.</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <Badge variant="outline" className="gap-1.5 px-3 py-1.5"><Flag className="h-3.5 w-3.5" /> C3 Grand Prix</Badge>
@@ -293,6 +330,7 @@ function Garage({ user }: { user: AuthUser }) {
       <div className="flex flex-wrap gap-2" role="group" aria-label="Garage workspace">
         <Button type="button" variant={garageMode === "skin" ? "default" : "outline"} aria-pressed={garageMode === "skin"} onClick={() => setGarageMode("skin")}>Pixel skin studio{skinDirty ? " •" : ""}</Button>
         <Button type="button" variant={garageMode === "paint" ? "default" : "outline"} aria-pressed={garageMode === "paint"} onClick={() => setGarageMode("paint")}>Paint & pictures{dirty || preparedWrap ? " •" : ""}</Button>
+        <Button type="button" variant={garageMode === "shop" ? "default" : "outline"} aria-pressed={garageMode === "shop"} onClick={() => setGarageMode("shop")} data-testid="tv-car-shop-tab"><ShoppingBag className="mr-1.5 h-4 w-4" />Garage shop{(shop.data?.owned?.length ?? 0) > 0 ? ` · ${shop.data?.owned?.length}` : ""}</Button>
       </div>
 
       {garageMode === "skin" && <section className="grid items-start gap-5 xl:grid-cols-[minmax(300px,.78fr)_minmax(0,1.22fr)]" aria-label="Pixel skin studio">
@@ -399,6 +437,67 @@ function Garage({ user }: { user: AuthUser }) {
           </div>
         </form>
       </div>}
+      {garageMode === "shop" && (
+        <section className="space-y-4" aria-label="Garage shop" data-testid="tv-car-shop">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base"><ShoppingBag className="h-4 w-4" /> Spend what you have earned</CardTitle>
+              <CardDescription>
+                Buy little garage upgrades with your lifetime transfers, Dialpad calls, and CallTools talk time.
+                Purchases never change scoreboards, race position, or transfer credit — only how your car looks (and how long you can edit it).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="tv-car-shop-balances">
+                {(["transfers", "dialpad_calls", "calltools_seconds"] as ShopCurrency[]).map((currency) => (
+                  <div key={currency} className="rounded-xl border bg-muted/30 px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{shop.data?.currencyLabels?.[currency] ?? shopCurrencyLabel(currency)}</p>
+                    <p className="mt-1 text-sm font-semibold tabular-nums">{shop.data?.balanceLabels?.[currency] ?? formatShopBalance(currency, shop.data?.balances?.[currency] ?? 0)}</p>
+                  </div>
+                ))}
+              </div>
+              {shop.isError && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Shop could not load</AlertTitle><AlertDescription>{shop.error.message}</AlertDescription></Alert>}
+              {buy.isError && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Purchase failed</AlertTitle><AlertDescription>{buy.error.message}</AlertDescription></Alert>}
+              {shopNotice && <p role="status" aria-live="polite" className="text-sm text-emerald-700 dark:text-emerald-400">{shopNotice}</p>}
+            </CardContent>
+          </Card>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {(shop.data?.catalog ?? []).map((item) => (
+              <Card key={item.id} className={item.owned ? "border-emerald-500/40" : undefined} data-testid={`tv-car-shop-item-${item.id}`}>
+                <CardHeader className="pb-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <CardTitle className="text-base">{item.name}</CardTitle>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge variant="outline">{item.kind === "garage" ? "Garage" : "Cosmetic"}</Badge>
+                      {item.owned && <Badge className="bg-emerald-600 hover:bg-emerald-600">Owned</Badge>}
+                    </div>
+                  </div>
+                  <CardDescription className="text-xs leading-relaxed">{item.description}</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-semibold tabular-nums">{item.priceLabel}</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={item.owned || busy || buy.isPending || (!item.affordable && !item.owned)}
+                    onClick={() => buy.mutate(item.id)}
+                    data-testid={`buy-tv-car-shop-${item.id}`}
+                  >
+                    {buy.isPending && buy.variables === item.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {item.owned ? "Owned" : item.affordable ? "Buy" : "Need more"}
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+            {shop.isLoading && <div className="col-span-full flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading the shop…</div>}
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Balances update as Dialpad, CallTools, and transfers are recorded elsewhere in C3. Buying the same upgrade twice does not charge you again.
+            {typeof shop.data?.garageDailySeconds === "number" ? ` Your garage day is currently ${Math.round(shop.data.garageDailySeconds / 60)} minutes.` : ""}
+          </p>
+        </section>
+      )}
+
       <p className="flex items-start gap-2 rounded-xl border bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground"><Flag className="mt-0.5 h-4 w-4 shrink-0" /> This is a cosmetic change only. Your transfers, race position, speed, and ranking stay exactly the same. Resetting colors also needs Save my car.</p>
     </div>
   );
