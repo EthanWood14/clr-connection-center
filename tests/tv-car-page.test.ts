@@ -130,4 +130,8 @@ test("the garage page includes a shop tab that spends earned stats, not race pos
   assert.match(page, /\/api\/me\/tv-car\/shop\/buy/);
   assert.match(page, /Spend what you have earned/);
   assert.match(page, /never change scoreboards/);
+  assert.match(page, /data-testid="tv-car-shop-preview"/);
+  assert.match(page, /function ShopPreviewArt/);
+  assert.match(page, /One-time boost/);
+  assert.match(page, /Buy boost/);
 });

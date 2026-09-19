@@ -124,7 +124,10 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     rounded("body-nose", .58, .24, 1.7, 0, .5, 2.05, bodyPaint, .1, true);
     rounded("body-sidepods", 2, .24, 1.9, 0, .48, -.55, bodyPaint, .13, true);
     box(root, 2.15, .09, 4.4, 0, .27, .05, black);
-    rounded("cockpit", .92, .4, 1.4, 0, .92, -.25, glass, .2);
+    const cabinGlass = upgrades.has("cabin-leds")
+      ? keep(new THREE.MeshPhysicalMaterial({ color: "#1a5a58", roughness: .2, metalness: .35, clearcoat: 1, emissive: "#0a3d3a", emissiveIntensity: .45 }))
+      : glass;
+    rounded("cockpit", .92, .4, 1.4, 0, .92, -.25, cabinGlass, .2);
     const helmet = new THREE.Mesh(keep(new THREE.SphereGeometry(.24, 12, 8)), accent); helmet.position.set(0, 1.16, -.13); root.add(helmet);
     const wing = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material) => {
       if (!appearance.skin) return box(root, w, h, d, x, y, z, mat);
@@ -144,15 +147,16 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     // anchor or the skin panels.
     rounded("engine-cover", .62, .5, 1.25, 0, .96, -1.06, bodyPaint, .22);
     box(root, .07, .36, 1.45, 0, 1.28, -1.45, upgrades.has("trophy-fin") ? material("#f1d552", .28, .55) : bodyPaint).name = "shark-fin";
+    const mirrorMat = upgrades.has("carbon-mirrors") ? material("#1a1a1a", .85, .15) : black;
     for (const x of [-.58, .58]) {
-      box(root, .2, .1, .08, x, 1, .42, black).name = "mirror";
-      box(root, .3, .04, .04, x * .74, .99, .42, steel).name = "mirror-stalk";
+      box(root, .2, .1, .08, x, 1, .42, mirrorMat).name = "mirror";
+      box(root, .3, .04, .04, x * .74, .99, .42, upgrades.has("carbon-mirrors") ? mirrorMat : steel).name = "mirror-stalk";
     }
     for (const x of [-1.2, 1.2]) box(root, .05, .34, .62, x, .5, 2.67, accent).name = "front-endplate";
     for (const x of [-1.12, 1.12]) box(root, .05, .52, .68, x, 1.14, -2.06, accent).name = "rear-endplate";
     box(root, 1.85, .26, .62, 0, .26, -1.95, black).name = "diffuser";
     for (const x of [-.55, 0, .55]) box(root, .05, .3, .58, x, .3, -1.95, steel).name = "strake";
-    const exhaust = new THREE.Mesh(keep(new THREE.CylinderGeometry(.09, .12, .3, 10)), steel);
+    const exhaust = new THREE.Mesh(keep(new THREE.CylinderGeometry(.09, .12, .3, 10)), upgrades.has("spark-exhaust") ? material("#e07a3a", .4, .55) : steel);
     exhaust.name = "exhaust"; exhaust.rotation.x = Math.PI / 2; exhaust.position.set(0, .74, -1.78);
     exhaust.castShadow = true; root.add(exhaust);
     box(root, .18, .07, .05, 0, .62, -2.02, upgrades.has("gold-rain-light") ? material("#f1d552", .3, .4) : accent).name = "rain-light";
@@ -162,6 +166,17 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       const width = appearance.livery === "double-stripe" ? .12 : .2;
       box(root, width, .015, 1.55, x, .812, 1, accent).name = "livery-stripe";
       box(root, width, .015, 1.05, x, .628, 2.3, accent).name = "livery-stripe";
+    }
+    if (upgrades.has("matte-hood")) {
+      box(root, .28, .02, 1.7, 0, .72, 1.55, material("#1a1a1a", .95, .05)).name = "matte-hood";
+    }
+    if (upgrades.has("ice-headlights")) {
+      for (const x of [-.22, .22]) {
+        box(root, .14, .08, .06, x, .52, 2.85, keep(new THREE.MeshBasicMaterial({ color: "#9ad8ff" }))).name = "ice-headlight";
+      }
+    }
+    if (upgrades.has("champion-plate")) {
+      box(root, .7, .02, .32, 0, .82, 1.26, material("#f1d552", .35, .5)).name = "champion-plate";
     }
     const wheels: THREE.Group[] = [], wheelMounts: THREE.Group[] = [], frontSteering: THREE.Group[] = [];
     // Rounder tires, a coloured rim, and two cross-spokes whose ends show past

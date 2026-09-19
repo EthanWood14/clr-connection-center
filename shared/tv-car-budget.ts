@@ -64,8 +64,8 @@ export function tvCarBudgetDay(nowMs: number, tz: string = TV_CAR_BUDGET_TZ): st
  * What a stored second count means, clamped so bad data cannot unlock anyone.
  *
  * `dailySeconds` defaults to the base fifteen minutes. The garage shop can
- * permanently add time (see shared/tv-car-shop.ts); the allowance is still
- * clamped so a corrupt bonus cannot invent an all-day session.
+ * grant a one-time boost for today only (bonus_seconds on the day row); the
+ * allowance is still clamped so a corrupt bonus cannot invent an all-day session.
  */
 export function tvCarBudget(usedSeconds: number, day: string, dailySeconds: number = TV_CAR_DAILY_SECONDS): TvCarBudget {
   const rawDaily = Number(dailySeconds);

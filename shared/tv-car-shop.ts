@@ -1,19 +1,41 @@
 /**
- * Garage shop: small cosmetic / garage upgrades bought with earned CLR stats.
+ * Garage shop: cosmetic / garage upgrades bought with earned CLR stats.
  *
  * Currencies are ONLY metrics C3 already tracks per person:
  *   - transfers          → lifetime transfer credit (same scale as scorecards)
  *   - dialpad_calls      → Dialpad outbound calls (dialpad_daily_stats)
  *   - calltools_seconds  → CallTools talk / active seconds (callsync daily)
  *
- * Spending never touches real transfer scoring, race position, or goals. A
- * purchase is a row in tv_car_shop_purchases; balances are earned − spent.
- * Buying an item you already own is a no-op (idempotent, no second charge).
+ * Spending never touches real transfer scoring, race position, or goals.
+ * Cosmetics are permanent (one row per item). Garage time boosts are
+ * consumable one-time grants: each buy adds minutes to *today's* budget only
+ * and may be bought again.
  */
 
 export type ShopCurrency = "transfers" | "dialpad_calls" | "calltools_seconds";
 
 export type ShopItemKind = "cosmetic" | "garage";
+
+/** Motif keys the garage UI maps to inline preview illustrations. */
+export type ShopPreviewMotif =
+  | "rims"
+  | "underglow"
+  | "rain-light"
+  | "fin"
+  | "plume"
+  | "garage"
+  | "mirrors"
+  | "hood"
+  | "exhaust"
+  | "cabin"
+  | "number"
+  | "headlights";
+
+export type ShopItemPreview = {
+  from: string;
+  to: string;
+  motif: ShopPreviewMotif;
+};
 
 export type ShopItem = {
   id: string;
@@ -23,6 +45,13 @@ export type ShopItem = {
   /** Integer units of `currency`. Never fractional. */
   price: number;
   kind: ShopItemKind;
+  /**
+   * Consumable items charge every buy and never become "owned". Garage boosts
+   * use this: each purchase grants extra minutes once for the current day.
+   */
+  consumable: boolean;
+  /** Visual tile for the shop card (colors + motif). */
+  preview: ShopItemPreview;
 };
 
 export type ShopBalances = Record<ShopCurrency, number>;
@@ -33,13 +62,14 @@ export type PurchaseEvaluation =
   | { status: "unknown_item"; itemId: string }
   | { status: "insufficient"; item: ShopItem; balance: number; need: number };
 
-/** Permanent +5 minutes of garage time once this item is owned. */
+/** One-time +5 minutes of garage edit time for the Pacific day of purchase. */
 export const GARAGE_PLUS_5_ITEM_ID = "garage-plus-5";
 export const GARAGE_PLUS_5_SECONDS = 5 * 60;
 
 /**
- * Catalog. Prices are meant to feel earned on a normal CLR week without
- * inventing new tracking. CallTools prices are in seconds (UI shows minutes).
+ * Catalog. Prices are meant to feel expensive on a normal CLR week — harder
+ * to unlock than the first shop pass — without inventing new tracking.
+ * CallTools prices are in seconds (UI shows minutes / hours).
  */
 export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   {
@@ -47,48 +77,121 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
     name: "Chrome rims",
     description: "Bright metal rims on your TV car. Purely cosmetic.",
     currency: "dialpad_calls",
-    price: 150,
+    price: 800,
     kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#1b2430", to: "#8a96a3", motif: "rims" },
   },
   {
     id: "neon-underglow",
     name: "Neon underglow",
     description: "A soft cyan glow under the chassis on the TV race.",
     currency: "dialpad_calls",
-    price: 250,
+    price: 1_400,
     kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#061820", to: "#5cf0ff", motif: "underglow" },
+  },
+  {
+    id: "ice-headlights",
+    name: "Ice headlights",
+    description: "Cool ice-blue headlights that cut through the night race.",
+    currency: "dialpad_calls",
+    price: 1_100,
+    kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#0a1220", to: "#9ad8ff", motif: "headlights" },
+  },
+  {
+    id: "carbon-mirrors",
+    name: "Carbon mirrors",
+    description: "Matte carbon-fiber side mirrors — subtle garage flex.",
+    currency: "dialpad_calls",
+    price: 600,
+    kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#141414", to: "#3a3a3a", motif: "mirrors" },
+  },
+  {
+    id: "cabin-leds",
+    name: "Cabin LED wash",
+    description: "A soft teal wash inside the cockpit glass on TV.",
+    currency: "dialpad_calls",
+    price: 950,
+    kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#0c1c22", to: "#3dd6c3", motif: "cabin" },
   },
   {
     id: "gold-rain-light",
     name: "Gold rain light",
     description: "Your rear rain light shines gold instead of accent paint.",
     currency: "transfers",
-    price: 15,
+    price: 80,
     kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#2a1c05", to: "#f1d552", motif: "rain-light" },
   },
   {
     id: "trophy-fin",
     name: "Trophy shark fin",
     description: "A gold shark fin on the engine cover — bragging rights only.",
     currency: "transfers",
-    price: 40,
+    price: 200,
     kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#241805", to: "#f6c94a", motif: "fin" },
+  },
+  {
+    id: "matte-hood",
+    name: "Matte hood stripe",
+    description: "A dark matte stripe down the nose — looks fast standing still.",
+    currency: "transfers",
+    price: 120,
+    kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#1a1a1a", to: "#4a4a4a", motif: "hood" },
+  },
+  {
+    id: "champion-plate",
+    name: "Champion number plate",
+    description: "A gold number plate behind the rank digit on the nose.",
+    currency: "transfers",
+    price: 250,
+    kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#3a2a08", to: "#ffe08a", motif: "number" },
   },
   {
     id: "victory-plume",
     name: "Victory plume",
     description: "A warmer boost trail when you score a transfer on the wall.",
     currency: "calltools_seconds",
-    price: 2 * 60 * 60, // 2 hours of CallTools talk time
+    price: 10 * 60 * 60, // 10 hours of CallTools talk time
     kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#2a1408", to: "#ffb347", motif: "plume" },
+  },
+  {
+    id: "spark-exhaust",
+    name: "Spark exhaust",
+    description: "Copper-tipped exhaust that pops a spark on celebration boosts.",
+    currency: "calltools_seconds",
+    price: 6 * 60 * 60, // 6 hours
+    kind: "cosmetic",
+    consumable: false,
+    preview: { from: "#1c1008", to: "#e07a3a", motif: "exhaust" },
   },
   {
     id: GARAGE_PLUS_5_ITEM_ID,
-    name: "+5 min garage / day",
-    description: "Every day you get 20 minutes in the garage instead of 15. Stats and race standing stay the same.",
+    name: "+5 min garage boost",
+    description:
+      "One-time: adds five minutes to today's garage edit time only. Not a permanent daily raise — buy again whenever you need another boost.",
     currency: "calltools_seconds",
-    price: 60 * 60, // 1 hour of CallTools talk time
+    price: 5 * 60 * 60, // 5 hours of CallTools talk time
     kind: "garage",
+    consumable: true,
+    preview: { from: "#0f1f18", to: "#5dcea0", motif: "garage" },
   },
 ] as const;
 
@@ -99,13 +202,19 @@ export function shopItemById(id: unknown): ShopItem | null {
   return CATALOG_BY_ID.get(id) ?? null;
 }
 
-/** Known upgrade ids only — never trust a free-form string from storage. */
+export function isConsumableShopItem(item: ShopItem): boolean {
+  return item.consumable === true || item.kind === "garage";
+}
+
+/** Known cosmetic upgrade ids only — never trust a free-form string from storage. */
 export function normalizeShopUpgrades(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
   const seen = new Set<string>();
   for (const value of raw) {
-    if (typeof value !== "string" || !CATALOG_BY_ID.has(value) || seen.has(value)) continue;
+    if (typeof value !== "string" || seen.has(value)) continue;
+    const item = CATALOG_BY_ID.get(value);
+    if (!item || item.kind !== "cosmetic" || item.consumable) continue;
     seen.add(value);
     out.push(value);
   }
@@ -132,8 +241,9 @@ export function availableShopBalances(earned: ShopBalances, spent: ShopBalances)
 }
 
 /**
- * Decide whether a buy may proceed. Pure: no DB. `already_owned` means the
- * caller must NOT charge again — repeat POSTs are safe.
+ * Decide whether a buy may proceed. Pure: no DB.
+ * Consumables never return `already_owned` — each purchase charges again.
+ * Permanent cosmetics still short-circuit when owned (no second charge).
  */
 export function evaluateShopPurchase(args: {
   itemId: unknown;
@@ -144,7 +254,9 @@ export function evaluateShopPurchase(args: {
   if (!item) return { status: "unknown_item", itemId: String(args.itemId ?? "") };
   const owned = new Set(Array.from(args.owned ?? []).map(String));
   const balance = Math.max(0, Math.floor(Number(args.available[item.currency]) || 0));
-  if (owned.has(item.id)) return { status: "already_owned", item, balance };
+  if (!isConsumableShopItem(item) && owned.has(item.id)) {
+    return { status: "already_owned", item, balance };
+  }
   if (balance < item.price) {
     return { status: "insufficient", item, balance, need: item.price };
   }
@@ -156,10 +268,13 @@ export function evaluateShopPurchase(args: {
   };
 }
 
-/** Extra daily garage seconds unlocked by owned shop items. */
-export function garageDailyBonusSeconds(owned: Iterable<string>): number {
-  const ids = new Set(Array.from(owned ?? []).map(String));
-  return ids.has(GARAGE_PLUS_5_ITEM_ID) ? GARAGE_PLUS_5_SECONDS : 0;
+/**
+ * Permanent daily garage bonus removed in 4.122.19.
+ * Garage boosts are one-time consumables applied to today's bonus_seconds.
+ * Kept as a no-op so older call sites stay safe until cleaned up.
+ */
+export function garageDailyBonusSeconds(_owned: Iterable<string>): number {
+  return 0;
 }
 
 export function formatShopPrice(item: ShopItem): string {
@@ -168,6 +283,10 @@ export function formatShopPrice(item: ShopItem): string {
   }
   if (item.currency === "dialpad_calls") {
     return `${item.price} Dialpad call${item.price === 1 ? "" : "s"}`;
+  }
+  const hours = item.price / 3600;
+  if (hours >= 1 && item.price % 3600 === 0) {
+    return `${hours} hr CallTools time`;
   }
   const minutes = Math.round(item.price / 60);
   return `${minutes} min CallTools time`;

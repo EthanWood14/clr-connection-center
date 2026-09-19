@@ -2,31 +2,41 @@
  * Garage-shop persistence and earned-balance readers.
  *
  * Earned totals come from tables C3 already fills (Dialpad daily stats,
- * CallTools/CallSync activity, transfer credit). Spent totals come only from
- * tv_car_shop_purchases. Nothing here writes to lead_outcomes or scoreboards.
+ * CallTools/CallSync activity, transfer credit). Spent totals come from
+ * tv_car_shop_purchases (permanent cosmetics) plus
+ * tv_car_shop_consumable_purchases (rebuyable garage boosts).
+ * Nothing here writes to lead_outcomes or scoreboards.
  */
 
 import {
   availableShopBalances,
   emptyShopBalances,
   evaluateShopPurchase,
-  garageDailyBonusSeconds,
+  GARAGE_PLUS_5_ITEM_ID,
+  GARAGE_PLUS_5_SECONDS,
+  isConsumableShopItem,
   normalizeShopUpgrades,
   TV_CAR_SHOP_CATALOG,
   type ShopBalances,
   type ShopItem,
   type ShopCurrency,
 } from "../shared/tv-car-shop";
-import { TV_CAR_DAILY_SECONDS } from "../shared/tv-car-budget";
+import { TV_CAR_DAILY_SECONDS, tvCarBudgetDay } from "../shared/tv-car-budget";
 
 export type ShopOwner = { id: number; org_id: number };
 
 export type ShopSnapshot = {
-  catalog: Array<ShopItem & { owned: boolean; affordable: boolean; priceLabel: string }>;
+  catalog: Array<ShopItem & {
+    owned: boolean;
+    affordable: boolean;
+    priceLabel: string;
+    timesPurchased: number;
+  }>;
   balances: ShopBalances;
   earned: ShopBalances;
   spent: ShopBalances;
   owned: string[];
+  /** Base daily garage seconds (15 min). Boosts are per-day, not permanent. */
   garageDailySeconds: number;
 };
 
@@ -61,6 +71,7 @@ export function readEarnedCalltoolsSeconds(db: any, owner: ShopOwner): number {
   }
 }
 
+/** Permanent cosmetics only. Legacy garage-plus-5 rows are ignored for ownership. */
 export function readOwnedShopItems(db: any, owner: ShopOwner): string[] {
   try {
     const rows = db.prepare(
@@ -72,6 +83,11 @@ export function readOwnedShopItems(db: any, owner: ShopOwner): string[] {
   }
 }
 
+function addSpentRow(spent: ShopBalances, currency: string, n: unknown) {
+  const key = currency as ShopCurrency;
+  if (key in spent) spent[key] += floorNonNeg(n);
+}
+
 export function readSpentShopBalances(db: any, owner: ShopOwner): ShopBalances {
   const spent = emptyShopBalances();
   try {
@@ -79,12 +95,28 @@ export function readSpentShopBalances(db: any, owner: ShopOwner): ShopBalances {
       `SELECT currency, COALESCE(SUM(price), 0) AS n FROM tv_car_shop_purchases
         WHERE org_id = ? AND user_id = ? GROUP BY currency`,
     ).all(owner.org_id, owner.id) as Array<{ currency: string; n: number }>;
-    for (const row of rows) {
-      const key = row.currency as ShopCurrency;
-      if (key in spent) spent[key] = floorNonNeg(row.n);
-    }
+    for (const row of rows) addSpentRow(spent, row.currency, row.n);
   } catch { /* table may be mid-migrate in a test */ }
+  try {
+    const rows = db.prepare(
+      `SELECT currency, COALESCE(SUM(price), 0) AS n FROM tv_car_shop_consumable_purchases
+        WHERE org_id = ? AND user_id = ? GROUP BY currency`,
+    ).all(owner.org_id, owner.id) as Array<{ currency: string; n: number }>;
+    for (const row of rows) addSpentRow(spent, row.currency, row.n);
+  } catch { /* optional table */ }
   return spent;
+}
+
+export function readConsumablePurchaseCounts(db: any, owner: ShopOwner): Map<string, number> {
+  const out = new Map<string, number>();
+  try {
+    const rows = db.prepare(
+      `SELECT item_id, COUNT(*) AS n FROM tv_car_shop_consumable_purchases
+        WHERE org_id = ? AND user_id = ? GROUP BY item_id`,
+    ).all(owner.org_id, owner.id) as Array<{ item_id: string; n: number }>;
+    for (const row of rows) out.set(String(row.item_id), floorNonNeg(row.n));
+  } catch { /* optional */ }
+  return out;
 }
 
 export function readEarnedShopBalances(
@@ -99,6 +131,49 @@ export function readEarnedShopBalances(
   };
 }
 
+/**
+ * Add a one-time garage-time boost to today's Pacific day row.
+ * Does not change the permanent daily base of 15 minutes.
+ */
+export function grantGarageTimeBoost(
+  db: any,
+  owner: ShopOwner,
+  extraSeconds: number,
+  nowMs = Date.now(),
+): number {
+  const day = tvCarBudgetDay(nowMs);
+  const stamp = new Date(nowMs).toISOString();
+  const add = Math.max(0, Math.floor(Number(extraSeconds) || 0));
+  if (add <= 0) return 0;
+  const row = db.prepare(
+    `SELECT bonus_seconds FROM tv_car_garage_time WHERE org_id=? AND user_id=? AND day=?`,
+  ).get(owner.org_id, owner.id, day) as { bonus_seconds?: number } | undefined;
+  if (!row) {
+    db.prepare(
+      `INSERT INTO tv_car_garage_time (org_id,user_id,day,seconds,last_tick_at,bonus_seconds)
+       VALUES (?,?,?,0,?,?)`,
+    ).run(owner.org_id, owner.id, day, stamp, add);
+    return add;
+  }
+  const next = floorNonNeg(row.bonus_seconds) + add;
+  db.prepare(
+    `UPDATE tv_car_garage_time SET bonus_seconds=? WHERE org_id=? AND user_id=? AND day=?`,
+  ).run(next, owner.org_id, owner.id, day);
+  return next;
+}
+
+export function readGarageDayBonusSeconds(db: any, owner: ShopOwner, nowMs = Date.now()): number {
+  const day = tvCarBudgetDay(nowMs);
+  try {
+    const row = db.prepare(
+      `SELECT bonus_seconds FROM tv_car_garage_time WHERE org_id=? AND user_id=? AND day=?`,
+    ).get(owner.org_id, owner.id, day) as { bonus_seconds?: number } | undefined;
+    return floorNonNeg(row?.bonus_seconds);
+  } catch {
+    return 0;
+  }
+}
+
 export function buildShopSnapshot(
   db: any,
   owner: ShopOwner,
@@ -110,24 +185,31 @@ export function buildShopSnapshot(
   const earned = readEarnedShopBalances(db, owner, transferCredit);
   const spent = readSpentShopBalances(db, owner);
   const balances = availableShopBalances(earned, spent);
+  const consumableCounts = readConsumablePurchaseCounts(db, owner);
+  const dayBonus = readGarageDayBonusSeconds(db, owner);
   return {
-    catalog: TV_CAR_SHOP_CATALOG.map((item) => ({
-      ...item,
-      owned: ownedSet.has(item.id),
-      affordable: !ownedSet.has(item.id) && balances[item.currency] >= item.price,
-      priceLabel: formatPrice(item),
-    })),
+    catalog: TV_CAR_SHOP_CATALOG.map((item) => {
+      const consumable = isConsumableShopItem(item);
+      const permanentlyOwned = !consumable && ownedSet.has(item.id);
+      return {
+        ...item,
+        owned: permanentlyOwned,
+        affordable: !permanentlyOwned && balances[item.currency] >= item.price,
+        priceLabel: formatPrice(item),
+        timesPurchased: consumable ? (consumableCounts.get(item.id) ?? 0) : (permanentlyOwned ? 1 : 0),
+      };
+    }),
     balances,
     earned,
     spent,
     owned,
-    garageDailySeconds: TV_CAR_DAILY_SECONDS + garageDailyBonusSeconds(owned),
+    garageDailySeconds: TV_CAR_DAILY_SECONDS + dayBonus,
   };
 }
 
 /**
- * Buy one catalog item. Idempotent: a second buy of the same item returns
- * `already_owned` and writes nothing. Insufficient funds never inserts a row.
+ * Buy one catalog item. Permanent cosmetics are idempotent. Consumable garage
+ * boosts charge every time and grant today's bonus_seconds once per purchase.
  */
 export function purchaseShopItem(
   db: any,
@@ -136,6 +218,7 @@ export function purchaseShopItem(
   transferCredit: number,
   formatPrice: (item: ShopItem) => string,
   nowIso = new Date().toISOString(),
+  nowMs = Date.now(),
 ): { evaluation: ReturnType<typeof evaluateShopPurchase>; snapshot: ShopSnapshot; inserted: boolean } {
   const owned = readOwnedShopItems(db, owner);
   const earned = readEarnedShopBalances(db, owner, transferCredit);
@@ -144,15 +227,32 @@ export function purchaseShopItem(
   let evaluation = evaluateShopPurchase({ itemId, owned, available });
   let inserted = false;
   if (evaluation.status === "ok") {
-    const result = db.prepare(
-      `INSERT OR IGNORE INTO tv_car_shop_purchases
-        (org_id, user_id, item_id, currency, price, purchased_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(owner.org_id, owner.id, evaluation.item.id, evaluation.item.currency, evaluation.item.price, nowIso);
-    inserted = Number(result.changes ?? 0) > 0;
-    // Concurrent first-buy won the race: same as already owned, no double charge.
-    if (!inserted) {
-      evaluation = { status: "already_owned", item: evaluation.item, balance: available[evaluation.item.currency] };
+    if (isConsumableShopItem(evaluation.item)) {
+      const effectSeconds = evaluation.item.id === GARAGE_PLUS_5_ITEM_ID
+        ? GARAGE_PLUS_5_SECONDS
+        : GARAGE_PLUS_5_SECONDS;
+      const day = tvCarBudgetDay(nowMs);
+      const result = db.prepare(
+        `INSERT INTO tv_car_shop_consumable_purchases
+          (org_id, user_id, item_id, currency, price, effect_seconds, day, purchased_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        owner.org_id, owner.id, evaluation.item.id, evaluation.item.currency,
+        evaluation.item.price, effectSeconds, day, nowIso,
+      );
+      inserted = Number(result.changes ?? 0) > 0;
+      if (inserted) grantGarageTimeBoost(db, owner, effectSeconds, nowMs);
+    } else {
+      const result = db.prepare(
+        `INSERT OR IGNORE INTO tv_car_shop_purchases
+          (org_id, user_id, item_id, currency, price, purchased_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(owner.org_id, owner.id, evaluation.item.id, evaluation.item.currency, evaluation.item.price, nowIso);
+      inserted = Number(result.changes ?? 0) > 0;
+      // Concurrent first-buy won the race: same as already owned, no double charge.
+      if (!inserted) {
+        evaluation = { status: "already_owned", item: evaluation.item, balance: available[evaluation.item.currency] };
+      }
     }
   }
   return {

@@ -15,7 +15,7 @@ import { prepareTvCarWrap, type PreparedTvCarWrap } from "@/lib/tv-car-wrap";
 import { isTvCarParticipant } from "@shared/tv-race-participation";
 import { createBlankCarSkin, type TvCarSkin } from "@shared/tv-car-skin";
 import { formatTvCarRemaining, TV_CAR_TICK_MS, type TvCarBudget } from "@shared/tv-car-budget";
-import { formatShopBalance, shopCurrencyLabel, type ShopCurrency } from "@shared/tv-car-shop";
+import { formatShopBalance, shopCurrencyLabel, type ShopCurrency, type ShopItemPreview, type ShopPreviewMotif } from "@shared/tv-car-shop";
 import { CarSkinEditor } from "@/components/tv/car-skin-editor";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
@@ -24,7 +24,8 @@ const CarSkinPreview = lazy(() => import("@/components/tv/car-skin-preview"));
 type CarResponse = { appearance: TvCarAppearance; budget?: TvCarBudget };
 type ShopCatalogItem = {
   id: string; name: string; description: string; currency: ShopCurrency; price: number;
-  kind: "cosmetic" | "garage"; owned: boolean; affordable: boolean; priceLabel: string;
+  kind: "cosmetic" | "garage"; consumable?: boolean; owned: boolean; affordable: boolean;
+  priceLabel: string; timesPurchased?: number; preview?: ShopItemPreview;
 };
 type ShopResponse = {
   catalog: ShopCatalogItem[];
@@ -34,6 +35,70 @@ type ShopResponse = {
   currencyLabels?: Record<ShopCurrency, string>;
   garageDailySeconds?: number;
 };
+
+/** Tiny inline illustration for each shop tile — no network images. */
+function ShopPreviewArt({ preview, name }: { preview?: ShopItemPreview; name: string }) {
+  const gradId = useId().replace(/:/g, "");
+  const from = preview?.from ?? "#1b2430";
+  const to = preview?.to ?? "#4a5564";
+  const motif: ShopPreviewMotif = preview?.motif ?? "rims";
+  const accent = to;
+  return (
+    <svg viewBox="0 0 160 88" role="img" aria-label={`Preview of ${name}`} className="h-24 w-full rounded-lg border border-black/10 shadow-inner" data-testid="tv-car-shop-preview">
+      <defs>
+        <linearGradient id={`${gradId}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor={from} />
+          <stop offset="1" stopColor={to} />
+        </linearGradient>
+      </defs>
+      <rect width="160" height="88" fill={`url(#${gradId}-bg)`} rx="8" />
+      {motif === "rims" && <>
+        <circle cx="52" cy="44" r="22" fill="#10151c" stroke={accent} strokeWidth="4" />
+        <circle cx="108" cy="44" r="22" fill="#10151c" stroke={accent} strokeWidth="4" />
+        <circle cx="52" cy="44" r="8" fill={accent} /><circle cx="108" cy="44" r="8" fill={accent} />
+      </>}
+      {motif === "underglow" && <>
+        <ellipse cx="80" cy="58" rx="54" ry="14" fill={accent} opacity=".85" />
+        <rect x="40" y="28" width="80" height="28" rx="8" fill="#1a2530" />
+      </>}
+      {motif === "rain-light" && <rect x="68" y="30" width="24" height="28" rx="4" fill={accent} />}
+      {motif === "fin" && <path d="M78 20 L86 68 L70 68 Z" fill={accent} />}
+      {motif === "plume" && <>
+        <path d="M40 50 Q80 20 120 50" fill="none" stroke={accent} strokeWidth="8" strokeLinecap="round" />
+        <path d="M48 58 Q80 34 112 58" fill="none" stroke="#fff3" strokeWidth="4" />
+      </>}
+      {motif === "garage" && <>
+        <rect x="48" y="22" width="64" height="44" rx="6" fill="#0d2818" stroke={accent} strokeWidth="3" />
+        <text x="80" y="52" textAnchor="middle" fill={accent} fontSize="18" fontWeight="700">+5</text>
+      </>}
+      {motif === "mirrors" && <>
+        <rect x="28" y="34" width="28" height="18" rx="3" fill="#222" stroke={accent} strokeWidth="2" />
+        <rect x="104" y="34" width="28" height="18" rx="3" fill="#222" stroke={accent} strokeWidth="2" />
+        <rect x="56" y="40" width="48" height="8" rx="2" fill="#333" />
+      </>}
+      {motif === "hood" && <>
+        <rect x="30" y="30" width="100" height="36" rx="6" fill="#2a2a2a" />
+        <rect x="70" y="28" width="20" height="40" fill="#111" />
+      </>}
+      {motif === "exhaust" && <>
+        <ellipse cx="80" cy="44" rx="18" ry="14" fill="#2a1810" stroke={accent} strokeWidth="4" />
+        <circle cx="80" cy="44" r="6" fill={accent} />
+      </>}
+      {motif === "cabin" && <>
+        <rect x="36" y="28" width="88" height="36" rx="10" fill="#123038" stroke={accent} strokeWidth="3" />
+        <rect x="48" y="36" width="64" height="20" rx="6" fill={accent} opacity=".55" />
+      </>}
+      {motif === "number" && <>
+        <rect x="40" y="28" width="80" height="36" rx="4" fill={accent} />
+        <text x="80" y="54" textAnchor="middle" fill="#2a1c05" fontSize="22" fontWeight="900">01</text>
+      </>}
+      {motif === "headlights" && <>
+        <rect x="36" y="34" width="88" height="24" rx="6" fill="#152030" />
+        <circle cx="58" cy="46" r="10" fill={accent} /><circle cx="102" cy="46" r="10" fill={accent} />
+      </>}
+    </svg>
+  );
+}
 const COLOR_PRESETS = [
   { name: "Papaya", color: "#ef6a35" },
   { name: "Sky", color: "#49b8ec" },
@@ -443,8 +508,9 @@ function Garage({ user }: { user: AuthUser }) {
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base"><ShoppingBag className="h-4 w-4" /> Spend what you have earned</CardTitle>
               <CardDescription>
-                Buy little garage upgrades with your lifetime transfers, Dialpad calls, and CallTools talk time.
-                Purchases never change scoreboards, race position, or transfer credit — only how your car looks (and how long you can edit it).
+                Buy garage upgrades with your lifetime transfers, Dialpad calls, and CallTools talk time.
+                Cosmetics stay on your car forever. The +5 min garage boost is a one-time add-on for today — buy again when you need more.
+                Purchases never change scoreboards, race position, or transfer credit.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -462,14 +528,24 @@ function Garage({ user }: { user: AuthUser }) {
             </CardContent>
           </Card>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {(shop.data?.catalog ?? []).map((item) => (
-              <Card key={item.id} className={item.owned ? "border-emerald-500/40" : undefined} data-testid={`tv-car-shop-item-${item.id}`}>
+            {(shop.data?.catalog ?? []).map((item) => {
+              const consumable = !!item.consumable || item.kind === "garage";
+              const canBuy = consumable ? item.affordable : (!item.owned && item.affordable);
+              const buyLabel = item.owned && !consumable
+                ? "Owned"
+                : canBuy
+                  ? (consumable ? "Buy boost" : "Buy")
+                  : "Need more";
+              return (
+              <Card key={item.id} className={item.owned && !consumable ? "border-emerald-500/40" : undefined} data-testid={`tv-car-shop-item-${item.id}`}>
                 <CardHeader className="pb-2">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
+                  <ShopPreviewArt preview={item.preview} name={item.name} />
+                  <div className="mt-3 flex flex-wrap items-start justify-between gap-2">
                     <CardTitle className="text-base">{item.name}</CardTitle>
                     <div className="flex flex-wrap gap-1.5">
-                      <Badge variant="outline">{item.kind === "garage" ? "Garage" : "Cosmetic"}</Badge>
-                      {item.owned && <Badge className="bg-emerald-600 hover:bg-emerald-600">Owned</Badge>}
+                      <Badge variant="outline">{consumable ? "One-time boost" : "Cosmetic"}</Badge>
+                      {item.owned && !consumable && <Badge className="bg-emerald-600 hover:bg-emerald-600">Owned</Badge>}
+                      {consumable && (item.timesPurchased ?? 0) > 0 && <Badge variant="secondary">Bought ×{item.timesPurchased}</Badge>}
                     </div>
                   </div>
                   <CardDescription className="text-xs leading-relaxed">{item.description}</CardDescription>
@@ -479,21 +555,22 @@ function Garage({ user }: { user: AuthUser }) {
                   <Button
                     type="button"
                     size="sm"
-                    disabled={item.owned || busy || buy.isPending || (!item.affordable && !item.owned)}
+                    disabled={!canBuy || busy || buy.isPending}
                     onClick={() => buy.mutate(item.id)}
                     data-testid={`buy-tv-car-shop-${item.id}`}
                   >
                     {buy.isPending && buy.variables === item.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    {item.owned ? "Owned" : item.affordable ? "Buy" : "Need more"}
+                    {buyLabel}
                   </Button>
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
             {shop.isLoading && <div className="col-span-full flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading the shop…</div>}
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Balances update as Dialpad, CallTools, and transfers are recorded elsewhere in C3. Buying the same upgrade twice does not charge you again.
-            {typeof shop.data?.garageDailySeconds === "number" ? ` Your garage day is currently ${Math.round(shop.data.garageDailySeconds / 60)} minutes.` : ""}
+            Balances update as Dialpad, CallTools, and transfers are recorded elsewhere in C3. Cosmetics charge once; the garage boost charges each time and only extends today.
+            {typeof shop.data?.garageDailySeconds === "number" ? ` Your garage allowance today is ${Math.round(shop.data.garageDailySeconds / 60)} minutes (base 15 plus any boosts you bought).` : ""}
           </p>
         </section>
       )}

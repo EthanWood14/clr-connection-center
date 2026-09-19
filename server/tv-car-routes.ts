@@ -4,9 +4,9 @@ import { removeTvCarWrap, saveTvCarWrap, selfTvCarWrapUrl, sendTvCarWrap, TvCarW
 import { isTvCarParticipant } from "../shared/tv-race-participation";
 import { validateTvCarSkin, type TvCarSkin } from "../shared/tv-car-skin";
 import { formatTvCarRemaining, TV_CAR_DAILY_SECONDS, tvCarBudget, tvCarBudgetDay, tvCarTickSeconds, type TvCarBudget } from "../shared/tv-car-budget";
-import { formatShopPrice, formatShopBalance, shopCurrencyLabel, garageDailyBonusSeconds } from "../shared/tv-car-shop";
+import { formatShopPrice, formatShopBalance, shopCurrencyLabel } from "../shared/tv-car-shop";
 import {
-  buildShopSnapshot, purchaseShopItem, readOwnedShopItems, shopUpgradesForOwner,
+  buildShopSnapshot, purchaseShopItem, readGarageDayBonusSeconds, shopUpgradesForOwner,
 } from "./tv-car-shop";
 
 type CarSession = { userId?: unknown; orgId?: unknown; portal?: unknown };
@@ -72,8 +72,9 @@ function readAppearance(db: any, owner: CarOwner): TvCarAppearance {
   }, owner.id);
 }
 
-function dailyGarageSeconds(db: any, owner: CarOwner): number {
-  return TV_CAR_DAILY_SECONDS + garageDailyBonusSeconds(readOwnedShopItems(db, owner));
+function dailyGarageSeconds(db: any, owner: CarOwner, now = Date.now()): number {
+  // Base 15 minutes + any one-time shop boosts bought for today only.
+  return TV_CAR_DAILY_SECONDS + readGarageDayBonusSeconds(db, owner, now);
 }
 
 /**
@@ -85,7 +86,7 @@ export function readTvCarBudget(db: any, owner: CarOwner, now = Date.now()): TvC
   const day = tvCarBudgetDay(now);
   const row = db.prepare("SELECT seconds FROM tv_car_garage_time WHERE org_id=? AND user_id=? AND day=?")
     .get(owner.org_id, owner.id, day);
-  return tvCarBudget(row?.seconds ?? 0, day, dailyGarageSeconds(db, owner));
+  return tvCarBudget(row?.seconds ?? 0, day, dailyGarageSeconds(db, owner, now));
 }
 
 /**
@@ -98,7 +99,7 @@ export function readTvCarBudget(db: any, owner: CarOwner, now = Date.now()): TvC
 export function spendTvCarTime(db: any, owner: CarOwner, now = Date.now()): TvCarBudget {
   const day = tvCarBudgetDay(now);
   const stamp = new Date(now).toISOString();
-  const allowance = dailyGarageSeconds(db, owner);
+  const allowance = dailyGarageSeconds(db, owner, now);
   const row = db.prepare("SELECT seconds, last_tick_at FROM tv_car_garage_time WHERE org_id=? AND user_id=? AND day=?")
     .get(owner.org_id, owner.id, day);
   if (!row) {
@@ -312,8 +313,10 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
   });
 
   /**
-   * Buy one catalog item with earned stats. Idempotent: owning it already
-   * returns 200 without charging again. Buying never spends garage edit time.
+   * Buy one catalog item with earned stats. Permanent cosmetics are idempotent
+   * (owning already returns 200 without charging again). Consumable garage
+   * boosts charge every time and add minutes to today only. Buying never
+   * spends garage edit time.
    */
   app.post("/api/me/tv-car/shop/buy", deps.requireAuth, (req: any, res: Response) => {
     try {
@@ -340,7 +343,9 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
         item: evaluation.item,
         message: evaluation.status === "already_owned"
           ? `You already own ${evaluation.item.name}.`
-          : `Purchased ${evaluation.item.name}.`,
+          : evaluation.item.consumable
+            ? `Purchased ${evaluation.item.name} — +5 minutes added to today's garage time.`
+            : `Purchased ${evaluation.item.name}.`,
         shop: {
           ...snapshot,
           balanceLabels: {
