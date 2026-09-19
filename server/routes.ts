@@ -10,6 +10,7 @@ import { BONZO_CALL_EVENT_BATCH_MAX, BONZO_CALL_KINDS, BONZO_CALL_PATH_SOURCE, B
 import { BONZO_VIEW_EVENT_BATCH_MAX, BONZO_VIEW_TYPES, type BonzoViewType } from "@shared/bonzo-views";
 import type { BonzoCallEventInput } from "./storage";
 import { notesBetween } from "@shared/release-notes";
+import { isCompDrawPerson } from "@shared/comp-draws";
 import { orgClientFacingName, orgInternalLabel } from "@shared/org-names";
 import {
   questionsWithoutAnswers, checkTestAnswer, gradeTest, TEST_PASS_PERCENT, TEST_PASS_CORRECT, TEST_QUESTION_COUNT,
@@ -11996,6 +11997,10 @@ ${note}` : daysLine;
     // getUserById isn't org-scoped — make sure the person is in this org.
     const targetOrg = Number(target?.orgId ?? target?.org_id);
     if (!target || (Number.isFinite(targetOrg) && targetOrg !== orgId)) return res.status(400).json({ error: "Pick who the draw is for." });
+    // Same eligibility as the Draws person dropdown — active C3 assistants/admins,
+    // including non-CLR admins (Ethan Wood is admin + is_clr=0). Portal accounts
+    // and viewers are not payout people.
+    if (!isCompDrawPerson(target)) return res.status(400).json({ error: "Pick who the draw is for." });
     if (!Number.isFinite(amountCents) || amountCents <= 0) return res.status(400).json({ error: "Enter an amount greater than 0." });
     const db = storageExtra.getRawSqlite();
     const info = db.prepare("INSERT INTO comp_draws (org_id, user_id, amount_cents, note, created_by, created_at, settled) VALUES (?, ?, ?, ?, ?, ?, 0)").run(orgId, targetId, amountCents, note, uid, new Date().toISOString());

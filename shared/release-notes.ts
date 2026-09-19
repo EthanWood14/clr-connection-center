@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.17",
+    headline: "Comp Draws lets you pick yourself even if you are an admin, not a CLR.",
+    items: [
+      { text: "On Comp Requests → Draws, the Person list includes active admins who are not flagged as CLRs (for example Ethan Wood), so a manager can take out a draw against themselves the same way as for any CLR.", audience: "manager" },
+      { text: "LAP/LOP portal accounts stay out of the list. Saving a draw still requires a manager, and the server uses the same person rule as the dropdown.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.16",
     headline: "Chris no longer gets overdue-task emails when work is finished late.",
     items: [
