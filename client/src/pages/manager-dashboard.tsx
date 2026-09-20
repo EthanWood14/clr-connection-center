@@ -21,6 +21,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
 } from "recharts";
 import { useAuth } from "@/lib/auth";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { businessTodayClient } from "@/lib/business-day";
 import { dropWeekendRows, isWeekday } from "@/lib/weekday-date";
 import { countNonSundaysInMonth } from "@shared/pace-days";
@@ -47,17 +48,17 @@ const RANGE_OPTIONS: { key: RangeKey; label: string; short: string }[] = [
 ];
 
 type ScorecardRange = "today" | "3d" | "7d" | "14d" | "30d" | "90d" | "mtd";
-const SCORECARD_OPTIONS: { key: ScorecardRange; label: string }[] = [
-  { key: "today", label: "Today" },
-  { key: "3d", label: "3 days" },
-  { key: "7d", label: "7 days" },
-  { key: "14d", label: "14 days" },
-  { key: "30d", label: "30 days" },
-  { key: "90d", label: "90 days" },
+const SCORECARD_OPTIONS: { key: ScorecardRange; label: string; short?: string }[] = [
+  { key: "today", label: "Today", short: "Today" },
+  { key: "3d", label: "3 days", short: "3d" },
+  { key: "7d", label: "7 days", short: "7d" },
+  { key: "14d", label: "14 days", short: "14d" },
+  { key: "30d", label: "30 days", short: "30d" },
+  { key: "90d", label: "90 days", short: "90d" },
   // Sits at the end rather than beside the rolling windows: it answers a
   // different question ("how is the month going") and its length changes
   // day by day.
-  { key: "mtd", label: "MTD" },
+  { key: "mtd", label: "MTD", short: "MTD" },
 ];
 
 type PipelineRange = "1d" | "3d" | "7d";
@@ -228,7 +229,7 @@ function DeltaArrow({ dir, pct, label, invert = false }: { dir: "up" | "down" | 
   return (
     <span className="inline-flex items-center gap-0.5 text-xs font-medium tabular-nums" style={{ color }}>
       <Icon className="w-3 h-3" />
-      {label} <span className="text-muted-foreground font-normal">vs prior</span>
+      {label} <span className="text-muted-foreground font-normal hidden sm:inline">vs prior</span>
     </span>
   );
 }
@@ -237,17 +238,17 @@ function KpiTile({
   label, value, sub, icon: Icon, color = NAVY, href, delta,
 }: { label: string; value: string | number; sub?: React.ReactNode; icon: any; color?: string; href?: string; delta?: React.ReactNode }) {
   const inner = (
-    <Card className="overflow-hidden h-full glass-accent-ring glass-hover">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between">
+    <Card className="overflow-hidden h-full glass-accent-ring glass-hover min-w-0">
+      <CardContent className="p-3 sm:p-5">
+        <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 min-w-0">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium">{label}</div>
-            <div className="text-3xl font-bold tabular-nums" style={{ color }}>{value}</div>
-            {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
+            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-muted-foreground font-medium truncate">{label}</div>
+            <div className="text-2xl sm:text-3xl font-bold tabular-nums leading-tight truncate" style={{ color }}>{value}</div>
+            {sub && <div className="text-xs text-muted-foreground truncate">{sub}</div>}
             {delta && <div className="mt-1">{delta}</div>}
           </div>
-          <div className="rounded-lg p-2" style={{ backgroundColor: `${color}15` }}>
-            <Icon className="w-5 h-5" style={{ color }} />
+          <div className="rounded-lg p-1.5 sm:p-2 flex-shrink-0" style={{ backgroundColor: `${color}15` }}>
+            <Icon className="w-4 h-4 sm:w-5 sm:h-5" style={{ color }} />
           </div>
         </div>
       </CardContent>
@@ -258,12 +259,12 @@ function KpiTile({
 
 function SectionTitle({ icon: Icon, children, action }: { icon: any; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-      <h2 className="text-lg font-semibold flex items-center gap-2 brand-text">
-        <Icon className="w-5 h-5" style={{ color: GOLD }} />
-        {children}
+    <div className="flex items-center justify-between mb-3 gap-2 sm:gap-3 flex-wrap">
+      <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2 brand-text min-w-0">
+        <Icon className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" style={{ color: GOLD }} />
+        <span className="min-w-0 break-words">{children}</span>
       </h2>
-      {action}
+      {action ? <div className="min-w-0 max-w-full">{action}</div> : null}
     </div>
   );
 }
@@ -564,8 +565,8 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
   return (
     <Card>
-      <CardContent className="p-0 overflow-x-auto">
-        <table className="w-full text-sm border-collapse">
+      <CardContent className="p-0 overflow-x-auto overscroll-x-contain">
+        <table className="w-full min-w-[640px] text-sm border-collapse">
           <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
             <tr>
               <th className="text-left px-3 py-2 font-medium w-8">#</th>
@@ -649,7 +650,7 @@ function RangePills<K extends string>({
 }) {
   return (
     <div role="group" aria-label={ariaLabel}
-         className="inline-flex items-center rounded-md border bg-muted/40 p-0.5 text-xs">
+         className="inline-flex max-w-full flex-wrap items-center rounded-md border bg-muted/40 p-0.5 text-xs">
       {options.map(o => {
         const active = o.key === value;
         return (
@@ -658,7 +659,7 @@ function RangePills<K extends string>({
             type="button"
             onClick={() => onChange(o.key)}
             className={
-              "px-2.5 py-1 rounded-[4px] font-medium transition-colors tabular-nums " +
+              "min-h-9 px-2.5 py-1.5 rounded-[4px] font-medium transition-colors tabular-nums touch-manipulation " +
               (active
                 ? "bg-card shadow-sm brand-text"
                 : "text-muted-foreground hover:text-foreground")
@@ -816,8 +817,8 @@ function SplitTable({ rows, helperName, loading, subject, testId }: {
   );
   const max = rows[0].total || 1;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm" data-testid={testId}>
+    <div className="overflow-x-auto overscroll-x-contain">
+      <table className="w-full min-w-[360px] text-sm" data-testid={testId}>
         <thead>
           <tr className="text-xs uppercase tracking-wide text-muted-foreground">
             <th className="py-1.5 pr-3 text-left font-medium">Name</th>
@@ -865,6 +866,7 @@ function SplitTable({ rows, helperName, loading, subject, testId }: {
 }
 
 export default function ManagerDashboard() {
+  const isMobile = useIsMobile();
   const { user } = useAuth();
   const { toast } = useToast();
   const isDark = useIsDarkMode();
@@ -1002,9 +1004,9 @@ export default function ManagerDashboard() {
 
   if (isLoading || !data) {
     return (
-      <div className="p-6 space-y-6">
-        <Skeleton className="h-10 w-72" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 min-w-0 max-w-full">
+        <Skeleton className="h-10 w-48 sm:w-72" />
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
           {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-28" />)}
         </div>
         <Skeleton className="h-64" />
@@ -1178,7 +1180,7 @@ export default function ManagerDashboard() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 min-w-0 max-w-full">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
@@ -1218,7 +1220,7 @@ export default function ManagerDashboard() {
       {/* KPI tiles — Today */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">Today</div>
-        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 sm:gap-3">
           <KpiTile label="Calls" value={todayCalls.toLocaleString()} icon={PhoneCall} color={isDark ? GOLD : NAVY} />
           <KpiTile label="Contacts" value={callActivity.today.contacts} icon={Users} color={CYAN} />
           <KpiTile label="Conversations" value={callActivity.today.conversations} icon={Activity} color={AMBER} />
@@ -1232,7 +1234,7 @@ export default function ManagerDashboard() {
       {/* KPI tiles — This week with WoW deltas */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">This week</div>
-        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 sm:gap-3">
           <KpiTile label="Calls (7d)" value={last7Calls.toLocaleString()} icon={PhoneCall} color={isDark ? GOLD : NAVY}
                    delta={<DeltaArrow {...callsDeltaWk} />} />
           <KpiTile label="Contacts" value={callActivity.week.contacts} icon={Users} color={CYAN}
@@ -1252,7 +1254,7 @@ export default function ManagerDashboard() {
       {/* KPI tiles — This month with MoM deltas */}
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground font-medium mb-2">This month</div>
-        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 sm:gap-3">
           <KpiTile label="Contacts" value={callActivity.month.contacts} icon={Users} color={CYAN}
                    delta={<DeltaArrow {...contactsDeltaMo} />} />
           <KpiTile label="Conversations" value={callActivity.month.conversations} icon={Activity} color={AMBER}
@@ -1331,7 +1333,7 @@ export default function ManagerDashboard() {
             <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">No data in this range</div>
           ) : (
             <>
-              <div className="h-64">
+              <div className="h-56 sm:h-64 min-w-0 w-full overflow-hidden">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trendData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#27272a" : "#e5e7eb"} />
@@ -1361,7 +1363,7 @@ export default function ManagerDashboard() {
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-              <div className="h-32 mt-4">
+              <div className="h-28 sm:h-32 mt-4 min-w-0 w-full overflow-hidden">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={trendData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#27272a" : "#e5e7eb"} />
@@ -1400,17 +1402,19 @@ export default function ManagerDashboard() {
               {outcomePieData.length === 0 ? (
                 <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">No outcomes in this range</div>
               ) : (
-                <div className="h-64">
+                <div className="h-64 min-w-0 w-full overflow-hidden">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={outcomePieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}
-                           label={(e: any) => `${e.name} ${Math.round((e.percent || 0) * 100)}%`}
+                      <Pie data={outcomePieData} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                           outerRadius={isMobile ? 70 : 90}
+                           label={isMobile ? false : ((e: any) => `${e.name} ${Math.round((e.percent || 0) * 100)}%`)}
                            stroke={isDark ? "#1f1d1c" : "#ffffff"}>
                         {outcomePieData.map((entry, idx) => (
                           <Cell key={idx} fill={entry.color} />
                         ))}
                       </Pie>
                       <Tooltip contentStyle={{ backgroundColor: isDark ? "#1f1d1c" : "#ffffff", border: `1px solid ${isDark ? "#3f3d3a" : "#e5e7eb"}`, color: isDark ? "#e4e4e7" : "#0f172a" }} />
+                      {isMobile && <Legend wrapperStyle={{ fontSize: 11 }} />}
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -1549,7 +1553,7 @@ export default function ManagerDashboard() {
       <div>
         <SectionTitle icon={Trophy}
           action={
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <RangePills options={RANGE_OPTIONS} value={rangeLeaderboard} onChange={setRangeLeaderboard} ariaLabel="Leaderboard range" />
               <Link href="/leaderboard"><Button variant="ghost" size="sm" className="px-0 h-auto brand-text underline-offset-4 hover:underline">View all →</Button></Link>
             </div>
@@ -1561,8 +1565,8 @@ export default function ManagerDashboard() {
           )}
         </SectionTitle>
         <Card>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+          <CardContent className="p-0 overflow-x-auto overscroll-x-contain">
+            <table className="w-full min-w-[420px] text-sm">
               <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
                 <tr>
                   <th className="text-left px-4 py-2 font-medium">CLR</th>
@@ -1659,7 +1663,7 @@ export default function ManagerDashboard() {
                         key={t.userId}
                         type="button"
                         onClick={() => toggleClrSelection(t.userId)}
-                        className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                        className={`text-xs px-2.5 py-1.5 min-h-9 rounded-full border transition-colors touch-manipulation ${
                           active
                             ? "font-semibold"
                             : "bg-transparent text-muted-foreground border-input hover:bg-muted/40"
@@ -1691,7 +1695,7 @@ export default function ManagerDashboard() {
                 {effectiveSelected.length === 0 ? "Select a CLR to display" : "No data in this range"}
               </div>
             ) : (
-              <div className="h-72">
+              <div className="h-64 sm:h-72 min-w-0 w-full overflow-hidden">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={clrTrendChartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#27272a" : "#e5e7eb"} />
@@ -1791,12 +1795,12 @@ export default function ManagerDashboard() {
               </div>
             ) : (
               <>
-                <div style={{ height: Math.max(240, compareRows.length * 36 + 60) }}>
+                <div className="min-w-0 w-full overflow-hidden" style={{ height: Math.max(240, compareRows.length * 36 + 60) }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={compareChartData}
                       layout="vertical"
-                      margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                      margin={{ top: 5, right: isMobile ? 8 : 20, left: isMobile ? 0 : 10, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke={isDark ? "#27272a" : "#e5e7eb"} horizontal={false} />
                       <XAxis
@@ -1808,8 +1812,8 @@ export default function ManagerDashboard() {
                       <YAxis
                         type="category"
                         dataKey="name"
-                        width={130}
-                        tick={{ fontSize: 11, fill: isDark ? "#e4e4e7" : "#0f172a" }}
+                        width={isMobile ? 72 : 130}
+                        tick={{ fontSize: isMobile ? 10 : 11, fill: isDark ? "#e4e4e7" : "#0f172a" }}
                       />
                       <Tooltip
                         contentStyle={{
@@ -1835,8 +1839,8 @@ export default function ManagerDashboard() {
                   </ResponsiveContainer>
                 </div>
 
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-sm">
+                <div className="mt-4 overflow-x-auto overscroll-x-contain">
+                  <table className="w-full min-w-[480px] text-sm">
                     <thead className="bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
                       <tr>
                         <th className="text-left px-3 py-2 font-medium">#</th>
@@ -1933,8 +1937,8 @@ export default function ManagerDashboard() {
             {/* What the floor actually reported today. The submission tracker
                 below still answers "did it arrive"; this answers "what does it
                 say", which is the part a manager was opening each email for. */}
-            <div className="mb-3 overflow-x-auto">
-              <table className="w-full text-xs" data-testid="eod-digest-table">
+            <div className="mb-3 overflow-x-auto overscroll-x-contain -mx-1 px-1">
+              <table className="w-full min-w-[560px] text-xs" data-testid="eod-digest-table">
                 <thead>
                   <tr className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
                     <th className="text-left font-medium px-2 py-1.5">CLR</th>
@@ -1944,7 +1948,7 @@ export default function ManagerDashboard() {
                     <th className="text-right font-medium px-2 py-1.5">Xfer</th>
                     <th className="text-right font-medium px-2 py-1.5">Appt</th>
                     <th className="text-right font-medium px-2 py-1.5">LOs</th>
-                    <th className="text-left font-medium px-2 py-1.5 min-w-[14rem]">Notes</th>
+                    <th className="text-left font-medium px-2 py-1.5 min-w-[10rem] sm:min-w-[14rem]">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2461,11 +2465,11 @@ function HeatmapCard({
       </CardHeader>
       <CardContent className="p-3 sm:p-4 min-w-0">
         <p className="mb-3 text-xs text-muted-foreground">Each square is one day. Scroll sideways for more dates; names stay visible.</p>
-        <div className="max-h-[560px] overflow-auto rounded-lg border" tabIndex={0} role="region" aria-label={`${title} by CLR`}>
+        <div className="max-h-[560px] overflow-auto overscroll-contain rounded-lg border" tabIndex={0} role="region" aria-label={`${title} by CLR`}>
         <table className="text-xs border-separate" style={{ borderSpacing: "3px", minWidth: "100%", tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th className="text-left px-3 pb-1 sticky left-0 bg-card z-20 brand-text min-w-[190px]">CLR</th>
+              <th className="text-left px-2 sm:px-3 pb-1 sticky left-0 bg-card z-20 brand-text min-w-[7.5rem] sm:min-w-[190px]">CLR</th>
               {dowLabels.map((dow, i) => (
                 <th key={"dow-"+i} className="px-0 pb-0 font-medium text-muted-foreground tabular-nums text-center">
                   <div>{dow}</div>
@@ -2485,7 +2489,7 @@ function HeatmapCard({
           <tbody>
             {block.rows.map(row => (
               <tr key={row.userId}>
-                <td className="px-3 py-2 min-w-[190px] sticky left-0 z-10 bg-card font-medium brand-text border-r">
+                <td className="px-2 sm:px-3 py-2 min-w-[7.5rem] sm:min-w-[190px] sticky left-0 z-10 bg-card font-medium brand-text border-r">
                   <span className="flex flex-col items-start gap-1 whitespace-nowrap">
                     {row.name}
                     <ClrTrainingBadge inTraining={row.inTraining} activeWorkdays={row.activeWorkdays} />
@@ -2502,7 +2506,7 @@ function HeatmapCard({
                       : (isDark ? "#e4e4e7" : "#0f172a");
                   return (
                     <td key={i} className="p-0">
-                      <div className="min-w-[44px] h-10 rounded flex items-center justify-center text-xs font-medium tabular-nums"
+                      <div className="min-w-[36px] sm:min-w-[44px] h-9 sm:h-10 rounded flex items-center justify-center text-[11px] sm:text-xs font-medium tabular-nums"
                            style={{ backgroundColor: bg, color: fg }}
                            title={`${block.dates[i]} (${WEEKDAY_SHORT[new Date(block.dates[i] + "T00:00:00").getDay()]}): ${v} ${valueLabel}${v === 1 ? "" : "s"}`}>
                         {v || ""}
