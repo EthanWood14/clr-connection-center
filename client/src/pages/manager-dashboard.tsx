@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ShotgunSlaScoreboard } from "@/components/shotgun-sla-scoreboard";
 import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Button } from "@/components/ui/button";
@@ -1230,6 +1231,8 @@ export default function ManagerDashboard() {
           <KpiTile label="Fell through" value={stats.today?.fellThrough ?? 0} icon={XCircle} color={RED} />
         </div>
       </div>
+
+      <ShotgunSlaScoreboard className="border-orange-200/60 dark:border-orange-900/40" />
 
       {/* KPI tiles — This week with WoW deltas */}
       <div>

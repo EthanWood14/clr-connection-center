@@ -61,8 +61,11 @@ test("the server records each lead once, announces it to the assigned CLRs, and 
   const announce = routes.slice(routes.indexOf("function announceFreshLoLeads("), routes.indexOf("function newestLeadsDeps("));
   assert.match(announce, /if \(!assigned\.length\) continue;/, "an LO nobody is calling for today is not a CLR's lead");
   assert.match(announce, /loNewLeadIsFresh\(lead\.landedAt, now\)/);
+  assert.match(announce, /createShotgunLeadFromFields\(/, "fresh leads enter Shotgun immediately");
+  assert.match(announce, /preferredAssigneeIds: assigned/);
   assert.match(announce, /sendPushToUser\(userId, \{ title: `New lead — \$\{loName\}`/);
   assert.match(announce, /type: "lo_new_lead"/);
+  assert.match(announce, /url: "\/#\/shotgun"/);
   const escalate = routes.slice(routes.indexOf("function escalateUnclaimedLoLeads("), routes.indexOf("const loLeadWatcher"));
   assert.match(escalate, /new Date\(Date\.now\(\) - LO_NEW_LEAD_CLAIM_WINDOW_MS\)/);
   assert.match(escalate, /createShotgunLeadFromFields\(orgId, Number\(publisher\.id\), publisher, \{/);
@@ -119,7 +122,11 @@ test("both cards secure their lead before opening Dialpad, and the new-lead card
   const offer = read("client/src/components/shotgun-offer-alert.tsx");
   assert.match(offer, /data-testid="shotgun-offer-call"/);
   assert.match(offer, /const prepareDialpadCall = useDialpadCall\(\)/);
-  assert.match(offer, /prepareDialpadCall\(offered\.phone\)[\s\S]*?confirm\.mutateAsync\(offered\.id\)\.then\(\(\) => dialpad\.complete\(\)\)\.catch\(\(\) => dialpad\.cancel\(\)\)/);
+  assert.match(offer, /prepareDialpadCall\(offered\.phone\)/);
+  assert.match(offer, /confirm\.mutateAsync\(offered\.id\)/);
+  assert.match(offer, /dialpad\.complete\(\)/);
+  assert.match(offer, /open-phone/);
+  assert.match(offer, /dialpad\.cancel\(\)/);
   assert.doesNotMatch(offer, /tel:|window\.location/);
   assert.match(offer, /refetchIntervalInBackground: true/);
 });

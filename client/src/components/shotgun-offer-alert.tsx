@@ -111,7 +111,12 @@ export function ShotgunOfferAlert() {
     const dialpad = prepareDialpadCall(offered.phone);
     if (!dialpad) return;
     // Secure the offer first, even if the success refetch removes this card.
-    void confirm.mutateAsync(offered.id).then(() => dialpad.complete()).catch(() => dialpad.cancel());
+    // Then stamp first_dial_at via open-phone for the SLA scoreboard (real
+    // Dialpad launch evidence — not the write-up called checkbox).
+    void confirm.mutateAsync(offered.id).then(async () => {
+      try { await apiRequest("POST", `/api/shotgun/${offered.id}/open-phone`, {}); } catch {}
+      dialpad.complete();
+    }).catch(() => dialpad.cancel());
   };
   return (
     <section aria-label="Shotgun lead offer" data-testid="shotgun-offer-popup" className="pointer-events-auto relative rounded-2xl border-2 border-orange-400 bg-slate-950 p-4 text-white shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-left-4">

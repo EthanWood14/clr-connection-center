@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { STATE_CALL_RULES } from "@/data/state-call-hours";
 import { ShotgunCallLeadButton, ShotgunResultCard } from "@/components/shotgun-result-card";
+import { ShotgunSlaScoreboard } from "@/components/shotgun-sla-scoreboard";
 import { useDialpadCall } from "@/lib/dialpad-call";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -291,6 +292,8 @@ export default function Shotgun() {
         {/* One at a time. While a claimed lead has no write-up the rotation
             skips this CLR and the accept refuses, so the reason has to be on
             screen — otherwise Ready with no offers looks like a fault. */}
+        {payload.canManage && <ShotgunSlaScoreboard />}
+
         {payload.holding && (
           <div
             className="flex flex-wrap items-center gap-3 rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/30"

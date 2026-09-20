@@ -890,6 +890,15 @@ try { sqlite.exec(`ALTER TABLE loan_officers ADD COLUMN nmls_license_expiration 
   // Timed bounceback (shared/shotgun-bounceback.ts): set once when the 35-minute
   // re-offer fires or is skipped for outcome/cancel. NULL means not yet decided.
   try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN bounceback_fired_at TEXT`); } catch {}
+  // Fresh LO-new-lead unify (4.122.24): preferred assignees get offers alone
+  // until head_start_until, then Ready CLR rotation. first_dial_at is Dialpad /
+  // Bonzo dial evidence for the SLA scoreboard — not the write-up called flag.
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN head_start_until TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN preferred_assignee_ids TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN lo_new_external_id TEXT`); } catch {}
+  try { sqlite.exec(`ALTER TABLE shotgun_leads ADD COLUMN first_dial_at TEXT`); } catch {}
+  try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_lo_new_external
+    ON shotgun_leads(org_id, lo_new_external_id) WHERE lo_new_external_id IS NOT NULL`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_leads_org_status ON shotgun_leads(org_id, status, created_at DESC)`); } catch {}
   try { sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_shotgun_transfer_outcome ON shotgun_leads(transfer_outcome_id) WHERE transfer_outcome_id IS NOT NULL`); } catch {}
   try { sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_shotgun_offers_lead ON shotgun_offers(lead_id, offered_at)`); } catch {}
@@ -5145,8 +5154,11 @@ export const finishLoNewLeadEscalation = loNewLeadEscalation.finishLoNewLeadEsca
  * in shared/lo-new-leads.ts rather than being retyped as SQL.
  */
 export function openFloorLoNewLeads(orgId: number, floorCutoffIso: string, windowCutoffIso: string, excludeUserId: number): any[] {
+  // Leads already linked to a Shotgun lead use ShotgunOfferAlert — do not
+  // surface a second competing claim button on the floor card.
   const rows = sqlite.prepare(`SELECT * FROM lo_new_leads
-     WHERE org_id=? AND status='new' AND first_seen_at<=? AND first_seen_at>?
+     WHERE org_id=? AND status='new' AND shotgun_lead_id IS NULL
+       AND first_seen_at<=? AND first_seen_at>?
      ORDER BY first_seen_at, id LIMIT 20`).all(orgId, floorCutoffIso, windowCutoffIso) as any[];
   return rows.filter((r) => {
     try { return !(JSON.parse(r.assigned_user_ids || "[]") as number[]).map(Number).includes(Number(excludeUserId)); }

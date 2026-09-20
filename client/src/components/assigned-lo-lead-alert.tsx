@@ -14,11 +14,10 @@ import { playShotgunChime } from "@/components/shotgun-offer-alert";
 import { Button } from "@/components/ui/button";
 
 /**
- * A new lead on one of this CLR's assigned loan officers, the moment
- * LeadVault sees it. It behaves like a Shotgun lead: a tap-to-call number,
- * a "got it" claim, and a three-minute window — a lead nobody claims goes to
- * the Shotgun rotation, where the twenty-second offer moves it on
- * (shared/lo-new-leads.ts).
+ * Safety-net card for a fresh assigned-LO lead that has NOT yet entered
+ * Shotgun (publish failed or still linking). Once shotgun_lead_id is set the
+ * claim is settled and ShotgunOfferAlert is the only claim UX — no second
+ * competing button (4.122.24 unify).
  */
 export function AssignedLoLeadAlert() {
   const { user } = useAuth();
