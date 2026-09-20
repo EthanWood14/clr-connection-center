@@ -41,7 +41,8 @@ test("then every Ready CLR sees it, until the three minutes are up", () => {
 
 test("the feed hands each CLR the floor's unclaimed leads, never their own twice", () => {
   const open = storage.slice(storage.indexOf("export function openFloorLoNewLeads"), storage.indexOf("/** How many of the leads shown"));
-  assert.match(open, /status='new' AND first_seen_at<=\? AND first_seen_at>\?/);
+  assert.match(open, /status='new' AND shotgun_lead_id IS NULL/);
+  assert.match(open, /first_seen_at<=\? AND first_seen_at>\?/);
   assert.match(open, /includes\(Number\(excludeUserId\)\)/, "your own lead already has a card");
   const route = routes.slice(routes.indexOf("const floorLos ="), routes.indexOf("res.json({\n      ...result,"));
   assert.match(route, /shotgunOptedOut \?\? meRow\?\.shotgun_opted_out\) \? \[\]/, "somebody off the rotation is off this too");
@@ -67,8 +68,10 @@ test("a CLR taken off the rotation is never offered a lead, however Ready they l
   assert.match(storage, /ALTER TABLE users ADD COLUMN shotgun_opted_out INTEGER NOT NULL DEFAULT 0/);
   assert.match(storage, /shotgun_optout_elleine_v1/);
   assert.match(storage, /UPDATE users SET shotgun_opted_out=1 WHERE name LIKE 'Elleine%' AND is_active=1/);
-  const candidate = routes.slice(routes.indexOf("const candidate = db.prepare("), routes.indexOf("if (!candidate) return null;"));
-  assert.match(candidate, /AND COALESCE\(u\.shotgun_opted_out,0\)=0/);
+  // Ready rotation (post head-start) must still honor opt-out.
+  assert.match(routes, /AND COALESCE\(u\.shotgun_opted_out,0\)=0/);
+  const assign = routes.slice(routes.indexOf("function assignShotgunLead"), routes.indexOf("function advanceShotgun"));
+  assert.match(assign, /AND COALESCE\(u\.shotgun_opted_out,0\)=0/);
   // And the page tells them, rather than showing a Ready badge that will
   // never be offered anything.
   assert.match(routes, /const isClr = shotgunUserIsClr\(me\) && !optedOut;/);

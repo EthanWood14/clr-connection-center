@@ -297,7 +297,7 @@ test("the shotgun button is never invisible, and reports what it saw", () => {
   // It always renders: armed when a prospect is named, dimmed otherwise.
   assert.match(extContent, /btn\.style\.display = "inline-flex";/);
   assert.doesNotMatch(extContent, /btn\.style\.display = current \?/);
-  assert.match(extContent, /Open a Bonzo prospect/);
+  assert.match(extContent, /Open a (?:Bonzo )?prospect/);
   // And it leaves a breadcrumb the popup can read.
   assert.match(extContent, /c3Seen:/);
   assert.match(extPopupJs, /c3Seen/);

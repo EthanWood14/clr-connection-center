@@ -139,7 +139,8 @@ import {
   type LeadVaultPerson, type PeopleResult,
 } from "./leadvault-people";
 import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLeadsByLo } from "./leadvault-newest-leads";
-import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadIsFresh } from "@shared/lo-new-leads";
+import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadHeadStartUntil, loNewLeadIsFresh } from "@shared/lo-new-leads";
+import { computeShotgunSla } from "./shotgun-sla";
 import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/weekly-pace";
 import {
   availableWeekdayPortions, ensureHalfDaySchema, ensureSeededHalfDays,
@@ -8438,6 +8439,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     claimedAt: row.claimed_at ? String(row.claimed_at) : null,
     presenceConfirmedAt: row.presence_confirmed_at ? String(row.presence_confirmed_at) : null,
     bouncebackFiredAt: row.bounceback_fired_at ? String(row.bounceback_fired_at) : null,
+    headStartUntil: row.head_start_until ? String(row.head_start_until) : null,
+    firstDialAt: row.first_dial_at ? String(row.first_dial_at) : null,
+    loNewExternalId: row.lo_new_external_id ? String(row.lo_new_external_id) : null,
     called: !!row.called, texted: !!row.texted, resultNotes: String(row.result_notes ?? ""),
     transferOutcomeId: row.transfer_outcome_id == null ? null : Number(row.transfer_outcome_id),
     transferType: row.result_transfer_type ? String(row.result_transfer_type) : null,
@@ -8492,31 +8496,65 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       // again inside SHOTGUN_RELAP_COOLDOWN_MS, so the lap paces itself instead
       // of hammering the same people every 20 seconds until someone gives in.
       const relapCutoff = new Date(new Date(nowIso).getTime() - SHOTGUN_RELAP_COOLDOWN_MS).toISOString();
-      const candidate = db.prepare(`
-        SELECT u.id, u.name FROM users u
-        INNER JOIN shotgun_readiness r ON r.org_id=u.org_id AND r.user_id=u.id
-        LEFT JOIN shotgun_offers o ON o.lead_id=? AND o.user_id=u.id
-        WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
-          AND (u.portal IS NULL OR u.portal='c3') AND r.is_ready=1 AND r.heartbeat_at>=?
-          -- Off the rotation by decision, not by absence: never offered a lead
-          -- however Ready they look (users.shotgun_opted_out).
-          AND COALESCE(u.shotgun_opted_out,0)=0
-          AND (o.id IS NULL OR (o.response<>'pending' AND o.offered_at<=?))
-          -- One lead at a time, and that means finished, not merely answered.
-          -- 'offered' was already here: nobody should be deciding on two
-          -- twenty-second countdowns at once. 'claimed' is the addition
-          -- (owner, 9 Sep 2026): a CLR holding a lead they have not written
-          -- up yet is not free to take another. The old rule let somebody
-          -- accept, get distracted, accept again, and leave a queue of
-          -- half-worked leads nobody else could be offered.
-          AND NOT EXISTS (
-            SELECT 1 FROM shotgun_leads live
-            WHERE live.org_id=u.org_id AND live.current_assignee_id=u.id
-              AND live.status IN ('offered','claimed') AND live.id<>?
-          )
-        ORDER BY CASE WHEN o.offered_at IS NULL THEN 0 ELSE 1 END, o.offered_at ASC,
-                 CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
-      `).get(leadId, Number(lead.org_id), cutoff, relapCutoff, leadId) as any;
+      // Fresh LO-new-lead head-start (~45s): offer only to preferred assignees
+      // first. Ready is NOT required during head-start (matches the old
+      // assignee-exclusive card). After head_start_until, normal Ready rotation.
+      let preferredIds: number[] = [];
+      try {
+        preferredIds = (JSON.parse(String(lead.preferred_assignee_ids || "[]")) as any[])
+          .map(Number).filter((n) => Number.isFinite(n) && n > 0);
+      } catch { preferredIds = []; }
+      const headStartUntilMs = Date.parse(String(lead.head_start_until ?? ""));
+      const inHeadStart = preferredIds.length > 0 && Number.isFinite(headStartUntilMs) && Date.parse(nowIso) < headStartUntilMs;
+      let candidate: any = null;
+      if (inHeadStart) {
+        const placeholders = preferredIds.map(() => "?").join(",");
+        candidate = db.prepare(`
+          SELECT u.id, u.name FROM users u
+          LEFT JOIN shotgun_readiness r ON r.org_id=u.org_id AND r.user_id=u.id
+          LEFT JOIN shotgun_offers o ON o.lead_id=? AND o.user_id=u.id
+          WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
+            AND (u.portal IS NULL OR u.portal='c3')
+            AND u.id IN (${placeholders})
+            AND (o.id IS NULL OR (o.response<>'pending' AND o.offered_at<=?))
+            AND NOT EXISTS (
+              SELECT 1 FROM shotgun_leads live
+              WHERE live.org_id=u.org_id AND live.current_assignee_id=u.id
+                AND live.status IN ('offered','claimed') AND live.id<>?
+            )
+          ORDER BY CASE WHEN o.offered_at IS NULL THEN 0 ELSE 1 END, o.offered_at ASC,
+                   CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
+        `).get(leadId, Number(lead.org_id), ...preferredIds, relapCutoff, leadId) as any;
+        // Nobody preferred is free right now — wait out the head-start rather
+        // than leaking to the Ready pool early.
+        if (!candidate) return null;
+      } else {
+        candidate = db.prepare(`
+          SELECT u.id, u.name FROM users u
+          INNER JOIN shotgun_readiness r ON r.org_id=u.org_id AND r.user_id=u.id
+          LEFT JOIN shotgun_offers o ON o.lead_id=? AND o.user_id=u.id
+          WHERE u.org_id=? AND u.is_active=1 AND (u.is_clr=1 OR u.role='assistant')
+            AND (u.portal IS NULL OR u.portal='c3') AND r.is_ready=1 AND r.heartbeat_at>=?
+            -- Off the rotation by decision, not by absence: never offered a lead
+            -- however Ready they look (users.shotgun_opted_out).
+            AND COALESCE(u.shotgun_opted_out,0)=0
+            AND (o.id IS NULL OR (o.response<>'pending' AND o.offered_at<=?))
+            -- One lead at a time, and that means finished, not merely answered.
+            -- 'offered' was already here: nobody should be deciding on two
+            -- twenty-second countdowns at once. 'claimed' is the addition
+            -- (owner, 9 Sep 2026): a CLR holding a lead they have not written
+            -- up yet is not free to take another. The old rule let somebody
+            -- accept, get distracted, accept again, and leave a queue of
+            -- half-worked leads nobody else could be offered.
+            AND NOT EXISTS (
+              SELECT 1 FROM shotgun_leads live
+              WHERE live.org_id=u.org_id AND live.current_assignee_id=u.id
+                AND live.status IN ('offered','claimed') AND live.id<>?
+            )
+          ORDER BY CASE WHEN o.offered_at IS NULL THEN 0 ELSE 1 END, o.offered_at ASC,
+                   CASE WHEN r.last_assigned_at IS NULL THEN 0 ELSE 1 END, r.last_assigned_at ASC, u.id ASC LIMIT 1
+        `).get(leadId, Number(lead.org_id), cutoff, relapCutoff, leadId) as any;
+      }
       if (!candidate) return null;
       const expiresAt = new Date(new Date(nowIso).getTime() + SHOTGUN_OFFER_MS).toISOString();
       const changed = db.prepare(`UPDATE shotgun_leads SET status='offered',current_assignee_id=?,offer_expires_at=?,updated_at=?
@@ -8532,8 +8570,10 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           response='pending', responded_at=NULL`).run(leadId, lead.org_id, candidate.id, nowIso, expiresAt);
       db.prepare(`INSERT INTO shotgun_offer_events (lead_id,org_id,user_id,offered_at,expires_at,response)
         VALUES (?,?,?,?,?,'pending')`).run(leadId, lead.org_id, candidate.id, nowIso, expiresAt);
-      db.prepare(`UPDATE shotgun_readiness SET last_assigned_at=?,updated_at=? WHERE org_id=? AND user_id=?`)
-        .run(nowIso, nowIso, lead.org_id, candidate.id);
+      db.prepare(`INSERT INTO shotgun_readiness (org_id,user_id,is_ready,heartbeat_at,last_assigned_at,updated_at)
+        VALUES (?,?,0,?,?,?)
+        ON CONFLICT(org_id,user_id) DO UPDATE SET last_assigned_at=excluded.last_assigned_at, updated_at=excluded.updated_at`)
+        .run(lead.org_id, candidate.id, nowIso, nowIso, nowIso);
       return { orgId: Number(lead.org_id), userId: Number(candidate.id), leadId, leadName: String(lead.lead_name) };
     })();
   }
@@ -8921,8 +8961,15 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!phone && !email) return { status: 400, body: { error: "Enter a phone number or email address." } };
     if (phone && (phoneKey.length < 10 || phoneKey.length > 15)) return { status: 400, body: { error: "Enter a valid phone number with 10 to 15 digits." } };
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailKey)) return { status: 400, body: { error: "Enter a valid email address." } };
-    if (phone && !stateCode) return { status: 400, body: { error: "Select the lead's state so the CLR can check calling hours." } };
+    // lo-feed (fresh assigned-LO → Shotgun) often arrives without a clean state;
+    // still publish so the lead enters rotation — calling-hours UI treats blank as unknown.
+    if (phone && !stateCode && via !== "lo-feed") return { status: 400, body: { error: "Select the lead's state so the CLR can check calling hours." } };
     if (stateCode && !SHOTGUN_STATE_CODES.has(stateCode)) return { status: 400, body: { error: "Select a valid U.S. state." } };
+    const preferredAssigneeIds = Array.isArray(raw?.preferredAssigneeIds)
+      ? (raw.preferredAssigneeIds as any[]).map(Number).filter((n) => Number.isFinite(n) && n > 0).slice(0, 20)
+      : [];
+    const headStartUntil = raw?.headStartUntil ? String(raw.headStartUntil) : null;
+    const loNewExternalId = raw?.loNewExternalId ? String(raw.loNewExternalId).slice(0, 64) : null;
     const now = new Date().toISOString();
     const readyCutoff = new Date(new Date(now).getTime() - SHOTGUN_READY_TTL_MS).toISOString();
     const readyCount = Number((shotgunDb().prepare(`SELECT COUNT(*) AS count FROM shotgun_readiness r
@@ -8938,8 +8985,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     let info: any;
     try {
       info = shotgunDb().prepare(`INSERT INTO shotgun_leads
-        (org_id,lead_name,phone,phone_key,email,email_key,state_code,source,manager_notes,status,created_by_user_id,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,'queued',?,?,?)`).run(orgId, leadName, phone, phoneKey || null, email, emailKey || null, stateCode, source, managerNotes, userId, now, now);
+        (org_id,lead_name,phone,phone_key,email,email_key,state_code,source,manager_notes,status,created_by_user_id,created_at,updated_at,head_start_until,preferred_assignee_ids,lo_new_external_id)
+        VALUES (?,?,?,?,?,?,?,?,?,'queued',?,?,?,?,?,?)`).run(orgId, leadName, phone, phoneKey || null, email, emailKey || null, stateCode, source, managerNotes, userId, now, now,
+          headStartUntil, preferredAssigneeIds.length ? JSON.stringify(preferredAssigneeIds) : null, loNewExternalId);
     } catch (error: any) {
       if (String(error?.code ?? "").includes("CONSTRAINT") || /unique/i.test(String(error?.message ?? ""))) {
         return { status: 409, body: { error: "This phone number or email is already active in Shotgun." } };
@@ -8954,6 +9002,35 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       details: JSON.stringify({ source, stateCode, assignedImmediately: !!assignment, ...(via ? { via } : {}) }) });
     return { status: 200, body: { ok: true, leadId: Number(info.lastInsertRowid), assigned: !!assignment, leadName } };
   }
+
+  // Org Shotgun speed scoreboard: claimed vs unclaimed separately, median+avg
+  // claim time among claimed, dialed <60s among claimed (real dial evidence).
+  app.get("/api/shotgun/sla", requireAuth, (req: any, res) => {
+    const orgId = Number(req.session_user?.orgId ?? 1) || 1;
+    const userId = Number(req.session_user?.userId) || 0;
+    const me = storage.getUserById(userId) as any;
+    const range = String(req.query.range ?? "today") === "week" ? "week" : "today";
+    const tz = BUSINESS_DAY_DEFAULT_TZ;
+    const today = businessTodayInTz(tz);
+    const fromDay = range === "week" ? addIsoDays(today, -6) : today;
+    // Business-day bounds in Pacific: fromDay 00:00 → today+1 00:00 exclusive-ish via end of today.
+    const fromMs = parseWallClockInTz(`${fromDay} 00:00`, tz);
+    const toExclusive = addIsoDays(today, 1);
+    const toMs = parseWallClockInTz(`${toExclusive} 00:00`, tz);
+    const fromIso = new Date(fromMs).toISOString();
+    const toIso = new Date(toMs).toISOString();
+    const summary = computeShotgunSla(shotgunDb(), orgId, fromIso, toIso);
+    res.json({
+      range,
+      from: fromDay,
+      to: today,
+      fromIso,
+      toIso,
+      canManage: taskManager(me),
+      ...summary,
+      dialProxy: "first_dial_at (open-phone / Dialpad launch), else bonzo_call_events phone match; not called=1 write-up",
+    });
+  });
 
   app.post("/api/shotgun/publish", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
@@ -9508,8 +9585,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // Records the verified handoff to the device's phone app. This deliberately
-  // does not mark `called=1`: opening a dialer is not proof a call connected or
-  // was even placed. The CLR still records the real outcome below.
+  // does not mark the write-up called flag: opening a dialer is not proof a call
+  // connected or was even placed. The CLR still records the real outcome below.
+  // It DOES stamp first_dial_at for the Shotgun speed scoreboard.
   app.post("/api/shotgun/:id/open-phone", requireAuth, (req: any, res) => {
     const orgId = Number(req.session_user?.orgId ?? 1) || 1;
     const userId = Number(req.session_user?.userId) || 0;
@@ -9520,10 +9598,16 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       return res.status(403).json({ error: "You do not own this active lead." });
     }
     if (!String(lead.phone ?? "").trim()) return res.status(409).json({ error: "This lead has no phone number." });
+    const dialNow = new Date().toISOString();
+    // first_dial_at is SLA dial evidence (Dialpad launch). Deliberately separate
+    // from the write-up "called" checkbox — opening Dialpad is not proof a call connected.
+    shotgunDb().prepare(`UPDATE shotgun_leads SET first_dial_at=COALESCE(first_dial_at, ?), updated_at=?
+      WHERE id=? AND org_id=? AND status='claimed' AND current_assignee_id=?`)
+      .run(dialNow, dialNow, leadId, orgId, userId);
     audit({ userId, userName: me?.name ?? "CLR", action: "update", entityType: "shotgun_lead",
       entityId: leadId, entityLabel: String(lead.lead_name),
-      details: JSON.stringify({ action: "phone_opened", stateCode: String(lead.state_code ?? ""), complianceAcknowledged: true }) });
-    res.json({ ok: true });
+      details: JSON.stringify({ action: "phone_opened", stateCode: String(lead.state_code ?? ""), complianceAcknowledged: true, firstDialAt: dialNow }) });
+    res.json({ ok: true, firstDialAt: dialNow });
   });
 
   // Leads whose full write-up is being saved right now. The full-form path
@@ -20196,6 +20280,8 @@ ${note}` : daysLine;
       if (email) losByEmail.set(email, lo);
     }
     const { byLo } = todaysAssignmentsByLo(orgId);
+    // Shotgun wants a publisher; feed arrivals have no human one — use first active admin.
+    const publisher = (storage.getUsers() as any[]).find((u) => u.role === "admin" && (u.isActive ?? u.is_active) && (u.portal == null || u.portal === "c3"));
     for (const row of los) {
       const lo = losByEmail.get(String(row.email).toLowerCase());
       if (!lo) continue;
@@ -20204,23 +20290,62 @@ ${note}` : daysLine;
       const loName = String(lo.fullName ?? lo.full_name ?? row.name ?? "");
       for (const lead of row.leads) {
         if (!lead.externalId || !loNewLeadIsFresh(lead.landedAt, now)) continue;
-        const { inserted } = storageExtra.recordLoNewLead({
+        const { inserted, row: recorded } = storageExtra.recordLoNewLead({
           orgId, externalId: String(lead.externalId), loId: Number(lo.id), loEmail: row.email, loName,
           borrowerName: lead.borrowerName ?? null, phone: lead.phone ?? null, email: null,
           state: lead.state ?? null, source: lead.source ?? null, landedAt: lead.landedAt ?? null,
           assignedUserIds: assigned,
         });
         if (!inserted) continue;
+        // Unify into Shotgun immediately (4.122.24): ~45s preferred-assignee
+        // head-start, then Ready CLR rotation — not a parallel 3-minute card.
+        const firstSeenAt = String(recorded?.first_seen_at ?? new Date(now).toISOString());
+        const headStartUntil = loNewLeadHeadStartUntil(firstSeenAt);
+        const assignedNames = assigned.map((id: number) => String((storage.getUserById(id) as any)?.name ?? id)).join(", ");
+        const landed = lead.landedAt
+          ? new Date(lead.landedAt).toLocaleTimeString("en-US", { timeZone: BUSINESS_DAY_DEFAULT_TZ, hour: "numeric", minute: "2-digit" })
+          : "just now";
+        let shotgunLeadId: number | null = null;
+        let escalateError: string | null = null;
+        if (publisher && lead.phone) {
+          const result = createShotgunLeadFromFields(orgId, Number(publisher.id), publisher, {
+            leadName: lead.borrowerName || "New lead",
+            phone: lead.phone || "",
+            email: "",
+            stateCode: normalizeStateCode(lead.state || ""),
+            source: `New lead — ${loName}`,
+            managerNotes: `Fresh lead for ${loName} at ${landed}. Assigned CLR(s) get ~45s head-start, then Ready Shotgun rotation${assignedNames ? ` (assigned: ${assignedNames})` : ""}.`,
+            preferredAssigneeIds: assigned,
+            headStartUntil,
+            loNewExternalId: String(lead.externalId),
+          }, "lo-feed");
+          if (result.status === 200) {
+            shotgunLeadId = Number(result.body?.leadId) || null;
+          } else {
+            escalateError = String(result.body?.error ?? `HTTP ${result.status}`);
+          }
+        } else {
+          escalateError = publisher ? "No phone to publish into Shotgun." : "No active admin to publish under.";
+        }
+        if (shotgunLeadId) {
+          storageExtra.markLoNewLeadEscalated(Number(recorded.id), shotgunLeadId, null);
+        } else if (escalateError) {
+          // Leave status=new so the watcher safety-net can retry into Shotgun.
+          console.error(`[lo-new-lead] ${loName}: ${lead.externalId} Shotgun publish failed: ${escalateError}`);
+        }
         const who = lead.borrowerName || "A new borrower";
         const detail = [lead.state, lead.source].filter(Boolean).join(" · ");
+        const pushBody = shotgunLeadId
+          ? `${who}${detail ? ` · ${detail}` : ""} — in Shotgun, ~45s head-start then Ready rotation`
+          : `${who}${detail ? ` · ${detail}` : ""} — claim soon (Shotgun publish pending)`;
         for (const userId of assigned) {
           try {
             storage.createNotification({ userId, type: "lo_new_lead", title: `New lead — ${loName}`,
-              message: `${who}${detail ? ` · ${detail}` : ""}. Claim it within 3 minutes or it goes to Shotgun.`, isRead: false } as any);
+              message: pushBody, isRead: false } as any);
           } catch {}
-          sendPushToUser(userId, { title: `New lead — ${loName}`, body: `${who}${detail ? ` · ${detail}` : ""} — tap to call, 3 min before Shotgun`, url: "/#/assignments", portal: "c3" }).catch(() => {});
+          sendPushToUser(userId, { title: `New lead — ${loName}`, body: pushBody, url: "/#/shotgun", portal: "c3" }).catch(() => {});
         }
-        console.log(`[lo-new-lead] ${loName}: ${lead.externalId} announced to ${assigned.length} CLR(s)`);
+        console.log(`[lo-new-lead] ${loName}: ${lead.externalId} announced to ${assigned.length} CLR(s)${shotgunLeadId ? ` → Shotgun #${shotgunLeadId}` : ""}`);
       }
     }
   }

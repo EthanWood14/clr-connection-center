@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.24",
+    headline: "Shotgun speed scoreboard + fresh LO leads enter Shotgun right away.",
+    items: [
+      { text: "On Shotgun and Manager Home, a speed scoreboard shows unclaimed vs claimed as separate counts, median and average claim time among claimed leads, and what share were dialed within 60 seconds of claim (Dialpad launch / Bonzo dial evidence — not the write-up checkbox). Today / week toggle; exclude_from_stats people stay out of the speed math.", audience: "manager" },
+      { text: "A new lead for one of today's assigned loan officers goes into Shotgun immediately with a ~45-second assignee head-start, then the normal Ready CLR rotation (offer / claim / presence / reclaim / bounceback / SLA) — not a separate three-minute card that only escalates later.", audience: "everyone" },
+      { text: "Once that Shotgun lead exists, the old parallel claim card steps aside so you do not get two competing claim buttons for the same borrower. Push still fires; Dialpad click-to-call still works from the Shotgun offer.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.23",
     headline: "Manager Home fits phone screens — tables scroll, KPIs stay readable.",
     items: [
