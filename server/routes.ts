@@ -14290,10 +14290,10 @@ ${note}` : daysLine;
       return res.status(403).json({ error: "Not available for this account." });
     }
 
-    // phase=fast: today/week/MTD KPIs + short scorecard windows only — skip
-    // all-time / 90d / 3mo placement scans and the LeadVault CallTools warm so
-    // first paint is not blocked on the ~9s full payload. Client then loads
-    // phase=full (default) after paint.
+    // phase=fast: today/week/MTD KPIs only — skip placement SQL/ramp entirely,
+    // skip 3d/7d/longer windows, and skip the LeadVault CallTools warm so first
+    // paint is typically ~1–2s when SQLite is idle (not another ~10s). Client
+    // then loads phase=full (default) after paint; Placed shows "—" until then.
     const phaseRaw = String(req.query.phase ?? "full").toLowerCase();
     const isFast = phaseRaw === "fast" || phaseRaw === "light";
     const orgKey = String(sess?.orgId ?? currentOrgId() ?? 1);
@@ -14957,282 +14957,289 @@ ${note}` : daysLine;
       // of the transfer, so feeding the same starved loan officer all fortnight
       // keeps paying instead of quietly becoming a penalty. Every rule lives in
       // server/transfer-priority.ts; this only feeds it rows.
+      //
+      // Fast phase skips this entirely — the LO/LOA placement scans + ramp are
+      // the dominant cost of computeRange (~seconds each window). Placed cells
+      // stay null/"—" until phase=full arrives.
       const placementByUser = new Map<number, PlacementCell>();
       // Null when the investment ladder resolved (or the input is off). Otherwise
       // the module's own problem sentence — stamped onto every leaderboard row
       // and the range block as `placementRoutingProblem` so the Placed hover
       // can name what failed without sending the manager to Railway logs.
       let placementRoutingProblem: string | null = null;
-      const placementOrg = currentOrgId() ?? 1;
-      const placementKey = `${placementOrg}|${startDate}|${endDate}`;
-      const placementHit = placementCache.get(placementKey);
-      const placementFresh = !!placementHit && Date.now() - placementHit.at < PLACEMENT_CACHE_TTL_MS;
-      if (placementHit && placementFresh) {
-        placementHit.rows.forEach((v, k) => placementByUser.set(k, v));
-        placementRoutingProblem = placementHit.problem ?? null;
-      } else try {
-        // THE RECIPIENTS ARE COUNTED OVER A RUN-UP AS WELL AS THE RANGE, and
-        // that is the one thing about this query that is load-bearing.
-        //
-        // The stat rebuilds each morning's floor by subtracting the range's own
-        // transfers from each recipient's count. Count them over the range
-        // alone and the subtraction takes everything: every loan officer starts
-        // the window on nothing, the floor is flat, and the busiest desk in the
-        // building scores the same as the emptiest. On the default "Today"
-        // window that made a table in which every CLR read 100%.
-        //
-        // So the count reaches a fortnight further back than the rows being
-        // scored — the same fortnight the TV's Starved page measures, via
-        // starvedWindowStart — and what survives the subtraction is the load
-        // each recipient was already carrying when the window opened. The rows
-        // being SCORED are still this range and only this range; nothing
-        // outside it is judged, and nobody is scored twice.
-        //
-        // What this run-up is NOT is a rolling fortnight, and the gap is wider
-        // than the sentence that used to sit here admitted.
-        //
-        // The module's snapshot adds the range's own transfers on top of that
-        // opening load and never ages any of them back out. So the fortnight is
-        // exact on ONE range: "Today", where the range is a single day and the
-        // load a transfer is judged against is precisely the fortnight the TV's
-        // Starved page counts. On every other range it is that fortnight PLUS
-        // the whole range — pick 90 days and a desk is judged on about a
-        // hundred days of accumulated work; pick "All time" and it is
-        // everything that desk has ever taken. Over a long range that is the
-        // honest question rather than a flaw ("who has been fed the most", and
-        // the ranking stays monotone in it either way), but it does mean the
-        // Placed column and the wall's Starved page can name different people
-        // as starved, and nobody reading the column could have known that.
-        //
-        // So it is said where it can be seen instead of only here: the Placed
-        // column's own tooltip spells the difference out — see the placement
-        // column in client/src/pages/manager-dashboard.tsx. Making the two
-        // agree on every range would need the run-up broken out day by day and
-        // aged back out again, not handed over as one total.
-        const placementFrom = starvedWindowStart(startDate);
-        // `receiving` is what keeps the seeded demo rows and the "Unknown LO
-        // (Recovered)" placeholder out of the full-credit band without naming
-        // anybody: a real MAX(o.date) means somebody has actually transferred
-        // there. The join carries no date test, so that stays a question about
-        // all time while the counted column is the range plus its run-up.
-        const placementLos = (sqlite.prepare(
-          `SELECT lo.id AS id, lo.full_name AS name,
-                  COALESCE(lo.needs_transfers, 0) AS flagged,
-                  lo.same_person_loa_id AS sameAsLoaId,
-                  SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
-                  MAX(o.date) AS lastAt
-             FROM loan_officers lo
-             LEFT JOIN lead_outcomes o
-               ON o.lo_id = lo.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
-            WHERE lo.org_id = ? AND lo.internal_status = 'active'
-            GROUP BY lo.id, lo.full_name, lo.needs_transfers, lo.same_person_loa_id`,
-        ).all(placementFrom, endDate, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
-          id: Number(r.id),
-          kind: "lo",
-          name: String(r.name ?? ""),
-          transfers: Number(r.transfers) || 0,
-          lastAt: r.lastAt ? String(r.lastAt) : null,
-          needsTransfers: !!Number(r.flagged),
-          receiving: !!r.lastAt,
-          // Set only for the handful of people who also work somebody's desk;
-          // mergeHybridLoads adds that half of their workload onto this row.
-          sameAsLoaId: r.sameAsLoaId != null ? Number(r.sameAsLoaId) : null,
-        }));
-        // loan_officer_assistants carries no org_id of its own; the parent loan
-        // officer is the org scope, exactly as the starved page reads it.
-        //
-        // An assistant is NOT a destination the placement ramp scores — the loan
-        // officer is, and he is the only one. So this query does not count what
-        // an assistant received and does not ask whether anybody has ever
-        // transferred to one: `receiving: false` says exactly that, and the load
-        // is not read. The row is on the roster for its IDENTITY — the id, the
-        // name, and the DESK it sits at — because that is what resolves the
-        // three assistants the investment routing rule names.
-        //
-        // a.lo_id is the half of "CHRIS'S Justin, Mateo or John" that can be
-        // enforced without matching anybody's name. Other loan officers have a
-        // Justin of their own, and she is a different person; the rule admits
-        // only the assistants sitting at the one desk all three named rows point
-        // at, so the desk has to travel with them. Leave it behind and the
-        // roster can never answer the question, and the rule stops for the whole
-        // floor — which is what it did for as long as this query omitted it.
-        // An assistant's OWN load, counted over the same run-up and range the
-        // loan officers are counted over. On a prioritised desk the assistant
-        // is the destination that gets ranked, so this column is what the
-        // 60-100 ladder is built from — hand it over as zero and every
-        // assistant ties, which puts the whole desk at the top of the band.
-        //
-        // `receiving` stays false all the same: an assistant is never a
-        // destination on the ORDINARY ramp, and this load is read only by the
-        // desk ladder. The two questions are different and the flag answers
-        // the first one.
-        const placementLoas = (sqlite.prepare(
-          `SELECT a.id AS id, a.full_name AS name, a.lo_id AS deskId,
-                  SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
-                  MAX(o.date) AS lastAt
-             FROM loan_officer_assistants a
-             JOIN loan_officers lo ON lo.id = a.lo_id
-             LEFT JOIN lead_outcomes o
-               ON o.loa_id = a.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
-            WHERE a.active = 1 AND lo.org_id = ?
-            GROUP BY a.id, a.full_name, a.lo_id`,
-        ).all(placementFrom, endDate, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
-          id: Number(r.id),
-          kind: "loa",
-          name: String(r.name ?? ""),
-          // Her own parent desk, as an id, so the loan officer it names can be
-          // renamed without the rule noticing.
-          deskId: r.deskId == null ? null : Number(r.deskId),
-          transfers: Number(r.transfers) || 0,
-          lastAt: r.lastAt ? String(r.lastAt) : null,
-          receiving: false,
-        }));
-        const placementRecipients = [...placementLos, ...placementLoas];
-        // Soft-deleted assistants (active=0) are NOT destinations and are not
-        // admitted to the routing keys — but when a sought first name matches
-        // nobody active, knowing an inactive row still answers to that name is
-        // the difference between "renamed past recognition" and "somebody
-        // deactivated the LOA". Queried for the problem sentence only.
-        const inactivePlacementLoas = (sqlite.prepare(
-          `SELECT a.full_name AS name
-             FROM loan_officer_assistants a
-             JOIN loan_officers lo ON lo.id = a.lo_id
-            WHERE a.active = 0 AND lo.org_id = ?`,
-        ).all(placementOrg) as any[]).map((r: any) => ({ name: String(r.name ?? "") }));
-        // The routing requirement, resolved from the ROSTER: the ids of the
-        // three assistants an investment property was required to reach, and the
-        // one loan officer's desk all three of them sit at. Their first names
-        // are matched against the assistant roster once, here, and what travels
-        // on is ids. No loan officer's NAME is matched at any point — the desk
-        // comes from the assistants' own rows — so he can be renamed freely.
-        //
-        // The three themselves cannot, and this comment used to claim otherwise.
-        // A recorded first name is the only handle the roster offers for them,
-        // and it is mutable: rename one past recognition and the roster stops
-        // answering. What that costs is bounded on purpose — the rule stops for
-        // EVERYBODY rather than running on the two that still resolve — so a
-        // roster edit can switch the rule off but can never turn it into a false
-        // accusation against the third.
-        //
-        // Null means the roster cannot answer today, and there are four ways in:
-        // a name matches nobody, a matched assistant has no desk recorded, the
-        // three sit at no desk in common, or a full set of them sits at each of
-        // two. `problem` says which and names who, and it is logged, because a
-        // compliance rule that quietly stops running is exactly the kind of thing
-        // nobody notices.
-        //
-        // This call is the LOG, and nothing else hangs off it. The module
-        // resolves the same question from the same roster for the scoring, so
-        // there is no second answer here that could disagree with the one the
-        // numbers were built from.
-        const investmentRouting = INVESTMENT_PROPERTY_INPUT_AVAILABLE
-          ? resolveInvestmentRouting(placementRecipients, { inactiveAssistants: inactivePlacementLoas })
-          : null;
-        // Travels on every leaderboard row and on the range block so the Placed
-        // hover can name the concrete failure without a second round-trip, and
-        // so a manager reading one CLR's cell sees the same sentence the log has.
-        placementRoutingProblem = investmentRouting?.problem ?? null;
-        if (investmentRouting && !investmentRouting.keys) {
-          const activeFirsts = placementLoas
-            .map((r) => String(r.name ?? "").trim().split(/\s+/)[0])
-            .filter(Boolean);
-          console.warn(
-            "[manager-dashboard] investment routing not scored: " +
-            (investmentRouting.problem ?? "the roster resolves none of the named assistants") +
-            `; active LOA first names: ${activeFirsts.length ? activeFirsts.join(", ") : "(none)"}`,
-          );
-        }
-        // EVERY transfer in the range, deliberately including the CLRs the
-        // scorecard leaves out. The stat rebuilds each morning's floor by
-        // walking the received counts above backwards through these rows —
-        // hand it a filtered subset and every recipient looks like they began
-        // the range busier than they were. Excluded CLRs still never surface:
-        // the leaderboard below only ever reads this map by the ids it is
-        // already showing.
-        //
-        // The range, and NOT the run-up. Only what happened inside the window a
-        // manager selected is judged; the run-up exists to reconstruct the
-        // floor those transfers landed on, not to be scored a second time.
-        const placementRows = (sqlite.prepare(
-          `SELECT assistant_id, lo_id, loa_id, date, conversation_notes
-             FROM lead_outcomes
-            WHERE org_id = ? AND outcome_type='transfer' AND date >= ? AND date <= ?`,
-        ).all(placementOrg, startDate, endDate) as any[]).map((o: any): PlacementTransfer => ({
-          // A transfer with no CLR on it still put a lead on somebody's desk,
-          // so it counts toward the floor. It just names nobody, and the stat
-          // drops it rather than invent a person.
-          clrId: o.assistant_id == null ? "" : Number(o.assistant_id),
-          loId: o.lo_id == null ? null : Number(o.lo_id),
-          // The assistant the transfer recorded. The module reads it on FLAGGED
-          // ROWS AND NOWHERE ELSE — it is the compliance fact the routing rule
-          // asks about, and reading it on the ramp would score two thirds of the
-          // floor on whether somebody used the assistant picker. Handed over on
-          // every row all the same: which rows it applies to is the module's
-          // rule to state, not this query's to pre-decide.
-          loaId: o.loa_id == null ? null : Number(o.loa_id),
-          at: o.date ? String(o.date) : null,
-          // The FACT, never the text it came from. isInvestmentProperty reads
-          // the answer the app composed itself and fails closed on everything
-          // else — a sentence that merely mentions the word leaves the transfer
-          // unflagged. A flagged transfer is scored flat: 100% when it recorded
-          // one of the three assistants above, 0% for anything else.
+      if (!isFast) {
+        const placementOrg = currentOrgId() ?? 1;
+        const placementKey = `${placementOrg}|${startDate}|${endDate}`;
+        const placementHit = placementCache.get(placementKey);
+        const placementFresh = !!placementHit && Date.now() - placementHit.at < PLACEMENT_CACHE_TTL_MS;
+        if (placementHit && placementFresh) {
+          placementHit.rows.forEach((v, k) => placementByUser.set(k, v));
+          placementRoutingProblem = placementHit.problem ?? null;
+        } else try {
+          // THE RECIPIENTS ARE COUNTED OVER A RUN-UP AS WELL AS THE RANGE, and
+          // that is the one thing about this query that is load-bearing.
           //
-          // The flag travels even when the roster could NOT resolve those three.
-          // Withholding it here was the same thing as hiding the failure: the
-          // module then saw ordinary transfers, scored perfect compliance onto
-          // the busiest desk in the building as 0%, and the column printed a
-          // confident red cell that was an artefact of a roster problem. Passed
-          // through, the module counts them instead (`investmentUnscored`) and
-          // the column shows a dash and the reason. The one switch that may
-          // unflag a row is the module's own, honoured here at the call site.
-          investmentProperty: INVESTMENT_PROPERTY_INPUT_AVAILABLE && isInvestmentProperty(o.conversation_notes),
-        }));
-        // The roster, so a CLR who transferred nobody gets a null rather than
-        // dropping off the column entirely.
-        for (const s of scoreTransferPriority(placementRows, placementRecipients, {
-          roster: countedClrs.map((u: any) => ({ clrId: u.id, name: u.name })),
-        })) {
-          // Everything the cell needs to explain itself travels with the
-          // number, because the Placed column has two things to say that a
-          // percentage alone cannot.
+          // The stat rebuilds each morning's floor by subtracting the range's own
+          // transfers from each recipient's count. Count them over the range
+          // alone and the subtraction takes everything: every loan officer starts
+          // the window on nothing, the floor is flat, and the busiest desk in the
+          // building scores the same as the emptiest. On the default "Today"
+          // window that made a table in which every CLR read 100%.
           //
-          // `ranked` is the module's own minimum-sample rule (five readable
-          // transfers). On a one-day window most CLRs are under it, and a share
-          // taken over one or two transfers is a coin toss printed as a
-          // judgement in a colour-graded table, so the cell shows a dash and
-          // says why instead.
+          // So the count reaches a fortnight further back than the rows being
+          // scored — the same fortnight the TV's Starved page measures, via
+          // starvedWindowStart — and what survives the subtraction is the load
+          // each recipient was already carrying when the window opened. The rows
+          // being SCORED are still this range and only this range; nothing
+          // outside it is judged, and nobody is scored twice.
           //
-          // `investment` and `breaches` are the two routing counters: a 0% that
-          // is eleven breached investment transfers and a 0% that is a
-          // fortnight of bad placement are very different accusations, and a
-          // 100% earned by compliance is a different achievement from one
-          // earned by feeding the starved.
+          // What this run-up is NOT is a rolling fortnight, and the gap is wider
+          // than the sentence that used to sit here admitted.
           //
-          // Both are read by the Placed column in
-          // client/src/pages/manager-dashboard.tsx.
-          placementByUser.set(Number(s.clrId), {
-            pct: s.pct, scored: s.scored, ranked: s.ranked,
-            investment: s.investment, breaches: s.breaches,
-            unplaced: s.unplaced, unplacedValuedAt: s.unplacedValuedAt,
-            investmentUnscored: s.investmentUnscored,
+          // The module's snapshot adds the range's own transfers on top of that
+          // opening load and never ages any of them back out. So the fortnight is
+          // exact on ONE range: "Today", where the range is a single day and the
+          // load a transfer is judged against is precisely the fortnight the TV's
+          // Starved page counts. On every other range it is that fortnight PLUS
+          // the whole range — pick 90 days and a desk is judged on about a
+          // hundred days of accumulated work; pick "All time" and it is
+          // everything that desk has ever taken. Over a long range that is the
+          // honest question rather than a flaw ("who has been fed the most", and
+          // the ranking stays monotone in it either way), but it does mean the
+          // Placed column and the wall's Starved page can name different people
+          // as starved, and nobody reading the column could have known that.
+          //
+          // So it is said where it can be seen instead of only here: the Placed
+          // column's own tooltip spells the difference out — see the placement
+          // column in client/src/pages/manager-dashboard.tsx. Making the two
+          // agree on every range would need the run-up broken out day by day and
+          // aged back out again, not handed over as one total.
+          const placementFrom = starvedWindowStart(startDate);
+          // `receiving` is what keeps the seeded demo rows and the "Unknown LO
+          // (Recovered)" placeholder out of the full-credit band without naming
+          // anybody: a real MAX(o.date) means somebody has actually transferred
+          // there. The join carries no date test, so that stays a question about
+          // all time while the counted column is the range plus its run-up.
+          const placementLos = (sqlite.prepare(
+            `SELECT lo.id AS id, lo.full_name AS name,
+                    COALESCE(lo.needs_transfers, 0) AS flagged,
+                    lo.same_person_loa_id AS sameAsLoaId,
+                    SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
+                    MAX(o.date) AS lastAt
+               FROM loan_officers lo
+               LEFT JOIN lead_outcomes o
+                 ON o.lo_id = lo.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
+              WHERE lo.org_id = ? AND lo.internal_status = 'active'
+              GROUP BY lo.id, lo.full_name, lo.needs_transfers, lo.same_person_loa_id`,
+          ).all(placementFrom, endDate, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
+            id: Number(r.id),
+            kind: "lo",
+            name: String(r.name ?? ""),
+            transfers: Number(r.transfers) || 0,
+            lastAt: r.lastAt ? String(r.lastAt) : null,
+            needsTransfers: !!Number(r.flagged),
+            receiving: !!r.lastAt,
+            // Set only for the handful of people who also work somebody's desk;
+            // mergeHybridLoads adds that half of their workload onto this row.
+            sameAsLoaId: r.sameAsLoaId != null ? Number(r.sameAsLoaId) : null,
+          }));
+          // loan_officer_assistants carries no org_id of its own; the parent loan
+          // officer is the org scope, exactly as the starved page reads it.
+          //
+          // An assistant is NOT a destination the placement ramp scores — the loan
+          // officer is, and he is the only one. So this query does not count what
+          // an assistant received and does not ask whether anybody has ever
+          // transferred to one: `receiving: false` says exactly that, and the load
+          // is not read. The row is on the roster for its IDENTITY — the id, the
+          // name, and the DESK it sits at — because that is what resolves the
+          // three assistants the investment routing rule names.
+          //
+          // a.lo_id is the half of "CHRIS'S Justin, Mateo or John" that can be
+          // enforced without matching anybody's name. Other loan officers have a
+          // Justin of their own, and she is a different person; the rule admits
+          // only the assistants sitting at the one desk all three named rows point
+          // at, so the desk has to travel with them. Leave it behind and the
+          // roster can never answer the question, and the rule stops for the whole
+          // floor — which is what it did for as long as this query omitted it.
+          // An assistant's OWN load, counted over the same run-up and range the
+          // loan officers are counted over. On a prioritised desk the assistant
+          // is the destination that gets ranked, so this column is what the
+          // 60-100 ladder is built from — hand it over as zero and every
+          // assistant ties, which puts the whole desk at the top of the band.
+          //
+          // `receiving` stays false all the same: an assistant is never a
+          // destination on the ORDINARY ramp, and this load is read only by the
+          // desk ladder. The two questions are different and the flag answers
+          // the first one.
+          const placementLoas = (sqlite.prepare(
+            `SELECT a.id AS id, a.full_name AS name, a.lo_id AS deskId,
+                    SUM(CASE WHEN o.date >= ? AND o.date <= ? THEN 1 ELSE 0 END) AS transfers,
+                    MAX(o.date) AS lastAt
+               FROM loan_officer_assistants a
+               JOIN loan_officers lo ON lo.id = a.lo_id
+               LEFT JOIN lead_outcomes o
+                 ON o.loa_id = a.id AND o.org_id = lo.org_id AND o.outcome_type = 'transfer'
+              WHERE a.active = 1 AND lo.org_id = ?
+              GROUP BY a.id, a.full_name, a.lo_id`,
+          ).all(placementFrom, endDate, placementOrg) as any[]).map((r: any): PlacementRecipient => ({
+            id: Number(r.id),
+            kind: "loa",
+            name: String(r.name ?? ""),
+            // Her own parent desk, as an id, so the loan officer it names can be
+            // renamed without the rule noticing.
+            deskId: r.deskId == null ? null : Number(r.deskId),
+            transfers: Number(r.transfers) || 0,
+            lastAt: r.lastAt ? String(r.lastAt) : null,
+            receiving: false,
+          }));
+          const placementRecipients = [...placementLos, ...placementLoas];
+          // Soft-deleted assistants (active=0) are NOT destinations and are not
+          // admitted to the routing keys — but when a sought first name matches
+          // nobody active, knowing an inactive row still answers to that name is
+          // the difference between "renamed past recognition" and "somebody
+          // deactivated the LOA". Queried for the problem sentence only.
+          const inactivePlacementLoas = (sqlite.prepare(
+            `SELECT a.full_name AS name
+               FROM loan_officer_assistants a
+               JOIN loan_officers lo ON lo.id = a.lo_id
+              WHERE a.active = 0 AND lo.org_id = ?`,
+          ).all(placementOrg) as any[]).map((r: any) => ({ name: String(r.name ?? "") }));
+          // The routing requirement, resolved from the ROSTER: the ids of the
+          // three assistants an investment property was required to reach, and the
+          // one loan officer's desk all three of them sit at. Their first names
+          // are matched against the assistant roster once, here, and what travels
+          // on is ids. No loan officer's NAME is matched at any point — the desk
+          // comes from the assistants' own rows — so he can be renamed freely.
+          //
+          // The three themselves cannot, and this comment used to claim otherwise.
+          // A recorded first name is the only handle the roster offers for them,
+          // and it is mutable: rename one past recognition and the roster stops
+          // answering. What that costs is bounded on purpose — the rule stops for
+          // EVERYBODY rather than running on the two that still resolve — so a
+          // roster edit can switch the rule off but can never turn it into a false
+          // accusation against the third.
+          //
+          // Null means the roster cannot answer today, and there are four ways in:
+          // a name matches nobody, a matched assistant has no desk recorded, the
+          // three sit at no desk in common, or a full set of them sits at each of
+          // two. `problem` says which and names who, and it is logged, because a
+          // compliance rule that quietly stops running is exactly the kind of thing
+          // nobody notices.
+          //
+          // This call is the LOG, and nothing else hangs off it. The module
+          // resolves the same question from the same roster for the scoring, so
+          // there is no second answer here that could disagree with the one the
+          // numbers were built from.
+          const investmentRouting = INVESTMENT_PROPERTY_INPUT_AVAILABLE
+            ? resolveInvestmentRouting(placementRecipients, { inactiveAssistants: inactivePlacementLoas })
+            : null;
+          // Travels on every leaderboard row and on the range block so the Placed
+          // hover can name the concrete failure without a second round-trip, and
+          // so a manager reading one CLR's cell sees the same sentence the log has.
+          placementRoutingProblem = investmentRouting?.problem ?? null;
+          if (investmentRouting && !investmentRouting.keys) {
+            const activeFirsts = placementLoas
+              .map((r) => String(r.name ?? "").trim().split(/\s+/)[0])
+              .filter(Boolean);
+            console.warn(
+              "[manager-dashboard] investment routing not scored: " +
+              (investmentRouting.problem ?? "the roster resolves none of the named assistants") +
+              `; active LOA first names: ${activeFirsts.length ? activeFirsts.join(", ") : "(none)"}`,
+            );
+          }
+          // EVERY transfer in the range, deliberately including the CLRs the
+          // scorecard leaves out. The stat rebuilds each morning's floor by
+          // walking the received counts above backwards through these rows —
+          // hand it a filtered subset and every recipient looks like they began
+          // the range busier than they were. Excluded CLRs still never surface:
+          // the leaderboard below only ever reads this map by the ids it is
+          // already showing.
+          //
+          // The range, and NOT the run-up. Only what happened inside the window a
+          // manager selected is judged; the run-up exists to reconstruct the
+          // floor those transfers landed on, not to be scored a second time.
+          const placementRows = (sqlite.prepare(
+            `SELECT assistant_id, lo_id, loa_id, date, conversation_notes
+               FROM lead_outcomes
+              WHERE org_id = ? AND outcome_type='transfer' AND date >= ? AND date <= ?`,
+          ).all(placementOrg, startDate, endDate) as any[]).map((o: any): PlacementTransfer => ({
+            // A transfer with no CLR on it still put a lead on somebody's desk,
+            // so it counts toward the floor. It just names nobody, and the stat
+            // drops it rather than invent a person.
+            clrId: o.assistant_id == null ? "" : Number(o.assistant_id),
+            loId: o.lo_id == null ? null : Number(o.lo_id),
+            // The assistant the transfer recorded. The module reads it on FLAGGED
+            // ROWS AND NOWHERE ELSE — it is the compliance fact the routing rule
+            // asks about, and reading it on the ramp would score two thirds of the
+            // floor on whether somebody used the assistant picker. Handed over on
+            // every row all the same: which rows it applies to is the module's
+            // rule to state, not this query's to pre-decide.
+            loaId: o.loa_id == null ? null : Number(o.loa_id),
+            at: o.date ? String(o.date) : null,
+            // The FACT, never the text it came from. isInvestmentProperty reads
+            // the answer the app composed itself and fails closed on everything
+            // else — a sentence that merely mentions the word leaves the transfer
+            // unflagged. A flagged transfer is scored flat: 100% when it recorded
+            // one of the three assistants above, 0% for anything else.
+            //
+            // The flag travels even when the roster could NOT resolve those three.
+            // Withholding it here was the same thing as hiding the failure: the
+            // module then saw ordinary transfers, scored perfect compliance onto
+            // the busiest desk in the building as 0%, and the column printed a
+            // confident red cell that was an artefact of a roster problem. Passed
+            // through, the module counts them instead (`investmentUnscored`) and
+            // the column shows a dash and the reason. The one switch that may
+            // unflag a row is the module's own, honoured here at the call site.
+            investmentProperty: INVESTMENT_PROPERTY_INPUT_AVAILABLE && isInvestmentProperty(o.conversation_notes),
+          }));
+          // The roster, so a CLR who transferred nobody gets a null rather than
+          // dropping off the column entirely.
+          for (const s of scoreTransferPriority(placementRows, placementRecipients, {
+            roster: countedClrs.map((u: any) => ({ clrId: u.id, name: u.name })),
+          })) {
+            // Everything the cell needs to explain itself travels with the
+            // number, because the Placed column has two things to say that a
+            // percentage alone cannot.
+            //
+            // `ranked` is the module's own minimum-sample rule (five readable
+            // transfers). On a one-day window most CLRs are under it, and a share
+            // taken over one or two transfers is a coin toss printed as a
+            // judgement in a colour-graded table, so the cell shows a dash and
+            // says why instead.
+            //
+            // `investment` and `breaches` are the two routing counters: a 0% that
+            // is eleven breached investment transfers and a 0% that is a
+            // fortnight of bad placement are very different accusations, and a
+            // 100% earned by compliance is a different achievement from one
+            // earned by feeding the starved.
+            //
+            // Both are read by the Placed column in
+            // client/src/pages/manager-dashboard.tsx.
+            placementByUser.set(Number(s.clrId), {
+              pct: s.pct, scored: s.scored, ranked: s.ranked,
+              investment: s.investment, breaches: s.breaches,
+              unplaced: s.unplaced, unplacedValuedAt: s.unplacedValuedAt,
+              investmentUnscored: s.investmentUnscored,
+            });
+          }
+          const cached = new Map<number, PlacementCell>();
+          placementByUser.forEach((v, k) => cached.set(k, v));
+          const cachedAt = Date.now();
+          // The keys carry dates, so a new set of them appears every morning and
+          // yesterday's can never be asked for again. Swept on write rather than
+          // on a timer: the map is small, and a cache that only ever grows is a
+          // slow leak in a process that runs for weeks.
+          placementCache.forEach((v, k) => {
+            if (cachedAt - v.at >= PLACEMENT_CACHE_TTL_MS) placementCache.delete(k);
           });
+          placementCache.set(placementKey, { at: cachedAt, rows: cached, problem: placementRoutingProblem });
+        } catch (e: any) {
+          // Context, never a reason to fail the dashboard — the same bargain the
+          // write-up scan above makes.
+          console.error("[manager-dashboard] placement failed:", e?.message ?? e);
         }
-        const cached = new Map<number, PlacementCell>();
-        placementByUser.forEach((v, k) => cached.set(k, v));
-        const cachedAt = Date.now();
-        // The keys carry dates, so a new set of them appears every morning and
-        // yesterday's can never be asked for again. Swept on write rather than
-        // on a timer: the map is small, and a cache that only ever grows is a
-        // slow leak in a process that runs for weeks.
-        placementCache.forEach((v, k) => {
-          if (cachedAt - v.at >= PLACEMENT_CACHE_TTL_MS) placementCache.delete(k);
-        });
-        placementCache.set(placementKey, { at: cachedAt, rows: cached, problem: placementRoutingProblem });
-      } catch (e: any) {
-        // Context, never a reason to fail the dashboard — the same bargain the
-        // write-up scan above makes.
-        console.error("[manager-dashboard] placement failed:", e?.message ?? e);
       }
+
 
       const workOrg = Number(currentOrgId() ?? 1);
       // Days each CLR left any trace, for the transfers-per-worked-day column.
@@ -15245,8 +15252,10 @@ ${note}` : daysLine;
       // Wrapped as well: this column is a nicety, and no nicety should be able
       // to blank the dashboard. If the query ever fails again the page loses
       // one number instead of everything.
+      // Fast phase skips the multi-table UNION — scorecard still paints; per-
+      // worked-day rates fill in on phase=full.
       let workedDaysByUser = new Map<number, number>();
-      try {
+      if (!isFast) try {
         // Distinct (assistant, day) pairs — then sum availability weights so
         // half days = 0.5 and full days off = 0 (even if activity leaked).
         const workedRows = sqlite.prepare(`
@@ -15561,10 +15570,11 @@ ${note}` : daysLine;
     }
 
     const byRange: Record<string, any> = {};
-    // Fast: scorecard defaults + week/MTD KPIs. Full: every window including
-    // all-time placement (the expensive cold-load scan).
+    // Fast: KPI tiles + default scorecard (today) only. 3d/7d wait for full —
+    // each window used to re-run placement and dominate the ~10s fast path.
+    // Full: every window including all-time placement (cached 60s).
     const rangeKeys: RangeKey[] = isFast
-      ? ["today", "week", "mtd", "3d", "7d"]
+      ? ["today", "week", "mtd"]
       : ["week", "today", "3d", "7d", "14d", "30d", "90d", "mtd", "3mo", "all"];
     for (const key of rangeKeys) {
       const w = rangeWindows[key];
