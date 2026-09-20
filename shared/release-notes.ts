@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.22",
+    headline: "Manager Home's fast load actually skips the expensive Placed scan.",
+    items: [
+      { text: "On Manager Home, the first paint no longer runs transfer-placement SQL (or 3d/7d windows) — Placed shows a dash until the full refresh fills in, and today/week/MTD KPIs should land in about 1–2 seconds when the database is idle.", audience: "manager" },
+      { text: "Daily database backups keep only the latest 3 dailies and drop old pre-delete snapshots automatically, so /data does not refill after a prune.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.21",
     headline: "Home loads faster after login — KPIs paint first, heavy dashboard work waits.",
     items: [

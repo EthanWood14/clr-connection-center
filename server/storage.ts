@@ -57,8 +57,8 @@ try {
 const sqlite = new Database(dbPath);
 
 // ── LAP document blobs live in a SIDECAR database ────────────────────────────
-// backup.ts copies the whole of clr.db and keeps 10 rotations on the same
-// Railway volume, so every byte stored in clr.db costs ~11x on disk. LAP
+// backup.ts copies the whole of clr.db and keeps a few daily rotations on the
+// same Railway volume, so every byte stored in clr.db still multiplies on disk. LAP
 // uploads are 12 MB PDFs; leaving them in clr.db would fill the volume after a
 // few dozen documents, and once /data is full EVERY SQLite write fails — all of
 // C3, not just LAP. Keeping the bytes in a sidecar file (metadata stays in
