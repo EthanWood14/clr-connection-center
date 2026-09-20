@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ClipboardCheck, Mail, MapPin } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useShellPollsEnabled } from "@/lib/shell-ready";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGateActive } from "@/components/eod-lock-gate";
 import { ShotgunCallLeadButton, ShotgunResultCard } from "@/components/shotgun-result-card";
@@ -21,11 +22,12 @@ function savedSnooze(key: string) {
 
 export function ShotgunResultPrompt() {
   const { user } = useAuth();
+  const shellReady = useShellPollsEnabled(!!user);
   const eligible = !!user?.isClr;
   const blocked = useContext(DailyReportGateActive) || useContext(EodLockGateActive);
   const { data } = useQuery<ShotgunPayload>({
     queryKey: ["/api/shotgun"],
-    enabled: eligible && !blocked,
+    enabled: eligible && !blocked && shellReady,
     refetchInterval: 5_000,
     refetchOnWindowFocus: true,
     staleTime: 0,

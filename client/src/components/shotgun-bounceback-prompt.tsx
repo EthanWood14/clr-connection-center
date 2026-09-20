@@ -4,6 +4,7 @@ import { Phone, RotateCcw, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useDialpadCall } from "@/lib/dialpad-call";
 import { useAuth } from "@/lib/auth";
+import { useShellPollsEnabled } from "@/lib/shell-ready";
 import { Button } from "@/components/ui/button";
 import { playShotgunChime } from "@/components/shotgun-offer-alert";
 import type { ShotgunPayload } from "@/pages/shotgun";
@@ -15,11 +16,12 @@ import type { ShotgunPayload } from "@/pages/shotgun";
  */
 export function ShotgunBouncebackPrompt() {
   const { user } = useAuth();
+  const shellReady = useShellPollsEnabled(!!user);
   const prepareDialpadCall = useDialpadCall();
   const eligible = !!user?.isClr;
   const { data } = useQuery<ShotgunPayload>({
     queryKey: ["/api/shotgun"],
-    enabled: eligible,
+    enabled: eligible && shellReady,
     refetchInterval: (query) => ((query.state.data as ShotgunPayload | undefined)?.bouncebacks?.length ? 3_000 : 15_000),
     refetchIntervalInBackground: true,
     staleTime: 0,

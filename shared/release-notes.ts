@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.21",
+    headline: "Home loads faster after login — KPIs paint first, heavy dashboard work waits.",
+    items: [
+      { text: "Manager Home no longer waits on the full ~9s manager-dashboard scan (all-time placement and long ranges) before showing today/week/MTD numbers — those arrive first, and the rest fill in right after.", audience: "manager" },
+      { text: "CLRs no longer download the Manager Dashboard code chunk just to open their own Home.", audience: "everyone" },
+      { text: "The sidebar appointment badge uses a tiny upcoming-appointments API instead of loading every outcome, and chat/Shotgun/LO-lead/summons polls wait until Home's critical data has landed so they stop fighting first paint.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.19",
     headline: "Garage shop v2: more upgrades, picture previews, steeper prices, and a one-time garage boost.",
     items: [

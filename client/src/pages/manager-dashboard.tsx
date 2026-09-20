@@ -158,6 +158,8 @@ type RangeBlock = {
 };
 type ManagerData = {
   generatedAt: string;
+  /** "fast" = KPI/scorecard windows only; "full" = every byRange including all-time. */
+  phase?: "fast" | "full";
   today: string;
   ranges: { week: any; month: any; last30: any };
   stats: { today: any; week: any; month: any; priorWeek: any; priorMonth: any };
@@ -900,15 +902,38 @@ export default function ManagerDashboard() {
   // Its own query for the same reason the Meta card has one: the all-time
   // window reads every transfer ever, and folding that into the page's single
   // dashboard call would put every other section behind it.
+  // Two-phase load: fast KPI/scorecard windows paint first; the heavy
+  // all-time / 90d placement payload follows without blocking first paint.
+  const fastQ = useQuery<ManagerData>({
+    queryKey: ["/api/manager-dashboard?phase=fast"],
+    queryFn: () => apiRequest("GET", "/api/manager-dashboard?phase=fast"),
+    staleTime: 30_000,
+  });
+  const fullQ = useQuery<ManagerData>({
+    queryKey: ["/api/manager-dashboard"],
+    queryFn: () => apiRequest("GET", "/api/manager-dashboard"),
+    enabled: fastQ.isSuccess,
+    refetchInterval: 60_000,
+  });
+  const data = fullQ.data ?? fastQ.data;
+  const isLoading = !data && (fastQ.isLoading || fullQ.isLoading);
+  const isFetching = fastQ.isFetching || fullQ.isFetching;
+  const refetch = () => {
+    void fastQ.refetch();
+    void fullQ.refetch();
+  };
+
   const loSplit = useQuery<LoSplitResp>({
     queryKey: ["/api/lo-transfer-split"],
     refetchInterval: 120_000,
+    enabled: fastQ.isSuccess,
   });
 
   const metaConv = useQuery<MetaConversionResp>({
     queryKey: [`/api/meta-conversion?days=${metaDays}`],
     queryFn: () => apiRequest("GET", `/api/meta-conversion?days=${metaDays}`),
     refetchInterval: 60_000,
+    enabled: fastQ.isSuccess,
   });
 
   /**
@@ -948,11 +973,6 @@ export default function ManagerDashboard() {
     const hrs = Math.round(mins / 60);
     return hrs < 24 ? `${hrs}h ago` : new Date(iso).toLocaleDateString();
   })();
-
-  const { data, isLoading, refetch, isFetching } = useQuery<ManagerData>({
-    queryKey: ["/api/manager-dashboard"],
-    refetchInterval: 60_000,
-  });
 
   const sendEodReminders = useMutation({
     mutationFn: () => apiRequest("POST", "/api/admin/eod-reminders/run-now", {}),

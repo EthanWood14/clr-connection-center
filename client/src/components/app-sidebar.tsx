@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sidebar";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { useAuth } from "@/lib/auth";
+import { useShellPollsEnabled } from "@/lib/shell-ready";
 import { APP_VERSION } from "@shared/version";
 import { isTvCarParticipant } from "@shared/tv-race-participation";
 
@@ -333,47 +334,23 @@ export function AppSidebar() {
     });
   }
 
-  // Live appointment count — active appointment-type outcomes with followUpDate in the next 3 days.
-  // Excludes outcomes that already became transfers or that are overdue (< today).
-  // Window is today through today + 3 days (inclusive). Only counts the current
-  // user's own appointments — other CLRs' upcoming appointments are private.
-  const myUserId = (user as any)?.id ?? null;
-  const { data: outcomes = [] } = useQuery<any[]>({
-    queryKey: ["/api/outcomes"],
-    refetchInterval: 60000,
-    select: (data) => {
-      const ACTIVE_APPT_TYPES = new Set(["appointment", "callback_requested", "deferral", "future_contact"]);
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const cutoff = new Date(today);
-      cutoff.setDate(cutoff.getDate() + 3);
-      // Local YYYY-MM-DD (avoid toISOString UTC drift)
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-      const cutoffStr = `${cutoff.getFullYear()}-${pad(cutoff.getMonth() + 1)}-${pad(cutoff.getDate())}`;
-      // cutoffEnd lets ISO timestamps on the cutoff day still match ("2026-04-26T10:00:00Z" <= "2026-04-26T23:59:59Z")
-      const cutoffEndStr = `${cutoffStr}T23:59:59.999Z`;
-      return data.filter((o) => {
-        if (!ACTIVE_APPT_TYPES.has(o.outcomeType)) return false;
-        // Only count the current user's own upcoming appointments (others' are private)
-        if (myUserId != null && o.assistantId !== myUserId) return false;
-        const fd: string | null | undefined = o.followUpDate;
-        if (!fd) return false;
-        // Extract YYYY-MM-DD portion for lower-bound compare; full string for upper-bound
-        const dateOnly = fd.slice(0, 10);
-        if (dateOnly < todayStr) return false; // overdue
-        if (fd > cutoffEndStr) return false; // beyond window
-        return true;
-      });
-    },
-  });
+  // Defer chatty badge polls until Home's critical query has settled (or a
+  // short post-auth fallback), so they do not contend with first paint.
+  const shellReady = useShellPollsEnabled(!!user);
 
-  const appointmentCount = outcomes.length;
+  // Live appointment count — SQL-filtered next-3-days badge for the current
+  // user only. Replaces fetching ALL /api/outcomes just to count a badge.
+  const { data: upcomingAppts } = useQuery<{ count: number }>({
+    queryKey: ["/api/outcomes/upcoming-appointments?days=3"],
+    refetchInterval: 60_000,
+    enabled: !!user && shellReady,
+  });
+  const appointmentCount = upcomingAppts?.count ?? 0;
 
   const { data: taskData } = useQuery<{ summary: { overdue: number; dueSoon: number } }>({
     queryKey: ["/api/clr-tasks"],
     refetchInterval: 30000,
-    enabled: !!user,
+    enabled: !!user && shellReady,
   });
   const taskCount = (taskData?.summary?.overdue ?? 0) + (taskData?.summary?.dueSoon ?? 0);
 
@@ -386,7 +363,7 @@ export function AppSidebar() {
   const { data: chatData } = useQuery<{ messages: any[] }>({
     queryKey: ["/api/chat"],
     refetchInterval: 5000,
-    enabled: !!user,
+    enabled: !!user && shellReady,
   });
 
   const latestChatId = chatData?.messages?.length
@@ -410,7 +387,7 @@ export function AppSidebar() {
   const { data: nmlsData } = useQuery<{ checks: any[]; overdue: any[] }>({
     queryKey: ["/api/nmls-checks/my-pending"],
     refetchInterval: 60000,
-    enabled: !!user,
+    enabled: !!user && shellReady,
   });
   const nmlsCount = (nmlsData?.checks?.length ?? 0) + (nmlsData?.overdue?.length ?? 0);
 

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { TimeRangeToggle, TimeRange, TIME_RANGE_LABELS, getStoredRange, storeRange } from "@/components/time-range-toggle";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -26,7 +26,7 @@ import { Link } from "wouter";
 import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
 import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
-import ManagerDashboard from "./manager-dashboard";
+const ManagerDashboard = lazy(() => import("./manager-dashboard"));
 import { TournamentBoard } from "./tournament";
 import { TOURNAMENT_ENABLED } from "@shared/tournament";
 import { businessTodayClient } from "@/lib/business-day";
@@ -1017,7 +1017,21 @@ export default function Dashboard() {
   // existing personal dashboard. Hooks must not run conditionally, so each
   // branch renders its own self-contained component below.
   if (_authUser?.role === "admin") {
-    return <ManagerDashboard />;
+    // Lazy so CLRs never pay the ManagerDashboard chunk parse cost on Home.
+    return (
+      <Suspense fallback={
+        <div className="p-4 sm:p-6 space-y-4 max-w-[1400px] mx-auto">
+          <div className="h-8 w-48 bg-muted animate-pulse rounded" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-[100px] bg-muted animate-pulse rounded" />
+            ))}
+          </div>
+        </div>
+      }>
+        <ManagerDashboard />
+      </Suspense>
+    );
   }
   return <ClrDashboard />;
 }
