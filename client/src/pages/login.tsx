@@ -1,5 +1,6 @@
 import { useState, FormEvent } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth";
 import { Eye, EyeOff, Lock, Mail, ArrowRight, AlertTriangle } from "lucide-react";
 
 // Animated background dots
@@ -23,6 +24,7 @@ function BackgroundPattern() {
 }
 
 export default function Login() {
+  const { refetchUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -36,9 +38,10 @@ export default function Login() {
     setLoading(true);
     try {
       await apiRequest("POST", "/api/auth/login", { email: email.trim(), password: password.trim() });
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      // Drop prior-user query cache, hydrate AuthProvider, navigate without a full reload.
+      queryClient.clear();
+      await refetchUser();
       window.location.hash = "#/";
-      window.location.reload();
     } catch (err: any) {
       setError(err.message ?? "Login failed");
       setShake(true);
@@ -55,9 +58,9 @@ export default function Login() {
     setLoading(true);
     try {
       await apiRequest("POST", "/api/auth/login", { email: "demo@clrconnection.com", password: "Demo2026!" });
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      queryClient.clear();
+      await refetchUser();
       window.location.hash = "#/";
-      window.location.reload();
     } catch (err: any) {
       setError(err.message ?? "Demo login failed");
     } finally {

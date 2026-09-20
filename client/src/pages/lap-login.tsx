@@ -1,9 +1,11 @@
 import { FormEvent, useState } from "react";
 import { AlertTriangle, ArrowRight, Eye, EyeOff, Lock, Mail, ShieldCheck } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/lib/auth";
 import { LapBrand } from "@/components/lap/lap-brand";
 
 export default function LapLogin() {
+  const { refetchUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -19,9 +21,10 @@ export default function LapLogin() {
         email: email.trim(),
         password: password.trim(),
       });
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      // Drop prior-user query cache, hydrate AuthProvider, navigate without a full reload.
+      queryClient.clear();
+      await refetchUser();
       window.location.hash = "#/lap";
-      window.location.reload();
     } catch (cause: any) {
       setError(cause?.message ?? "We couldn’t sign you in.");
     } finally {

@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.20",
+    headline: "Faster sign-in — no full page reload after login.",
+    items: [
+      { text: "After a successful C3 or LAP sign-in, the app now picks up your session and opens the home screen in place instead of reloading the whole page (~4s less wait).", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.19",
     headline: "Garage shop v2: more upgrades, picture previews, steeper prices, and a one-time garage boost.",
     items: [
