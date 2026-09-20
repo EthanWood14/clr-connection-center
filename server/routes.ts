@@ -12735,6 +12735,61 @@ ${note}` : daysLine;
     res.json(enriched);
   });
 
+  /**
+   * Tiny badge feed for the sidebar: how many of MY appointments sit in the
+   * next N days. The sidebar used to pull ALL /api/outcomes and filter in the
+   * browser — after login that contended with Home for several seconds.
+   * Scoped to the current user + org; other outcomes consumers are unchanged.
+   */
+  app.get("/api/outcomes/upcoming-appointments", requireAuth, (req: any, res) => {
+    const sess = req.session_user;
+    const userId = Number(sess?.userId);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const daysRaw = parseInt(String(req.query.days ?? "3"), 10);
+    const days = Math.min(14, Math.max(1, Number.isFinite(daysRaw) ? daysRaw : 3));
+    const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    const today = new Date(todayStr + "T00:00:00");
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() + days);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const cutoffStr = `${cutoff.getFullYear()}-${pad(cutoff.getMonth() + 1)}-${pad(cutoff.getDate())}`;
+    const orgId = Number(sess?.orgId ?? currentOrgId() ?? 1) || 1;
+    const sqlite = storageExtra.getSqlite();
+    try {
+      const rows = sqlite.prepare(`
+        SELECT id, outcome_type, follow_up_date, appointment_datetime, borrower_name, assistant_id
+          FROM lead_outcomes
+         WHERE org_id = ?
+           AND assistant_id = ?
+           AND outcome_type IN ('appointment','callback_requested','deferral','future_contact')
+           AND follow_up_date IS NOT NULL
+           AND follow_up_date != ''
+           AND substr(follow_up_date, 1, 10) >= ?
+           AND substr(follow_up_date, 1, 10) <= ?
+         ORDER BY follow_up_date ASC
+      `).all(orgId, userId, todayStr, cutoffStr) as any[];
+      return res.json({
+        days,
+        today: todayStr,
+        cutoff: cutoffStr,
+        count: rows.length,
+        items: rows.map((r: any) => ({
+          id: Number(r.id),
+          outcomeType: r.outcome_type,
+          followUpDate: r.follow_up_date,
+          appointmentDatetime: r.appointment_datetime ?? null,
+          borrowerName: r.borrower_name ?? null,
+          assistantId: Number(r.assistant_id),
+        })),
+      });
+    } catch (e: any) {
+      console.error("[upcoming-appointments]", e?.message ?? e);
+      return res.status(500).json({ error: "Failed to load upcoming appointments" });
+    }
+  });
+
   const transferCelebration = (assistantId: number, date: string, loName: string | null, borrowerName: string | null) => {
     const sqlite = storageExtra.getRawSqlite();
     const orgRow = sqlite.prepare(`SELECT org_id FROM lead_outcomes WHERE assistant_id=? AND date=? AND outcome_type='transfer' ORDER BY id DESC LIMIT 1`).get(assistantId, date) as any;
@@ -14216,6 +14271,12 @@ ${note}` : daysLine;
   const placementPct = (cell?: PlacementCell): number | null =>
     !cell || !cell.ranked ? null : cell.pct;
   const placementCache = new Map<string, { at: number; rows: Map<number, PlacementCell>; problem: string | null }>();
+  // Whole-payload memo for the heavy (full) manager-dashboard response. The
+  // first paint uses ?phase=fast; the follow-up full payload is identical for
+  // every manager in an org for about a minute, and recomputing all-time
+  // placement for each open tab is what made Home sit on skeletons for ~9s.
+  const DASHBOARD_FULL_CACHE_TTL_MS = 60_000;
+  const dashboardFullCache = new Map<string, { at: number; body: any }>();
 
   app.get("/api/manager-dashboard", requireAuth, async (req: any, res) => {
     const sess = req.session_user;
@@ -14229,11 +14290,27 @@ ${note}` : daysLine;
       return res.status(403).json({ error: "Not available for this account." });
     }
 
+    // phase=fast: today/week/MTD KPIs + short scorecard windows only — skip
+    // all-time / 90d / 3mo placement scans and the LeadVault CallTools warm so
+    // first paint is not blocked on the ~9s full payload. Client then loads
+    // phase=full (default) after paint.
+    const phaseRaw = String(req.query.phase ?? "full").toLowerCase();
+    const isFast = phaseRaw === "fast" || phaseRaw === "light";
+    const orgKey = String(sess?.orgId ?? currentOrgId() ?? 1);
+    if (!isFast) {
+      const hit = dashboardFullCache.get(orgKey);
+      if (hit && Date.now() - hit.at < DASHBOARD_FULL_CACHE_TTL_MS) {
+        res.setHeader("X-Dashboard-Cache", "HIT");
+        return res.json({ ...hit.body, generatedAt: hit.body.generatedAt, phase: "full", cached: true });
+      }
+    }
+
     const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
     // Complete CallTools volume. C3's own callsync feed sees only a fraction
     // (185 calls on 2026-08-24 against 8,729 dialed), so the dialer series comes
     // from LeadVault, 5-minute cached, falling back per-day to the local table.
-    const leadvaultCallTools = await leadvaultCallToolsByDay(90);
+    // Fast phase skips the upstream warm — local callsync still fills trends.
+    const leadvaultCallTools = isFast ? new Map<string, number>() : await leadvaultCallToolsByDay(90);
     const week = resolveNamedPeriod("week");
     const month = resolveNamedPeriod("month");
     const last30 = resolveNamedPeriod("30days");
@@ -15484,7 +15561,12 @@ ${note}` : daysLine;
     }
 
     const byRange: Record<string, any> = {};
-    for (const key of ["week", "today", "3d", "7d", "14d", "30d", "90d", "mtd", "3mo", "all"] as const) {
+    // Fast: scorecard defaults + week/MTD KPIs. Full: every window including
+    // all-time placement (the expensive cold-load scan).
+    const rangeKeys: RangeKey[] = isFast
+      ? ["today", "week", "mtd", "3d", "7d"]
+      : ["week", "today", "3d", "7d", "14d", "30d", "90d", "mtd", "3mo", "all"];
+    for (const key of rangeKeys) {
       const w = rangeWindows[key];
       byRange[key] = { window: w, ...computeRange(w.startDate, w.endDate, w.days) };
     }
@@ -15506,8 +15588,9 @@ ${note}` : daysLine;
       alerts.push({ level: "info", text: "All systems normal \u2014 no outstanding issues." });
     }
 
-    res.json({
+    const payload = {
       generatedAt: new Date().toISOString(),
+      phase: isFast ? "fast" : "full",
       today: todayStr,
       ranges: { week, month, last30 },
       stats: {
@@ -15559,7 +15642,16 @@ ${note}` : daysLine;
       byRange,
       activityFeed,
       alerts,
-    });
+    };
+    if (!isFast) {
+      const cachedAt = Date.now();
+      dashboardFullCache.forEach((v, k) => {
+        if (cachedAt - v.at >= DASHBOARD_FULL_CACHE_TTL_MS) dashboardFullCache.delete(k);
+      });
+      dashboardFullCache.set(orgKey, { at: cachedAt, body: payload });
+      res.setHeader("X-Dashboard-Cache", "MISS");
+    }
+    res.json(payload);
   });
 
   // ── Algorithm Settings ────────────────────────────────────────────────────────

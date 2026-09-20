@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Clock3, Hand } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
+import { useShellPollsEnabled } from "@/lib/shell-ready";
 import { Button } from "@/components/ui/button";
 import { playShotgunChime } from "@/components/shotgun-offer-alert";
 import { presenceState } from "@shared/shotgun-presence";
@@ -17,10 +18,11 @@ import type { ShotgunPayload } from "@/pages/shotgun";
  */
 export function ShotgunPresencePrompt() {
   const { user } = useAuth();
+  const shellReady = useShellPollsEnabled(!!user);
   const eligible = !!user?.isClr;
   const { data, dataUpdatedAt } = useQuery<ShotgunPayload>({
     queryKey: ["/api/shotgun"],
-    enabled: eligible,
+    enabled: eligible && shellReady,
     refetchInterval: (query) => ((query.state.data as ShotgunPayload | undefined)?.holding ? 3_000 : 15_000),
     // Keep asking while C3 is a background tab — that is where a CLR holding
     // a lead usually is — so the chime can fire before the window closes.

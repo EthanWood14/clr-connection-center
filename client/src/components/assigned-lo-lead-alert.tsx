@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, BellRing, Clock3, Phone, X, Zap } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/lib/auth";
+import { useShellPollsEnabled } from "@/lib/shell-ready";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useDialpadCall } from "@/lib/dialpad-call";
 import { activeLeadAlerts, collectLeadAlerts, feedWithFloor, leadAlertStorageKey, parseSeenLeadAlerts, renewAssignedLeadAlerts, leadAlertIsActionable, LEAD_ALERT_CHIME_INTERVAL_MS, LEAD_ALERT_SNOOZE_MS, type LoLeadAlert, type LoLeadFeed } from "@/lib/lead-alerts";
@@ -26,6 +27,7 @@ export function AssignedLoLeadAlert() {
   const eodBlocked = useContext(EodLockGateActive);
   const blocked = dailyBlocked || eodBlocked;
   const eligible = !!user && user.portal !== "lap" && user.portal !== "lop" && !user.isDemo;
+  const shellReady = useShellPollsEnabled(eligible);
   const storageKey = leadAlertStorageKey(user?.orgId ?? 1, user?.id ?? 0);
   const seen = useRef<string[]>([]);
   const snoozedUntil = useRef<Record<string, number>>({});
@@ -39,7 +41,7 @@ export function AssignedLoLeadAlert() {
     // Including the identity prevents cached results crossing account switches.
     queryKey: ["/api/lo-newest-leads", "popups", user?.orgId, user?.id],
     queryFn: () => apiRequest("GET", "/api/lo-newest-leads?hours=72&per=5"),
-    enabled: eligible && !blocked,
+    enabled: eligible && !blocked && shellReady,
     // Five seconds: the server answers from a floor-wide cache it refreshes
     // every five seconds with ONE upstream call, so this poll is cheap and a
     // lead is on screen within ten seconds of landing rather than forty.

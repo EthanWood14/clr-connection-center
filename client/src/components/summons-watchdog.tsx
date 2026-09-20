@@ -27,6 +27,7 @@ import { APP_VERSION } from "@shared/version";
 
 const POLL_MS = 15_000;
 const MIN_AGE_BEFORE_RELOAD_MS = 8_000;
+const MIN_AGE_BEFORE_POLL_MS = 4_000;
 const KEY = "c3.summons.refreshed";
 
 function alreadyRefreshedFor(id: number): boolean {
@@ -65,6 +66,7 @@ export function SummonsWatchdog() {
 
     const check = async () => {
       if (stopped || busy.current) return;
+      if (Date.now() - loadedAt.current < MIN_AGE_BEFORE_POLL_MS) return;
       busy.current = true;
       try {
         const r = await fetch("/api/summons/mine", {

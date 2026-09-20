@@ -33,6 +33,7 @@ import { Clock3, Mail, MapPin, Phone, Zap } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useDialpadCall } from "@/lib/dialpad-call";
 import { useAuth } from "@/lib/auth";
+import { useShellPollsEnabled } from "@/lib/shell-ready";
 import { DailyReportGateActive } from "@/components/daily-report-gate";
 import { EodLockGateActive } from "@/components/eod-lock-gate";
 import { Button } from "@/components/ui/button";
@@ -45,12 +46,14 @@ export function ShotgunOfferAlert() {
   const dailyBlocked = useContext(DailyReportGateActive);
   const eodBlocked = useContext(EodLockGateActive);
   const blocked = dailyBlocked || eodBlocked;
+  const shellReady = useShellPollsEnabled(eligible);
   // Ready CLRs check quickly enough to retain almost the whole 20-second
   // window. Opted-out CLRs check much less often, avoiding the traffic spike a
   // universal one-second poll caused. Window focus also refreshes immediately.
+  // Deferred until Home critical data settles so post-login paint is not starved.
   const { data, dataUpdatedAt } = useQuery<ShotgunPayload>({
     queryKey: ["/api/shotgun"],
-    enabled: eligible && !blocked,
+    enabled: eligible && !blocked && shellReady,
     refetchInterval: (query) => (query.state.data as ShotgunPayload | undefined)?.isReady ? 2_000 : 15_000,
     // An offer lasts ten seconds and the CLR is usually in Bonzo, not on
     // this tab. Polling only while C3 was in front left the chime silent
@@ -80,7 +83,7 @@ export function ShotgunOfferAlert() {
     // changes, so the interval kept beating `ready: true` and undid the opt-out
     // within ten seconds — and localStorage is per-device, so opting out on a
     // laptop left a phone quietly re-enrolling them.
-    if (!eligible || !user) return;
+    if (!eligible || !user || !shellReady) return;
     if (blocked) {
       void apiRequest("POST", "/api/shotgun/readiness", { heartbeat: true, blocked: true }).catch(() => {});
       return;
@@ -89,7 +92,7 @@ export function ShotgunOfferAlert() {
     // extra fetch per heartbeat doubled the request rate for no new data.
     const beat = () => apiRequest("POST", "/api/shotgun/readiness", { heartbeat: true }).catch(() => {});
     void beat(); const timer = setInterval(beat, 10_000); return () => clearInterval(timer);
-  }, [blocked, eligible, user?.id]);
+  }, [blocked, eligible, shellReady, user?.id]);
   const confirm = useMutation({ mutationFn: (id: number) => apiRequest("POST", `/api/shotgun/${id}/confirm`, {}), onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }) });
   const deny = useMutation({ mutationFn: (id: number) => apiRequest("POST", `/api/shotgun/${id}/deny`, {}), onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }) });
   useEffect(() => { confirm.reset(); deny.reset(); }, [offered?.id, offered?.offerExpiresAt]);

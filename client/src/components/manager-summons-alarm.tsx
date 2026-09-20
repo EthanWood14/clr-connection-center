@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useShellPollsEnabled } from "@/lib/shell-ready";
 import { useAuth } from "@/lib/auth";
 import { AlertTriangle } from "lucide-react";
 import { startSiren, ALARM_FLASH_MS, prefersReducedMotion } from "@/lib/alarm";
@@ -45,6 +46,7 @@ const SILENCE_MS = 2 * 60 * 1000;
 
 export function ManagerSummonsAlarm() {
   const { user } = useAuth();
+  const shellReady = useShellPollsEnabled(!!user);
   const [silencedUntil, setSilencedUntil] = useState(0);
   const [flashOn, setFlashOn] = useState(false);
   // Browsers refuse to autoplay audio until the page has been interacted with.
@@ -57,7 +59,7 @@ export function ManagerSummonsAlarm() {
 
   const { data } = useQuery<{ active: boolean; summons: Summons | null }>({
     queryKey: ["/api/summons/mine"],
-    enabled: !!user,
+    enabled: !!user && shellReady,
     // Short poll: being called in is urgent, and this is one tiny row.
     refetchInterval: 10_000,
     refetchOnWindowFocus: true,
