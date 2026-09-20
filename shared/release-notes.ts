@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.23",
+    headline: "Manager Home fits phone screens — tables scroll, KPIs stay readable.",
+    items: [
+      { text: "On Manager Home (Advanced view), wide tables (Transfer Scorecard, Leaderboard, EOD digest, heatmaps) scroll sideways inside the page instead of stretching the whole screen past the phone edge.", audience: "manager" },
+      { text: "KPI tiles, range pills, and charts use tighter phone padding and wrap or shrink so today/week/month numbers and filters stay usable around ~375px wide.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.22",
     headline: "Manager Home's fast load actually skips the expensive Placed scan.",
     items: [
