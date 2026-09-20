@@ -140,7 +140,8 @@ import {
 } from "./leadvault-people";
 import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLeadsByLo } from "./leadvault-newest-leads";
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadHeadStartUntil, loNewLeadIsFresh } from "@shared/lo-new-leads";
-import { computeShotgunSla } from "./shotgun-sla";
+import { computeShotgunSla, computeShotgunSlaByClr } from "./shotgun-sla";
+import type { ShotgunSlaClrSummary } from "../shared/shotgun-sla";
 import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/weekly-pace";
 import {
   availableWeekdayPortions, ensureHalfDaySchema, ensureSeededHalfDays,
@@ -9020,6 +9021,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const fromIso = new Date(fromMs).toISOString();
     const toIso = new Date(toMs).toISOString();
     const summary = computeShotgunSla(shotgunDb(), orgId, fromIso, toIso);
+    // Exactly two features on the board: unclaimed vs claimed, and claim time
+    // among claimed (median + average). Dial metrics are not shown (4.122.25).
     res.json({
       range,
       from: fromDay,
@@ -9027,8 +9030,13 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       fromIso,
       toIso,
       canManage: taskManager(me),
-      ...summary,
-      dialProxy: "first_dial_at (open-phone / Dialpad launch), else bonzo_call_events phone match; not called=1 write-up",
+      total: summary.total,
+      claimed: summary.claimed,
+      unclaimed: summary.unclaimed,
+      claimedPct: summary.claimedPct,
+      unclaimedPct: summary.unclaimedPct,
+      medianClaimSeconds: summary.medianClaimSeconds,
+      averageClaimSeconds: summary.averageClaimSeconds,
     });
   });
 
@@ -14939,54 +14947,18 @@ ${note}` : daysLine;
       const lbDialpadTextsByUser = storageExtra.getDialpadTextsByUser(
         Number(currentOrgId() ?? 1), startDate, endDate,
       );
-      // Shotgun offers answered. Of the offers each CLR was shown in the
-      // range, how many they accepted (confirmed) and how many they answered
-      // at all (confirmed or declined) — the rest timed out on them. An offer
-      // a manager requeued while it was still pending is nobody's miss and is
-      // left out. Ethan, 15 Sep 2026: "add a new stat for the percentage of
-      // shotguns accepted/responded to." Offers are filed by their Pacific
-      // day, like everything else on this page.
-      const shotgunByUser = new Map<number, { offers: number; accepted: number; responded: number }>();
-      try {
-        const offerRows = sqlite.prepare(`
-          SELECT user_id, offered_at, response FROM shotgun_offer_events
-           WHERE org_id = ? AND response IN ('confirmed','declined','expired')
-             AND substr(offered_at, 1, 10) BETWEEN ? AND ?
-        `).all(Number(currentOrgId() ?? 1), addIsoDays(startDate, -1), addIsoDays(endDate, 1)) as any[];
-        for (const r of offerRows) {
-          const ms = Date.parse(String(r.offered_at ?? ""));
-          if (!Number.isFinite(ms)) continue;
-          const day = todayInTz(ms, BUSINESS_DAY_DEFAULT_TZ);
-          if (day < startDate || day > endDate) continue;
-          const uid = Number(r.user_id);
-          if (!uid || excludedIds.has(uid)) continue;
-          const s = shotgunByUser.get(uid) ?? { offers: 0, accepted: 0, responded: 0 };
-          s.offers += 1;
-          if (r.response === "confirmed") { s.accepted += 1; s.responded += 1; }
-          else if (r.response === "declined") s.responded += 1;
-          shotgunByUser.set(uid, s);
-        }
-      } catch (e: any) {
-        console.error("[manager-dashboard] shotgun offer stat failed:", e?.message ?? e);
-      }
-      // How fast a CLR takes a new lead on one of THEIR assigned loan
-      // officers. Only leads they claimed inside the three-minute window
-      // count: a lead that ran out and went to Shotgun is somebody else's
-      // stopwatch, and a Shotgun claim is not this number. Ethan, 15 Sep
-      // 2026: "include average LO lead assignee time too (not including
-      // reassigned/shotgun leads)."
-      // Two numbers, because one cannot cover everybody: how FAST they took
-      // the leads they took, and how MANY of the ones they were shown they
-      // took at all. A CLR who never claims has no time to average — the
-      // share is the only honest measurement of them.
-      let loClaimByUser = new Map<number, { offered: number; claimed: number; seconds: number }>();
+      // Shotgun SLA per CLR for the Transfer Scorecard (4.122.25): claimed vs
+      // unclaimed as separate categories (not one blended rate), and claim
+      // time among claimed (median AND average). Replaces SG Accept / SG
+      // Respond / Lead grab columns. Ethan, 20 Sep 2026.
+      let shotgunSlaByUser = new Map<number, ShotgunSlaClrSummary>();
       try {
         const from = new Date(parseWallClockInTz(`${startDate} 00:00`, BUSINESS_DAY_DEFAULT_TZ)).toISOString();
         const to = new Date(parseWallClockInTz(`${addIsoDays(endDate, 1)} 00:00`, BUSINESS_DAY_DEFAULT_TZ) - 1).toISOString();
-        loClaimByUser = storageExtra.loNewLeadClaimStats(Number(currentOrgId() ?? 1), from, to);
-        for (const id of Array.from(loClaimByUser.keys())) if (excludedIds.has(id)) loClaimByUser.delete(id);
+        shotgunSlaByUser = computeShotgunSlaByClr(sqlite, Number(currentOrgId() ?? 1), from, to);
+        for (const id of Array.from(shotgunSlaByUser.keys())) if (excludedIds.has(id)) shotgunSlaByUser.delete(id);
       } catch (e: any) {
-        console.error("[manager-dashboard] LO lead claim stat failed:", e?.message ?? e);
+        console.error("[manager-dashboard] shotgun SLA by CLR failed:", e?.message ?? e);
       }
       // Texting-sourced transfers (Bulk Texter) per CLR for this range.
       const lbTextByUser = new Map<number, number>();
@@ -15398,25 +15370,14 @@ ${note}` : daysLine;
             callToolsCalls: activity.calls,
             messages,
             dialpadTexts,
-            // Shotgun offers shown to them in the range; null percentages when
-            // there were none — no offers is not the same as ignoring them.
-            shotgunOffers: shotgunByUser.get(u.id)?.offers ?? 0,
-            shotgunAccepted: shotgunByUser.get(u.id)?.accepted ?? 0,
-            shotgunResponded: shotgunByUser.get(u.id)?.responded ?? 0,
-            shotgunAcceptPct: (shotgunByUser.get(u.id)?.offers ?? 0) > 0
-              ? Math.round((shotgunByUser.get(u.id)!.accepted / shotgunByUser.get(u.id)!.offers) * 100) : null,
-            shotgunRespondPct: (shotgunByUser.get(u.id)?.offers ?? 0) > 0
-              ? Math.round((shotgunByUser.get(u.id)!.responded / shotgunByUser.get(u.id)!.offers) * 100) : null,
-            // Seconds from a new lead landing on their LO to them claiming it,
-            // averaged; and the share of the leads they were shown that they
-            // took. Null percentages when they were shown none — being given
-            // nothing is not the same as ignoring everything.
-            loLeadOffered: loClaimByUser.get(u.id)?.offered ?? 0,
-            loLeadClaims: loClaimByUser.get(u.id)?.claimed ?? 0,
-            loLeadClaimSeconds: (loClaimByUser.get(u.id)?.claimed ?? 0) > 0
-              ? Math.round(loClaimByUser.get(u.id)!.seconds / loClaimByUser.get(u.id)!.claimed) : null,
-            loLeadClaimPct: (loClaimByUser.get(u.id)?.offered ?? 0) > 0
-              ? Math.round((loClaimByUser.get(u.id)!.claimed / loClaimByUser.get(u.id)!.offered) * 100) : null,
+            // Shotgun SLA: claimed vs unclaimed separate; claim time among
+            // claimed (median + average). Nulls when they had no SLA activity.
+            slaClaimed: shotgunSlaByUser.get(u.id)?.claimed ?? 0,
+            slaUnclaimed: shotgunSlaByUser.get(u.id)?.unclaimed ?? 0,
+            slaClaimedPct: shotgunSlaByUser.get(u.id)?.claimedPct ?? null,
+            slaUnclaimedPct: shotgunSlaByUser.get(u.id)?.unclaimedPct ?? null,
+            slaMedianClaimSeconds: shotgunSlaByUser.get(u.id)?.medianClaimSeconds ?? null,
+            slaAverageClaimSeconds: shotgunSlaByUser.get(u.id)?.averageClaimSeconds ?? null,
             callToolsContacts: activity.contacts,
             callToolsConversations: activity.conversations,
             callToolsActiveSeconds: activity.activeSeconds,

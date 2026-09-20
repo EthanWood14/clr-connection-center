@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Clock3, Phone, Radio, Users } from "lucide-react";
+import { Clock3, Radio, Users } from "lucide-react";
 import { formatSlaSeconds } from "@shared/shotgun-sla";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,10 +17,6 @@ type SlaPayload = {
   unclaimedPct: number | null;
   medianClaimSeconds: number | null;
   averageClaimSeconds: number | null;
-  dialedUnder60sCount: number;
-  dialedUnder60sPct: number | null;
-  claimedWithoutDialEvidence: number;
-  dialProxy?: string;
 };
 
 function Tile({
@@ -44,9 +40,9 @@ function Tile({
 }
 
 /**
- * Shotgun / fresh-lead speed scoreboard (manager + Shotgun page).
- * Claimed vs unclaimed are separate categories; among claimed: median AND
- * average claim time, plus dialed &lt;60s after claim.
+ * Shotgun / fresh-lead speed scoreboard (Shotgun page).
+ * Exactly two features: (1) unclaimed vs claimed as separate categories,
+ * (2) median AND average claim time among claimed. No dial %.
  */
 export function ShotgunSlaScoreboard({ className }: { className?: string }) {
   const [range, setRange] = useState<"today" | "week">("today");
@@ -71,7 +67,7 @@ export function ShotgunSlaScoreboard({ className }: { className?: string }) {
             <Badge variant="secondary" className="font-normal">fresh leads</Badge>
           </CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">
-            Unclaimed and claimed are separate. Dial SLA uses Dialpad launch / Bonzo dial evidence — not the write-up checkbox.
+            Unclaimed and claimed are separate categories. Among claimed: median and average claim time.
           </p>
         </div>
         <div className="flex shrink-0 gap-1 rounded-lg border p-0.5" role="group" aria-label="Scoreboard range">
@@ -98,7 +94,7 @@ export function ShotgunSlaScoreboard({ className }: { className?: string }) {
           <p className="text-sm text-red-600">Could not load Shotgun speed.</p>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Tile
                 testId="shotgun-sla-unclaimed"
                 icon={Users}
@@ -127,24 +123,10 @@ export function ShotgunSlaScoreboard({ className }: { className?: string }) {
                 value={formatSlaSeconds(data?.averageClaimSeconds)}
                 sub="among claimed"
               />
-              <Tile
-                testId="shotgun-sla-dialed-60"
-                icon={Phone}
-                label="Dialed <60s"
-                value={data?.dialedUnder60sPct != null ? `${data.dialedUnder60sPct}%` : "—"}
-                sub={data ? `${data.dialedUnder60sCount} of ${data.claimed} claimed` : undefined}
-              />
-              <Tile
-                testId="shotgun-sla-no-dial"
-                icon={Phone}
-                label="No dial proof"
-                value={String(data?.claimedWithoutDialEvidence ?? 0)}
-                sub="claimed, no dial evidence yet"
-              />
             </div>
             <p className="text-[11px] text-muted-foreground">
               Window: {data?.from}
-              {data?.from !== data?.to ? ` → ${data?.to}` : ""} (Pacific business day). exclude_from_stats claimants omitted from speed/dial.
+              {data?.from !== data?.to ? ` → ${data?.to}` : ""} (Pacific business day). exclude_from_stats claimants omitted from speed.
             </p>
           </>
         )}

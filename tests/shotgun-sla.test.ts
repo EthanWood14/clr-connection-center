@@ -5,8 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
-import { formatSlaSeconds, summarizeShotgunSla, SHOTGUN_DIAL_SLA_MS } from "../shared/shotgun-sla";
-import { computeShotgunSla, resolveFirstDialAt } from "../server/shotgun-sla";
+import { formatSlaSeconds, summarizeShotgunSla, summarizeShotgunSlaByClr, SHOTGUN_DIAL_SLA_MS } from "../shared/shotgun-sla";
+import { computeShotgunSla, computeShotgunSlaByClr, resolveFirstDialAt } from "../server/shotgun-sla";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(root, rel), "utf8").replace(/\r\n/g, "\n");
@@ -116,10 +116,93 @@ test("routes expose SLA API; open-phone stamps first_dial_at; pages mount scoreb
   assert.match(routes, /computeShotgunSla/);
   assert.match(routes, /first_dial_at=COALESCE\(first_dial_at/);
   assert.match(read("client/src/pages/shotgun.tsx"), /ShotgunSlaScoreboard/);
-  assert.match(read("client/src/pages/manager-dashboard.tsx"), /ShotgunSlaScoreboard/);
-  assert.match(read("client/src/components/shotgun-sla-scoreboard.tsx"), /data-testid="shotgun-sla-scoreboard"/);
-  assert.match(read("client/src/components/shotgun-sla-scoreboard.tsx"), /Median claim/);
-  assert.match(read("client/src/components/shotgun-sla-scoreboard.tsx"), /Avg claim/);
-  assert.match(read("client/src/components/shotgun-sla-scoreboard.tsx"), /Unclaimed/);
-  assert.doesNotMatch(read("client/src/components/shotgun-sla-scoreboard.tsx"), /% claimed under 30/);
+  assert.doesNotMatch(read("client/src/pages/manager-dashboard.tsx"), /ShotgunSlaScoreboard/);
+  const board = read("client/src/components/shotgun-sla-scoreboard.tsx");
+  assert.match(board, /data-testid="shotgun-sla-scoreboard"/);
+  assert.match(board, /Median claim/);
+  assert.match(board, /Avg claim/);
+  assert.match(board, /Unclaimed/);
+  assert.match(board, /Claimed/);
+  assert.doesNotMatch(board, /% claimed under 30/);
+  assert.doesNotMatch(board, /Dialed <60s/);
+  assert.doesNotMatch(board, /No dial proof/);
+  assert.doesNotMatch(board, /dialedUnder60s/);
+  // API payload for the board omits dial display fields
+  assert.match(routes, /medianClaimSeconds: summary\.medianClaimSeconds/);
+  assert.doesNotMatch(routes, /dialProxy:/);
+});
+
+
+test("per-CLR summarizer attributes claimed to claimant and expired offers to unclaimed", () => {
+  const byClr = summarizeShotgunSlaByClr(
+    [
+      {
+        createdAt: "2026-09-20T15:00:00.000Z",
+        claimedAt: "2026-09-20T15:00:10.000Z",
+        status: "claimed",
+        firstDialAt: "2026-09-20T15:00:20.000Z",
+        claimantId: 1,
+      },
+      {
+        createdAt: "2026-09-20T15:00:00.000Z",
+        claimedAt: "2026-09-20T15:00:30.000Z",
+        status: "claimed",
+        firstDialAt: null,
+        claimantId: 1,
+      },
+      {
+        createdAt: "2026-09-20T15:00:00.000Z",
+        claimedAt: null,
+        status: "queued",
+        firstDialAt: null,
+        claimantId: null,
+      },
+    ],
+    [1, 2, 2], // CLR1 timed out once; CLR2 timed out twice
+  );
+  const a = byClr.get(1)!;
+  assert.equal(a.claimed, 2);
+  assert.equal(a.unclaimed, 1);
+  assert.equal(a.medianClaimSeconds, 20);
+  assert.equal(a.averageClaimSeconds, 20);
+  assert.equal(a.dialedUnder60sCount, 1);
+  assert.equal(a.dialedUnder60sPct, 50);
+  // claimed and unclaimed stay separate — not one blended under-30s rate
+  assert.equal(a.claimedPct, Math.round((2 / 3) * 1000) / 10);
+  assert.equal(a.unclaimedPct, Math.round((1 / 3) * 1000) / 10);
+  const b = byClr.get(2)!;
+  assert.equal(b.claimed, 0);
+  assert.equal(b.unclaimed, 2);
+  assert.equal(b.medianClaimSeconds, null);
+});
+
+test("computeShotgunSlaByClr joins expired offers to in-range leads", () => {
+  const db = new Database(":memory:");
+  db.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, exclude_from_stats INTEGER DEFAULT 0);
+    INSERT INTO users VALUES (1,1,0),(2,1,0);
+    CREATE TABLE shotgun_leads (
+      id INTEGER PRIMARY KEY, org_id INTEGER, created_at TEXT, claimed_at TEXT, status TEXT,
+      first_dial_at TEXT, phone TEXT, phone_key TEXT, current_assignee_id INTEGER
+    );
+    CREATE TABLE shotgun_offer_events (
+      id INTEGER PRIMARY KEY, lead_id INTEGER, org_id INTEGER, user_id INTEGER,
+      offered_at TEXT, expires_at TEXT, response TEXT, responded_at TEXT
+    );
+    CREATE TABLE bonzo_call_events (
+      id INTEGER PRIMARY KEY, org_id INTEGER, user_id INTEGER, occurred_at TEXT, path TEXT, counts INTEGER
+    );
+    INSERT INTO shotgun_leads VALUES
+      (1,1,'2026-09-20T15:00:00.000Z','2026-09-20T15:00:12.000Z','claimed','2026-09-20T15:00:30.000Z','5555550100','5555550100',1),
+      (2,1,'2026-09-20T15:00:00.000Z',NULL,'queued',NULL,'5555550101','5555550101',NULL);
+    INSERT INTO shotgun_offer_events VALUES
+      (1,1,1,1,'2026-09-20T15:00:00.000Z','2026-09-20T15:00:10.000Z','confirmed','2026-09-20T15:00:12.000Z'),
+      (2,2,1,2,'2026-09-20T15:00:00.000Z','2026-09-20T15:00:20.000Z','expired','2026-09-20T15:00:20.000Z');
+  `);
+  const byClr = computeShotgunSlaByClr(db, 1, "2026-09-20T00:00:00.000Z", "2026-09-21T00:00:00.000Z");
+  assert.equal(byClr.get(1)?.claimed, 1);
+  assert.equal(byClr.get(1)?.medianClaimSeconds, 12);
+  assert.equal(byClr.get(2)?.unclaimed, 1);
+  assert.equal(byClr.get(2)?.claimed ?? 0, 0);
+  db.close();
 });

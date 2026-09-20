@@ -9,7 +9,14 @@
  * The write-up flag `called=1` / done_at is intentionally NOT used — marking
  * a result later is not proof the CLR dialed within 60 seconds of claim.
  */
-import { summarizeShotgunSla, type ShotgunSlaLeadRow, type ShotgunSlaSummary } from "../shared/shotgun-sla";
+import {
+  summarizeShotgunSla,
+  summarizeShotgunSlaByClr,
+  type ShotgunSlaClrLeadRow,
+  type ShotgunSlaClrSummary,
+  type ShotgunSlaLeadRow,
+  type ShotgunSlaSummary,
+} from "../shared/shotgun-sla";
 
 function digits(phone: string | null | undefined): string {
   return String(phone ?? "").replace(/\D/g, "");
@@ -44,16 +51,12 @@ export type ShotgunSlaQueryDb = {
   prepare: (sql: string) => { all: (...args: any[]) => any[]; get: (...args: any[]) => any };
 };
 
-/**
- * Load leads created in [fromIso, toIso] for orgId and summarize.
- * Excludes claim/dial metrics for claimants with exclude_from_stats=1.
- */
-export function computeShotgunSla(
+function loadSlaLeadRows(
   db: ShotgunSlaQueryDb,
   orgId: number,
   fromIso: string,
   toIso: string,
-): ShotgunSlaSummary {
+): { rows: ShotgunSlaClrLeadRow[]; excluded: Set<number> } {
   const leads = db.prepare(`
     SELECT l.id, l.created_at, l.claimed_at, l.status, l.first_dial_at, l.phone, l.phone_key,
            COALESCE(
@@ -88,7 +91,7 @@ export function computeShotgunSla(
     if (!prev || at < prev) bonzoByUserPhone.set(key, at);
   }
 
-  const rows: ShotgunSlaLeadRow[] = leads.map((l) => {
+  const rows: ShotgunSlaClrLeadRow[] = leads.map((l) => {
     const claimedAt = l.claimed_at ? String(l.claimed_at) : null;
     const claimantId = Number(l.claimant_id) || null;
     const firstDialAt = claimedAt
@@ -105,9 +108,66 @@ export function computeShotgunSla(
       claimedAt,
       status: String(l.status),
       firstDialAt,
+      claimantId,
       claimantExcluded: claimantId != null && excluded.has(claimantId),
     };
   });
 
-  return summarizeShotgunSla(rows);
+  return { rows, excluded };
+}
+
+/**
+ * Load leads created in [fromIso, toIso] for orgId and summarize.
+ * Excludes claim/dial metrics for claimants with exclude_from_stats=1.
+ */
+export function computeShotgunSla(
+  db: ShotgunSlaQueryDb,
+  orgId: number,
+  fromIso: string,
+  toIso: string,
+): ShotgunSlaSummary {
+  const { rows } = loadSlaLeadRows(db, orgId, fromIso, toIso);
+  const orgRows: ShotgunSlaLeadRow[] = rows.map((r) => ({
+    createdAt: r.createdAt,
+    claimedAt: r.claimedAt,
+    status: r.status,
+    firstDialAt: r.firstDialAt,
+    claimantExcluded: r.claimantExcluded,
+  }));
+  return summarizeShotgunSla(orgRows);
+}
+
+/**
+ * Per-CLR SLA for the Transfer Scorecard range.
+ * Claimed → claimant; unclaimed → expired offers in the same created_at window
+ * (offer on a lead that entered Shotgun in-range). exclude_from_stats skipped.
+ */
+export function computeShotgunSlaByClr(
+  db: ShotgunSlaQueryDb,
+  orgId: number,
+  fromIso: string,
+  toIso: string,
+): Map<number, ShotgunSlaClrSummary> {
+  const { rows, excluded } = loadSlaLeadRows(db, orgId, fromIso, toIso);
+
+  // Expired offers on leads that entered Shotgun in this window — same universe
+  // as claimed, so claimed vs unclaimed stay comparable categories per CLR.
+  const expiredOfferUserIds: number[] = [];
+  try {
+    const expired = db.prepare(`
+      SELECT e.user_id FROM shotgun_offer_events e
+      INNER JOIN shotgun_leads l ON l.id = e.lead_id
+      WHERE e.org_id = ? AND e.response = 'expired'
+        AND l.org_id = ? AND l.created_at >= ? AND l.created_at <= ?
+    `).all(orgId, orgId, fromIso, toIso) as any[];
+    for (const r of expired) {
+      const uid = Number(r.user_id);
+      if (!uid || excluded.has(uid)) continue;
+      expiredOfferUserIds.push(uid);
+    }
+  } catch {
+    // shotgun_offer_events may be missing on a brand-new DB
+  }
+
+  return summarizeShotgunSlaByClr(rows, expiredOfferUserIds);
 }
