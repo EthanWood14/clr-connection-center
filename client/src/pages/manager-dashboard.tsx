@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ShotgunSlaScoreboard } from "@/components/shotgun-sla-scoreboard";
 import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +26,7 @@ import { businessTodayClient } from "@/lib/business-day";
 import { dropWeekendRows, isWeekday } from "@/lib/weekday-date";
 import { countNonSundaysInMonth } from "@shared/pace-days";
 import { formatTransferCount } from "@shared/transfer-credit";
+import { formatSlaSeconds } from "@shared/shotgun-sla";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -128,9 +128,9 @@ type RangeBlock = {
     bonzoCalls?: number; bonzoContacts?: number; bonzoConversations?: number;
     transferPct: number; appointmentPct: number; fellThroughPct: number;
     callToTransferPct: number | null;
-    shotgunOffers?: number; shotgunAccepted?: number; shotgunResponded?: number;
-    shotgunAcceptPct?: number | null; shotgunRespondPct?: number | null;
-    loLeadOffered?: number; loLeadClaims?: number; loLeadClaimSeconds?: number | null; loLeadClaimPct?: number | null;
+    slaClaimed?: number; slaUnclaimed?: number;
+    slaClaimedPct?: number | null; slaUnclaimedPct?: number | null;
+    slaMedianClaimSeconds?: number | null; slaAverageClaimSeconds?: number | null;
   }[];
   textTransfersTotal?: number;
   heatmap: { dates: string[]; rows: { userId: number; name: string; activeWorkdays: number; inTraining: boolean; cells: number[] }[] };
@@ -507,32 +507,41 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
     // Share of every field a transfer could have had filled in that was.
     { key: "writeUp",      label: "Write-up",  get: r => r.writeUpPct ?? null,     better: true,  fmt: r => r.writeUpPct == null ? "—" : `${r.writeUpPct}%` },
-    // Shotgun offers: of the offers shown to this CLR in the range, the share
-    // they accepted, and the share they answered at all (accepted or passed —
-    // the rest timed out). A dash when they were offered nothing.
-    { key: "shotgunAccept", label: "SG Accept", get: r => r.shotgunAcceptPct ?? null, better: true,
-      fmt: r => r.shotgunAcceptPct == null ? "—" : `${r.shotgunAcceptPct}%`,
-      title: "Of the Shotgun offers shown to this CLR in the range, the share they accepted. Dash: no offers.",
-      cellTitle: r => (r.shotgunOffers ?? 0) > 0 ? `${r.shotgunAccepted ?? 0} accepted of ${r.shotgunOffers} offers` : undefined },
-    { key: "shotgunRespond", label: "SG Respond", get: r => r.shotgunRespondPct ?? null, better: true,
-      fmt: r => r.shotgunRespondPct == null ? "—" : `${r.shotgunRespondPct}%`,
-      title: "Of the Shotgun offers shown to this CLR in the range, the share they answered — accepted or passed — before the 20 seconds ran out. Dash: no offers.",
-      cellTitle: r => (r.shotgunOffers ?? 0) > 0 ? `${r.shotgunResponded ?? 0} answered of ${r.shotgunOffers} offers (${(r.shotgunOffers ?? 0) - (r.shotgunResponded ?? 0)} timed out)` : undefined },
-    // How fast they grab a new lead on their OWN loan officer. Faster is
-    // better, so this is the one column where a low number wins. Leads that
-    // timed out into Shotgun are not counted here — this is the direct claim.
-    { key: "loLeadClaim", label: "Lead grab", get: r => r.loLeadClaimSeconds ?? null, better: false,
-      fmt: r => r.loLeadClaimSeconds == null ? "—"
-        : r.loLeadClaimSeconds < 60 ? `${r.loLeadClaimSeconds}s`
-        : `${Math.floor(r.loLeadClaimSeconds / 60)}m ${String(r.loLeadClaimSeconds % 60).padStart(2, "0")}s`,
-      title: "Average time from a new lead landing on one of this CLR's assigned loan officers to them claiming it. Only leads they took inside the three-minute window count; ones that ran out into Shotgun do not. Lower is better. Dash: they claimed none.",
-      cellTitle: r => (r.loLeadClaims ?? 0) > 0 ? `${r.loLeadClaims} of ${r.loLeadOffered ?? 0} lead${r.loLeadOffered === 1 ? "" : "s"} claimed directly` : undefined },
-    // The companion share, so a CLR who never claims is measured too — they
-    // have no average time to show, and a blank row is not a verdict.
-    { key: "loLeadClaimPct", label: "Lead grab %", get: r => r.loLeadClaimPct ?? null, better: true,
-      fmt: r => r.loLeadClaimPct == null ? "—" : `${r.loLeadClaimPct}%`,
-      title: "Of the new leads shown to this CLR on their own loan officers, the share they claimed themselves. The rest went unclaimed and moved on to Shotgun. Dash: they were shown none.",
-      cellTitle: r => (r.loLeadOffered ?? 0) > 0 ? `${r.loLeadClaims ?? 0} claimed of ${r.loLeadOffered} shown` : undefined },
+    // Shotgun SLA (4.122.25): claimed vs unclaimed as SEPARATE categories —
+    // never one blended "% claimed under 30s". Display is claimed / unclaimed
+    // counts; heat uses claimed share of (claimed+unclaimed). Dash when none.
+    { key: "slaClaimedUnclaimed", label: "Claimed / Unclaimed", get: r => {
+        const c = r.slaClaimed ?? 0; const u = r.slaUnclaimed ?? 0;
+        return (c + u) > 0 ? (r.slaClaimedPct ?? null) : null;
+      }, better: true,
+      fmt: r => {
+        const c = r.slaClaimed ?? 0; const u = r.slaUnclaimed ?? 0;
+        return (c + u) > 0 ? `${c} / ${u}` : "—";
+      },
+      title: "Shotgun leads in this range: how many this CLR claimed vs how many offers timed out on them (expired). Separate categories — not one blended rate. Dash: no Shotgun claim/timeout activity.",
+      cellTitle: r => {
+        const c = r.slaClaimed ?? 0; const u = r.slaUnclaimed ?? 0;
+        if (c + u <= 0) return undefined;
+        const cp = r.slaClaimedPct; const up = r.slaUnclaimedPct;
+        return `${c} claimed (${cp ?? "—"}%), ${u} unclaimed/timed out (${up ?? "—"}%)`;
+      },
+      cellNote: r => {
+        const c = r.slaClaimed ?? 0; const u = r.slaUnclaimed ?? 0;
+        if (c + u <= 0) return null;
+        const cp = r.slaClaimedPct; const up = r.slaUnclaimedPct;
+        if (cp == null || up == null) return null;
+        return `${cp}% / ${up}%`;
+      } },
+    // Among claimed only: BOTH median and average claim time. Lower is better.
+    { key: "slaClaimTime", label: "Claim time", get: r => r.slaMedianClaimSeconds ?? null, better: false,
+      fmt: r => {
+        if (r.slaMedianClaimSeconds == null && r.slaAverageClaimSeconds == null) return "—";
+        return `${formatSlaSeconds(r.slaMedianClaimSeconds)} / ${formatSlaSeconds(r.slaAverageClaimSeconds)}`;
+      },
+      title: "Among leads this CLR claimed in the range: median / average seconds from lead created to claim. Lower is better. Dash: they claimed none.",
+      cellTitle: r => (r.slaClaimed ?? 0) > 0
+        ? `Median ${formatSlaSeconds(r.slaMedianClaimSeconds)}, avg ${formatSlaSeconds(r.slaAverageClaimSeconds)} across ${r.slaClaimed} claim${r.slaClaimed === 1 ? "" : "s"}`
+        : undefined },
     // Not a second transfer count: where each one was PUT. Same shape as
     // Write-up above — a share, higher is better, a dash when there is nothing
     // to score, because 0% is a verdict and an empty week has not earned one.
@@ -1232,7 +1241,6 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
-      <ShotgunSlaScoreboard className="border-orange-200/60 dark:border-orange-900/40" />
 
       {/* KPI tiles — This week with WoW deltas */}
       <div>

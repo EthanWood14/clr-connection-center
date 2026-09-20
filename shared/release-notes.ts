@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.25",
+    headline: "Transfer Scorecard + Shotgun board: claimed vs unclaimed, and claim time — only.",
+    items: [
+      { text: "On the Manager Dashboard Transfer Scorecard, SG Accept, SG Respond, Lead grab, and Lead grab % are gone. In their place: Claimed / Unclaimed (separate counts and %, never one blended rate) and Claim time (median / average among claimed; lower is better) — per CLR for the scorecard range.", audience: "manager" },
+      { text: "The Shotgun page speed board shows the same two features only (unclaimed vs claimed; median and average claim time). Dial % is no longer on the board. Manager Home no longer duplicates the orange card next to the scorecard.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.24",
     headline: "Shotgun speed scoreboard + fresh LO leads enter Shotgun right away.",
     items: [
