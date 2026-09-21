@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.26",
+    headline: "Transfers / day worked no longer counts Jordon's excluded days in the denominator.",
+    items: [
+      { text: "On the Transfer Scorecard (and Ask C3 / lifetime CLR rates / workday rates), people excluded from stats from a date forward — like Jordon Chang from 2026-09-16 PT — now drop those days from days worked as well as transfer credit, so Transfers / day worked is not diluted by zero-credit activity days.", audience: "manager" },
+      { text: "Half days still count as half a day for goals and rates; Jeremy's one-off excluded day and full days off stay weight zero.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.25",
     headline: "Transfer Scorecard + Shotgun board: claimed vs unclaimed, and claim time — only.",
     items: [

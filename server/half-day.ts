@@ -243,9 +243,10 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
   // Full day off wins over standing/approved half on the same person-day.
   for (const key of fullOffDays) halfDays.delete(key);
 
-  // Jeremy one-offs + Jordon from-date + EVERY half day + EVERY full off —
-  // credit/score boards drop these person-days entirely (Ethan 18 Sep 2026).
-  // availability.halfDays still carries 0.5 for display-only goal proration.
+  // Credit list: Jeremy one-offs + Jordon from-date + EVERY half day + EVERY
+  // full off — score/pace boards drop these person-days from transfer CREDIT
+  // (Ethan 18 Sep 2026). Half days still keep weight 0.5 on availability for
+  // goal proration / transfers-per-worked-day (do NOT force half → 0 here).
   const paceOneOffs = buildPaceExclusions(users).map(({ userId, date }) => ({ userId, date }));
   const excludedDays = buildCreditExcludedPersonDays({
     users,
@@ -255,11 +256,21 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
     fullOffDays,
     extra: paceOneOffs,
   });
+  // Denominator (workedDays / rates / goal weekday portions): zero from-date
+  // exclusions (Jordon etc.) and Jeremy one-offs. Omit halfDays/fullOffDays so
+  // half stays 0.5 and full off stays on fullOffDays (already weight 0).
+  // Bug before 4.122.26: only paceOneOffs were here, so Jordon's activity days
+  // still inflated transfersPerWorkedDay while credit was already zeroed.
+  const denomExcludedDays = buildCreditExcludedPersonDays({
+    users,
+    from,
+    to: today,
+    extra: paceOneOffs,
+  });
   const availability: DayAvailabilityContext = {
     halfDays,
     fullOffDays,
-    // Goals/availability keep Jeremy-style one-offs here; half stays 0.5 weight.
-    excludedDays: excludedDayKeys(paceOneOffs),
+    excludedDays: excludedDayKeys(denomExcludedDays),
   };
 
   const pick = (who: "jeremy" | "jackie" | "chris") => {
