@@ -37,7 +37,7 @@ export type DayAvailabilityContext = {
   halfDays?: ReadonlySet<string> | null;
   /** Approved full-day time off ("no days"). */
   fullOffDays?: ReadonlySet<string> | null;
-  /** One-off pace exclusions (e.g. Jeremy 2026-09-17). */
+  /** Weight-0 person-days: Jeremy one-offs + STATS_EXCLUDED_FROM (Jordon…). */
   excludedDays?: ReadonlySet<string> | null;
 };
 

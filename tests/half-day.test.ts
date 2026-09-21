@@ -164,7 +164,7 @@ test("seeded half days, full offs, and standing Rosas wire through sqlite", (t) 
     reason TEXT, status TEXT, day_portion TEXT DEFAULT 'full',
     created_at TEXT, updated_at TEXT, reviewed_at TEXT
   )`);
-  db.prepare("INSERT INTO users(id,name,org_id,is_active) VALUES (1,'Jeremy Lapiz',1,1),(2,'Jacqueline Ortiz',1,1),(3,'Chris Bermudez',1,1),(4,'Matthew Rosas',1,1),(5,'Chris Redoble',1,1),(6,'Away CLR',1,1)").run();
+  db.prepare("INSERT INTO users(id,name,org_id,is_active) VALUES (1,'Jeremy Lapiz',1,1),(2,'Jacqueline Ortiz',1,1),(3,'Chris Bermudez',1,1),(4,'Matthew Rosas',1,1),(5,'Chris Redoble',1,1),(6,'Away CLR',1,1),(7,'Jordon Chang',1,1)").run();
   ensureHalfDaySchema(db);
   const seeded = ensureSeededHalfDays(db);
   assert.equal(seeded.inserted, 2);
@@ -198,6 +198,51 @@ test("seeded half days, full offs, and standing Rosas wire through sqlite", (t) 
 
   // Goal window Mon–Fri with Away CLR full off Wed → 4 available portions.
   assert.equal(availableWeekdayPortions(6, "2026-09-14", "2026-09-18", ctx.availability), 4);
+
+  // From-date exclusion (Jordon): credit list AND availability.excludedDays.
+  assert.ok(ctx.excludedDays.some((e) => e.userId === 7 && e.date === "2026-09-16"));
+  assert.ok(ctx.excludedDays.some((e) => e.userId === 7 && e.date === "2026-09-18"));
+  assert.ok(!ctx.excludedDays.some((e) => e.userId === 7 && e.date === "2026-09-15"));
+  assert.ok(ctx.availability.excludedDays?.has("7:2026-09-16"));
+  assert.ok(ctx.availability.excludedDays?.has("1:2026-09-17"), "Jeremy one-off stays in denom exclusions");
+  assert.equal(dayAvailabilityWeight(7, "2026-09-15", ctx.availability), 1, "pre-fromDate still counts");
+  assert.equal(dayAvailabilityWeight(7, "2026-09-16", ctx.availability), 0, "fromDate day weight 0");
+  assert.equal(dayAvailabilityWeight(7, "2026-09-18", ctx.availability), 0);
+  // Half days must stay 0.5 — not forced into availability.excludedDays.
+  assert.equal(dayAvailabilityWeight(2, "2026-09-17", ctx.availability), 0.5, "Jackie half stays 0.5");
+  assert.equal(dayAvailabilityWeight(4, "2026-09-18", ctx.availability), 0.5, "Rosas standing half stays 0.5");
+  assert.ok(!ctx.availability.excludedDays?.has("2:2026-09-17"));
+  assert.ok(!ctx.availability.excludedDays?.has("4:2026-09-18"));
+});
+
+test("from-date exclusion zeros credit days AND workedDays weight (Jordon)", () => {
+  // Synthetic: Jordon works Mon–Fri; credit zeroed from Wed; denom must match.
+  const jordonId = 42;
+  const ctx = {
+    halfDays: new Set<string>(),
+    fullOffDays: new Set<string>(),
+    excludedDays: new Set(["42:2026-09-16", "42:2026-09-17", "42:2026-09-18"]),
+  };
+  const activity = [
+    { userId: jordonId, date: "2026-09-15" },
+    { userId: jordonId, date: "2026-09-16" },
+    { userId: jordonId, date: "2026-09-17" },
+    { userId: jordonId, date: "2026-09-18" },
+  ];
+  const workedDays = sumWorkedAvailabilityPortions(activity, ctx).get(jordonId) ?? 0;
+  assert.equal(workedDays, 1, "only Mon (pre-fromDate) counts in denom");
+  // Credit on/after fromDate is 0; only Mon's 2 transfers count.
+  const transfers = 2; // Mon only
+  const transfersPerWorkedDay = workedDays > 0 ? transfers / workedDays : null;
+  assert.equal(transfersPerWorkedDay, 2);
+  // Bug pattern: if excludedDays were missing, workedDays would be 4 and rate 0.5.
+  const inflated = sumWorkedAvailabilityPortions(activity, {
+    halfDays: new Set(),
+    fullOffDays: new Set(),
+    excludedDays: new Set(), // missing from-date keys
+  }).get(jordonId) ?? 0;
+  assert.equal(inflated, 4);
+  assert.notEqual(transfers / inflated, transfersPerWorkedDay);
 });
 
 test("manager dashboard, agent stats, and Ask C3 wire availability weights", () => {
@@ -214,4 +259,7 @@ test("manager dashboard, agent stats, and Ask C3 wire availability weights", () 
   assert.match(ask, /sumAvailabilityPortions\(id, stat\?\.days/, "Ask C3 team metrics");
   assert.match(dash, /callsPerWorkedDay/, "Calls / day worked column");
   assert.match(dash, /half days & days off|available weekdays/i, "goal UI names the rule");
+  const halfServer = readFileSync(join(root, "server/half-day.ts"), "utf8");
+  assert.match(halfServer, /denomExcludedDays/, "from-date keys feed availability.excludedDays");
+  assert.match(halfServer, /buildCreditExcludedPersonDays\(\{[\s\S]*?extra: paceOneOffs/, "denom uses from-date + Jeremy, not half days");
 });
