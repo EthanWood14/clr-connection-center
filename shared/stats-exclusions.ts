@@ -3,10 +3,11 @@
  * TV transfers / pace / day-race, scorecards, lifetime & workday rates,
  * Ask C3, agent-stats, tournament, digests.
  *
- * Ethan via LoanWick, 18 Sep 2026 — three rules, one module:
- *  1. Jordon Chang — no credit from 2026-09-16 PT inclusive forward
+ * Ethan via LoanWick — three rules, one module:
+ *  1. Jordon Chang — no credit 2026-09-16 through 2026-09-20 PT inclusive
  *     (Jordan Chang spelling included; demo LO "Jordan Rivera" is not matched).
- *     Pre-that-date history still credits him. Do NOT flip exclude_from_stats.
+ *     Pre-9/16 and from 9/21 onward credit him normally. Do NOT flip
+ *     exclude_from_stats.
  *  2. Approved FULL day off — no credit that calendar date.
  *  3. Approved HALF day AND standing half-day rules (Rosas) — also no credit
  *     that calendar date on the boards above (same as full PTO for credit).
@@ -19,6 +20,8 @@ export type StatsFromDateExclusion = {
   nameRe: RegExp;
   /** Inclusive Pacific calendar day "YYYY-MM-DD". */
   fromDate: string;
+  /** Inclusive end day; omit for open-ended (fromDate forward). */
+  toDate?: string;
   reason: string;
 };
 
@@ -29,7 +32,8 @@ export const STATS_EXCLUDED_FROM: readonly StatsFromDateExclusion[] = [
   {
     nameRe: JORDON_STATS_NAME_RE,
     fromDate: "2026-09-16",
-    reason: "Ethan via LoanWick: Jordon must not count since Wednesday (2026-09-16 PT) for all stats",
+    toDate: "2026-09-20",
+    reason: "Ethan via LoanWick: Jordon excluded 2026-09-16 through 2026-09-20 PT inclusive; back on team credit from 2026-09-21",
   },
 ];
 
@@ -40,7 +44,7 @@ export function matchesStatsExcludedName(
   return rule.nameRe.test(String(name ?? "").trim());
 }
 
-/** Name/from-date rule only (Jordon). Invalid/missing date does not exclude. */
+/** True when day falls in a name/from–to window (Jordon). Invalid/missing date does not exclude. */
 export function isStatsExcluded(
   name: string | null | undefined,
   date: string | null | undefined,
@@ -49,7 +53,10 @@ export function isStatsExcluded(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
   const n = String(name ?? "").trim();
   for (const rule of STATS_EXCLUDED_FROM) {
-    if (day >= rule.fromDate && rule.nameRe.test(n)) return true;
+    if (!rule.nameRe.test(n)) continue;
+    if (day < rule.fromDate) continue;
+    if (rule.toDate && day > rule.toDate) continue;
+    return true;
   }
   return false;
 }
@@ -57,6 +64,7 @@ export function isStatsExcluded(
 export type ResolvedStatsExclusion = {
   userId: number;
   fromDate: string;
+  toDate?: string;
   name: string;
   reason: string;
 };
@@ -71,7 +79,13 @@ export function resolveStatsExcludedUsers(
       if (!rule.nameRe.test(name.trim())) continue;
       const userId = Number(u.id);
       if (!Number.isSafeInteger(userId) || userId <= 0) continue;
-      out.push({ userId, fromDate: rule.fromDate, name, reason: rule.reason });
+      out.push({
+        userId,
+        fromDate: rule.fromDate,
+        ...(rule.toDate ? { toDate: rule.toDate } : {}),
+        name,
+        reason: rule.reason,
+      });
     }
   }
   return out;
@@ -84,7 +98,12 @@ export function isUserStatsExcluded(
 ): boolean {
   const day = String(date ?? "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
-  return resolved.some((r) => r.userId === Number(userId) && day >= r.fromDate);
+  return resolved.some(
+    (r) =>
+      r.userId === Number(userId) &&
+      day >= r.fromDate &&
+      !(r.toDate && day > r.toDate),
+  );
 }
 
 export function eachIsoDateInclusive(from: string, to: string): string[] {
@@ -109,7 +128,7 @@ export function parsePersonDayKey(key: string): { userId: number; date: string }
 
 /**
  * Person-days whose transfer CREDIT must be dropped on score/pace boards:
- * Jordon from-date + every half-day key + every full-off key + extras (Jeremy).
+ * Jordon from–to window + every half-day key + every full-off key + extras (Jeremy).
  */
 export function buildCreditExcludedPersonDays(input: {
   users: ReadonlyArray<{ id: number; name?: string | null }>;
@@ -133,7 +152,9 @@ export function buildCreditExcludedPersonDays(input: {
 
   for (const r of resolveStatsExcludedUsers(input.users)) {
     const start = input.from > r.fromDate ? input.from : r.fromDate;
-    for (const date of eachIsoDateInclusive(start, input.to)) add(r.userId, date);
+    const endCap = r.toDate && r.toDate < input.to ? r.toDate : input.to;
+    if (start > endCap) continue;
+    for (const date of eachIsoDateInclusive(start, endCap)) add(r.userId, date);
   }
   for (const key of input.halfDays ?? []) {
     const p = parsePersonDayKey(key);
@@ -186,8 +207,11 @@ export function jordonCreditExclusionSql(
   userIdCol: string = "tc.user_id",
 ): string {
   const fromDate = STATS_EXCLUDED_FROM[0]?.fromDate ?? "2026-09-16";
+  const toDate = STATS_EXCLUDED_FROM[0]?.toDate;
+  const upper = toDate ? `AND ${dateCol} <= '${toDate}'` : "";
   return `NOT (
     ${dateCol} >= '${fromDate}'
+    ${upper}
     AND ${userIdCol} IN (
       SELECT id FROM users WHERE
         (' ' || lower(COALESCE(name, '')) || ' ') LIKE '% jordon %'
