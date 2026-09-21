@@ -268,3 +268,36 @@ test("manager dashboard, agent stats, and Ask C3 wire availability weights", () 
   assert.match(halfServer, /denomExcludedDays/, "from-date keys feed availability.excludedDays");
   assert.match(halfServer, /buildCreditExcludedPersonDays\(\{[\s\S]*?extra: paceOneOffs/, "denom uses from-date + Jeremy, not half days");
 });
+
+
+test("pending full PTO does not block Jackie half seed (Jackie 1231 / 2026-09-17)", () => {
+  const db = new Database(":memory:");
+  db.exec(`CREATE TABLE users (
+    id INTEGER PRIMARY KEY, name TEXT, org_id INTEGER, is_active INTEGER DEFAULT 1, archived_at TEXT
+  )`);
+  db.exec(`CREATE TABLE time_off_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER, user_id INTEGER, start_date TEXT, end_date TEXT,
+    reason TEXT, status TEXT, day_portion TEXT DEFAULT 'full', leave_kind TEXT DEFAULT 'pto',
+    created_at TEXT, updated_at TEXT, reviewed_at TEXT
+  )`);
+  db.prepare("INSERT INTO users(id,name,org_id,is_active) VALUES (1231,'Jacqueline Tamayo',1,1),(3,'Chris Bermudez',1,1)").run();
+  // Pending full PTO overlapping Jackie seed date — the footgun.
+  db.prepare(`INSERT INTO time_off_requests
+    (org_id, user_id, start_date, end_date, reason, status, day_portion, leave_kind, created_at, updated_at)
+    VALUES (1, 1231, '2026-09-15', '2026-09-19', 'Vacation request', 'pending', 'full', 'pto', 'x', 'x')`).run();
+  ensureHalfDaySchema(db);
+  const seeded = ensureSeededHalfDays(db);
+  assert.ok(seeded.inserted >= 1, "half seed must insert despite pending full");
+  assert.ok(seeded.matched.some((m) => m.who === "jackie" && m.userId === 1231));
+  const half = db.prepare(
+    `SELECT id, status, day_portion FROM time_off_requests
+      WHERE user_id=1231 AND status='approved' AND COALESCE(day_portion,'full')='half'
+        AND start_date<='2026-09-17' AND end_date>='2026-09-17'`,
+  ).get() as any;
+  assert.ok(half, "approved half row exists for 2026-09-17");
+  const ctx = paceHalfDayContext(db, 1, "2026-09-14", "2026-09-18");
+  assert.equal(dayAvailabilityWeight(1231, "2026-09-17", ctx.availability), 0.5, "Jackie half weighs 0.5");
+  // Idempotent even with pending still present.
+  assert.equal(ensureSeededHalfDays(db).inserted, 0);
+});

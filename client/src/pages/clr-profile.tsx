@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClrTimeOffCard } from "@/components/clr-time-off-card";
 import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { Button } from "@/components/ui/button";
@@ -751,6 +752,8 @@ export default function ClrProfile() {
               )}
             </CardContent>
           </Card>
+
+          <ClrTimeOffCard userId={Number(id)} clrName={data.clr.name} />
 
           <Card>
             <CardHeader className="pb-3">
