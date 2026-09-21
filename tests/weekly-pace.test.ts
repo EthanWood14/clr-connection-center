@@ -13,10 +13,11 @@ const read = (rel: string) => readFileSync(join(root, rel), "utf8").replace(/\r\
 
 /**
  * Transfers per CLR per DAY WORKED, for the office TV. Ethan's rules, in the
- * order he gave them on 15-16 Sep 2026: past their first two weeks; count the
- * people who have gone quiet for the weeks they were here; "someone shouldn't
- * count for a week if they only worked a day — count by days"; and this week
- * counts today as half a day.
+ * order he gave them on 15-16 Sep 2026: past their first two weeks; "someone
+ * shouldn't count for a week if they only worked a day — count by days"; and
+ * this week counts today as half a day. 21 Sep 2026: zero credited transfers
+ * that week drops the CLR from clrDays (quiet); keepZeroCreditUserIds preserves
+ * STATS_EXCLUDED_FROM (Jordon) at 0 credit.
  */
 
 const TODAY = "2026-09-16"; // a Wednesday
@@ -108,6 +109,9 @@ test("the wall gets the pace page, fed by its own section on the TV endpoint", (
   assert.match(kit, /\{ id: "weeklyPace",\s+dwellMs: 14_000 \}/);
   assert.match(tv, /weeks=\{board\?\.weeklyPace\?\.weeks \?\? \[\]\}/);
   assert.match(section, /paceHalfDayContext|halfDays:/, "half days and Jeremy exclusions feed the pace");
+  assert.match(section, /denomExcludedDays/, "pace denom uses from-date/Jeremy only — not half credit keys");
+  assert.match(section, /keepZeroCreditUserIds/, "Jordon from-date keep list feeds quiet-week skip");
+  assert.match(section, /resolveStatsExcludedUsers/, "from-date users resolved for keep list");
   const pages = read("client/src/components/tv/pages.tsx");
   assert.match(pages, /data-testid="tv-page-weekly-pace"/);
   assert.match(pages, /data-testid="tv-pace-columns"/);
@@ -127,4 +131,43 @@ test("the wall gets the pace page, fed by its own section on the TV endpoint", (
   // The week in progress is still marked rather than left looking like a collapse.
   assert.match(pace, /p\.w\.partial \? "rgb\(252,211,77\)" : "rgb\(125,211,252\)"/);
   assert.match(pace, /p\.w\.partial \? "so far"/);
+});
+
+test("a CLR with activity but zero credited transfers that week drops out of clrDays", () => {
+  // Kristi pattern: five weekdays of dial/SMS/EOD activity, no transfers.
+  const days = [
+    { userId: 1, date: "2026-06-01" }, { userId: 731, date: "2026-06-01" },
+    { userId: 1, date: "2026-09-14" }, { userId: 1, date: "2026-09-15" },
+    { userId: 731, date: "2026-09-14" }, { userId: 731, date: "2026-09-15" },
+    { userId: 731, date: "2026-09-16" }, { userId: 731, date: "2026-09-17" },
+    { userId: 731, date: "2026-09-18" },
+  ];
+  const credits = [
+    { userId: 1, date: "2026-09-14", credit: 5 },
+    { userId: 1, date: "2026-09-15", credit: 5 },
+  ];
+  const [week] = weeklyPace({ days, credits, today: "2026-09-18", weeks: 1 });
+  assert.equal(week.clrs, 1, "Kristi-style quiet CLR is not in the week");
+  assert.equal(week.clrDays, 2);
+  assert.equal(week.transfers, 10);
+  assert.equal(week.perClrPerDay, 5);
+});
+
+test("STATS_EXCLUDED_FROM keep list preserves zero-credit days (Jordon Mon–Tue)", () => {
+  // Jordon: Mon–Tue activity, zero credited transfers; from-date keep list.
+  const days = [
+    { userId: 1, date: "2026-06-01" }, { userId: 7, date: "2026-06-01" },
+    { userId: 1, date: "2026-09-14" },
+    { userId: 7, date: "2026-09-14" }, { userId: 7, date: "2026-09-15" },
+  ];
+  const credits = [{ userId: 1, date: "2026-09-14", credit: 4 }];
+  const without = weeklyPace({ days, credits, today: "2026-09-18", weeks: 1 })[0];
+  assert.equal(without.clrDays, 1, "without keep list, Jordon would drop");
+  const withKeep = weeklyPace({
+    days, credits, today: "2026-09-18", weeks: 1,
+    keepZeroCreditUserIds: new Set([7]),
+  })[0];
+  assert.equal(withKeep.clrDays, 3, "Mon–Tue still +2 with 0 credit by design");
+  assert.equal(withKeep.transfers, 4);
+  assert.equal(withKeep.clrs, 2);
 });
