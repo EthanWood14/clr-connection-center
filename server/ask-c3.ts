@@ -396,7 +396,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
 
       const availability = paceCtx.availability;
       const performanceDays = performanceDaysByUser(loadPerformanceDays(getRawSqlite(), user.orgId, start, end), availability);
-      for (const id of performanceDays.keys()) ids.add(id);
+      performanceDays.forEach((_days, id) => ids.add(id));
       const perClr = [...ids].map((id) => {
         const u = usersById.get(id);
         const stat = statsByClr.get(id);
