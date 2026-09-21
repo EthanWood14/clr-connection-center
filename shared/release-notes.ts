@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.122.34", headline: "Unclaimed leads now count in claim-time averages.", items: [
+    { text: "Each timed-out offer counts as 4 minutes in a CLR's median and average claim time on the Transfer Scorecard. The Shotgun speed board also counts never-claimed leads at 4 minutes each. Actual claim times stay unchanged, even above 4 minutes; claimed and unclaimed counts stay separate.", audience: "manager" },
+  ] },
   { version: "4.122.33", headline: "Earlier CLR trend history keeps its original worked-day rule.", items: [
     { text: "The transfer-or-one-hour CallTools rule now starts on July 21, 2026. Earlier chart dates keep the previous calls-or-transfers rule, including in a range that spans both periods. Attendance and training records are unchanged.", audience: "manager" },
   ] },

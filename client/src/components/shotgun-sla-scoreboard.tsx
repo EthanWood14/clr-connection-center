@@ -42,7 +42,7 @@ function Tile({
 /**
  * Shotgun / fresh-lead speed scoreboard (Shotgun page).
  * Exactly two features: (1) unclaimed vs claimed as separate categories,
- * (2) median AND average claim time among claimed. No dial %.
+ * (2) median AND average claim time, including unclaimed at four minutes. No dial %.
  */
 export function ShotgunSlaScoreboard({ className }: { className?: string }) {
   const [range, setRange] = useState<"today" | "week">("today");
@@ -67,7 +67,7 @@ export function ShotgunSlaScoreboard({ className }: { className?: string }) {
             <Badge variant="secondary" className="font-normal">fresh leads</Badge>
           </CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">
-            Unclaimed and claimed are separate categories. Among claimed: median and average claim time.
+            Claimed and unclaimed counts stay separate. Claim time includes unclaimed leads at 4 minutes each; claimed leads use their actual time.
           </p>
         </div>
         <div className="flex shrink-0 gap-1 rounded-lg border p-0.5" role="group" aria-label="Scoreboard range">
@@ -114,14 +114,14 @@ export function ShotgunSlaScoreboard({ className }: { className?: string }) {
                 icon={Clock3}
                 label="Median claim"
                 value={formatSlaSeconds(data?.medianClaimSeconds)}
-                sub="among claimed"
+                sub="Unclaimed = 4 minutes"
               />
               <Tile
                 testId="shotgun-sla-avg-claim"
                 icon={Clock3}
                 label="Avg claim"
                 value={formatSlaSeconds(data?.averageClaimSeconds)}
-                sub="among claimed"
+                sub="Unclaimed = 4 minutes"
               />
             </div>
             <p className="text-[11px] text-muted-foreground">

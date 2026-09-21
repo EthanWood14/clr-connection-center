@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
-import { formatSlaSeconds, summarizeShotgunSla, summarizeShotgunSlaByClr, SHOTGUN_DIAL_SLA_MS } from "../shared/shotgun-sla";
+import { formatSlaSeconds, summarizeShotgunSla, summarizeShotgunSlaByClr, SHOTGUN_DIAL_SLA_MS, SHOTGUN_UNCLAIMED_CLAIM_SECONDS } from "../shared/shotgun-sla";
 import { computeShotgunSla, computeShotgunSlaByClr, resolveFirstDialAt } from "../server/shotgun-sla";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,15 +23,15 @@ test("claimed vs unclaimed stay separate — no blended under-30s vanity rate", 
   assert.equal(summary.claimed, 2);
   assert.equal(summary.unclaimedPct, 50);
   assert.equal(summary.claimedPct, 50);
-  // Among claimed only: 10s and 20s → median 15, avg 15
-  assert.equal(summary.medianClaimSeconds, 15);
-  assert.equal(summary.averageClaimSeconds, 15);
+  // Two actual claims (10s, 20s), two unclaimed (240s each).
+  assert.equal(summary.medianClaimSeconds, 130);
+  assert.equal(summary.averageClaimSeconds, 127.5);
   assert.equal(summary.dialedUnder60sCount, 1);
   assert.equal(summary.dialedUnder60sPct, 50);
   assert.equal(summary.claimedWithoutDialEvidence, 1);
 });
 
-test("median and average both report among claimed; exclude_from_stats drops claimer", () => {
+test("actual claims keep their real times; exclude_from_stats drops claimer", () => {
   const summary = summarizeShotgunSla([
     { createdAt: "2026-09-20T15:00:00.000Z", claimedAt: "2026-09-20T15:00:05.000Z", status: "claimed", firstDialAt: "2026-09-20T15:00:10.000Z" },
     { createdAt: "2026-09-20T15:00:00.000Z", claimedAt: "2026-09-20T15:01:00.000Z", status: "claimed", firstDialAt: "2026-09-20T15:01:10.000Z" },
@@ -101,7 +101,8 @@ test("computeShotgunSla is org-scoped and skips exclude_from_stats claimants", (
   assert.equal(summary.total, 3);
   assert.equal(summary.unclaimed, 1);
   assert.equal(summary.claimed, 1); // excluded claimant dropped from claimed count
-  assert.equal(summary.medianClaimSeconds, 12);
+  assert.equal(summary.medianClaimSeconds, 126); // actual 12s + unclaimed 240s
+  assert.equal(summary.averageClaimSeconds, 126);
   assert.equal(summary.dialedUnder60sCount, 1);
   db.close();
 });
@@ -163,8 +164,8 @@ test("per-CLR summarizer attributes claimed to claimant and expired offers to un
   const a = byClr.get(1)!;
   assert.equal(a.claimed, 2);
   assert.equal(a.unclaimed, 1);
-  assert.equal(a.medianClaimSeconds, 20);
-  assert.equal(a.averageClaimSeconds, 20);
+  assert.equal(a.medianClaimSeconds, 30);
+  assert.equal(a.averageClaimSeconds, 93.3); // (10 + 30 + 240) / 3
   assert.equal(a.dialedUnder60sCount, 1);
   assert.equal(a.dialedUnder60sPct, 50);
   // claimed and unclaimed stay separate — not one blended under-30s rate
@@ -173,7 +174,9 @@ test("per-CLR summarizer attributes claimed to claimant and expired offers to un
   const b = byClr.get(2)!;
   assert.equal(b.claimed, 0);
   assert.equal(b.unclaimed, 2);
-  assert.equal(b.medianClaimSeconds, null);
+  assert.equal(b.medianClaimSeconds, 240);
+  assert.equal(b.averageClaimSeconds, 240);
+  assert.equal(b.dialedUnder60sPct, null, "unclaimed offers do not invent a claim or dial");
 });
 
 test("computeShotgunSlaByClr joins expired offers to in-range leads", () => {
@@ -204,5 +207,49 @@ test("computeShotgunSlaByClr joins expired offers to in-range leads", () => {
   assert.equal(byClr.get(1)?.medianClaimSeconds, 12);
   assert.equal(byClr.get(2)?.unclaimed, 1);
   assert.equal(byClr.get(2)?.claimed ?? 0, 0);
+  assert.equal(byClr.get(2)?.medianClaimSeconds, 240);
+  assert.equal(byClr.get(2)?.averageClaimSeconds, 240);
   db.close();
+});
+
+test("unclaimed scoring is fixed at four minutes, while actual late claims are never capped", () => {
+  assert.equal(SHOTGUN_UNCLAIMED_CLAIM_SECONDS, 240);
+  const unclaimed = { createdAt: "2026-09-20T15:00:00.000Z", claimedAt: null, status: "queued", firstDialAt: null };
+  const lateClaim = { ...unclaimed, claimedAt: "2026-09-20T15:10:00.000Z", status: "claimed", claimantId: 1 };
+  const summary = summarizeShotgunSla([unclaimed, lateClaim]);
+  assert.equal(summary.medianClaimSeconds, 420);
+  assert.equal(summary.averageClaimSeconds, 420); // 240 + real 600
+  assert.equal(summary.claimed, 1);
+  assert.equal(summary.unclaimed, 1);
+  assert.equal(summary.claimedWithoutDialEvidence, 1);
+  assert.equal(summary.dialedUnder60sPct, 0);
+  const clr = summarizeShotgunSlaByClr([lateClaim], [1]).get(1)!;
+  assert.equal(clr.averageClaimSeconds, 420);
+  assert.equal(clr.medianClaimSeconds, 420);
+  assert.equal(clr.claimed, 1);
+  assert.equal(clr.unclaimed, 1);
+  assert.equal(clr.dialedUnder60sPct, 0);
+});
+
+test("no claims or expired offers remain a dash, not an invented four-minute sample", () => {
+  const empty = summarizeShotgunSla([]);
+  assert.equal(empty.medianClaimSeconds, null);
+  assert.equal(empty.averageClaimSeconds, null);
+  assert.equal(summarizeShotgunSlaByClr([], []).size, 0);
+  const pending = { createdAt: "2026-09-20T15:00:00.000Z", claimedAt: null, status: "offered", firstDialAt: null, claimantId: null };
+  assert.equal(summarizeShotgunSlaByClr([pending], []).size, 0, "a still-pending offer is not a timed-out offer against a CLR");
+  const allUnclaimed = summarizeShotgunSla([pending, { ...pending, status: "queued" }]);
+  assert.equal(allUnclaimed.averageClaimSeconds, 240);
+  assert.equal(allUnclaimed.medianClaimSeconds, 240);
+  assert.equal(allUnclaimed.dialedUnder60sPct, null);
+});
+
+test("claim-time explanations disclose the four-minute scoring rule and do not imply a real claim", () => {
+  const page = read("client/src/pages/manager-dashboard.tsx");
+  const board = read("client/src/components/shotgun-sla-scoreboard.tsx");
+  assert.match(page, /4 minutes for each unclaimed\/timed-out offer/);
+  assert.match(page, /Actual claims over 4 minutes are not capped/);
+  assert.match(page, /\(r\.slaClaimed \?\? 0\) \+ \(r\.slaUnclaimed \?\? 0\) > 0/);
+  assert.match(board, /Unclaimed = 4 minutes/);
+  assert.doesNotMatch(board, /sub="among claimed"/);
 });

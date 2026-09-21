@@ -3,7 +3,9 @@
  *
  * Ethan 20 Sep 2026: unclaimed and claimed are DIFFERENT categories — never
  * blend them into one "% claimed under 30s" that hides still-open leads.
- * Among claimed: show BOTH median and average claim time, plus dial SLA.
+ * Claim-time statistics include unclaimed leads / expired CLR offers at four
+ * minutes each. Claimed leads retain their actual time, even above four minutes.
+ * Dial SLA remains among claimed only.
  *
  * Claim clock: lead created_at → claimed_at (first Shotgun confirm / reclaim).
  * Dial clock: claimed_at → first_dial_at when we have real dial evidence.
@@ -15,6 +17,7 @@
  */
 
 export const SHOTGUN_DIAL_SLA_MS = 60_000;
+export const SHOTGUN_UNCLAIMED_CLAIM_SECONDS = 4 * 60;
 
 export type ShotgunSlaLeadRow = {
   /** Lead entered Shotgun (or was created). */
@@ -40,7 +43,7 @@ export type ShotgunSlaSummary = {
   /** claimed / total, or null when total is 0. */
   claimedPct: number | null;
   unclaimedPct: number | null;
-  /** Among claimed only — seconds from created → claimed. */
+  /** Actual created → claimed seconds, plus 240 seconds per unclaimed lead. */
   medianClaimSeconds: number | null;
   averageClaimSeconds: number | null;
   /** Among claimed: share with dial evidence within 60s of claim. */
@@ -98,6 +101,7 @@ export function summarizeShotgunSla(rows: ShotgunSlaLeadRow[]): ShotgunSlaSummar
 
     if (!hasClaim) {
       unclaimed += 1;
+      claimSeconds.push(SHOTGUN_UNCLAIMED_CLAIM_SECONDS);
       continue;
     }
     if (row.claimantExcluded) {
@@ -159,6 +163,7 @@ export type ShotgunSlaClrSummary = {
   unclaimed: number;
   claimedPct: number | null;
   unclaimedPct: number | null;
+  /** Actual claim times plus 240 seconds per expired offer attributed to this CLR. */
   medianClaimSeconds: number | null;
   averageClaimSeconds: number | null;
   dialedUnder60sCount: number;
@@ -173,7 +178,8 @@ export type ShotgunSlaClrLeadRow = ShotgunSlaLeadRow & {
 /**
  * Per-CLR SLA from the same lead universe as the org scoreboard.
  * Claimed: attributed to the claimant. Unclaimed (expired offers): attributed
- * to each CLR whose offer timed out — never blended into one vanity rate.
+ * to each CLR whose offer timed out. Counts stay separate; each expired offer
+ * contributes four minutes to median/average claim time, never to dial SLA.
  */
 export function summarizeShotgunSlaByClr(
   leads: ShotgunSlaClrLeadRow[],
@@ -216,7 +222,9 @@ export function summarizeShotgunSlaByClr(
   for (const uid of expiredOfferUserIds) {
     const id = Number(uid);
     if (!id) continue;
-    bump(id).unclaimed += 1;
+    const b = bump(id);
+    b.unclaimed += 1;
+    b.claimSeconds.push(SHOTGUN_UNCLAIMED_CLAIM_SECONDS);
   }
 
   const out = new Map<number, ShotgunSlaClrSummary>();

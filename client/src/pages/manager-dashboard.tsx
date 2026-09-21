@@ -528,15 +528,15 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
         if (cp == null || up == null) return null;
         return `${cp}% / ${up}%`;
       } },
-    // Among claimed only: BOTH median and average claim time. Lower is better.
+    // Actual claims plus four minutes per timed-out offer; lower is better.
     { key: "slaClaimTime", label: "Claim time", get: r => r.slaMedianClaimSeconds ?? null, better: false,
       fmt: r => {
         if (r.slaMedianClaimSeconds == null && r.slaAverageClaimSeconds == null) return "—";
         return `${formatSlaSeconds(r.slaMedianClaimSeconds)} / ${formatSlaSeconds(r.slaAverageClaimSeconds)}`;
       },
-      title: "Among leads this CLR claimed in the range: median / average seconds from lead created to claim. Lower is better. Dash: they claimed none.",
-      cellTitle: r => (r.slaClaimed ?? 0) > 0
-        ? `Median ${formatSlaSeconds(r.slaMedianClaimSeconds)}, avg ${formatSlaSeconds(r.slaAverageClaimSeconds)} across ${r.slaClaimed} claim${r.slaClaimed === 1 ? "" : "s"}`
+      title: "Median / average claim time: actual time from lead created to claim, plus 4 minutes for each unclaimed/timed-out offer. Actual claims over 4 minutes are not capped. Lower is better. Dash: no claims or timed-out offers.",
+      cellTitle: r => (r.slaClaimed ?? 0) + (r.slaUnclaimed ?? 0) > 0
+        ? `Median ${formatSlaSeconds(r.slaMedianClaimSeconds)}, avg ${formatSlaSeconds(r.slaAverageClaimSeconds)}; ${r.slaClaimed ?? 0} claimed, ${r.slaUnclaimed ?? 0} timed-out offers counted at 4 minutes each`
         : undefined },
     // Not a second transfer count: where each one was PUT. Same shape as
     // Write-up above — a share, higher is better, a dash when there is nothing
