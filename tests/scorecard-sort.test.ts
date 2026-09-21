@@ -114,3 +114,15 @@ test("actual component handles empty rows and range changes without a hidden MTD
   assert.doesNotThrow(() => h.render([]));
   assert.deepEqual(displayedIds(h.render(rows)), [2, 1]);
 });
+
+test("Bonzo columns are last in both standard and MTD headers, cells and sort picker", () => {
+  for (const pace of [undefined, { daysElapsed: 2, daysInMonth: 20 }]) {
+    const view = componentHarness().render([{ ...row("A", 1), userId: 1, bonzoCalls: 31, bonzoContacts: 32, bonzoConversations: 33 }], pace);
+    const picker = find(view, n => n.type === "select");
+    assert.deepEqual(picker.children.slice(-3).map((n: any) => n.props.value), ["bonzoCalls", "bonzoContacts", "bonzoConversations"]);
+    const headers = find(view, n => n.type === "thead").children[0].children;
+    assert.deepEqual(headers.slice(-3).map((n: any) => n.props.key), ["bonzoCalls", "bonzoContacts", "bonzoConversations"]);
+    const cells = find(view, n => n.type === "tbody").children[0].children;
+    assert.deepEqual(cells.slice(-3).map((n: any) => n.children[0]), ["31", "32", "33"]);
+  }
+});

@@ -182,6 +182,7 @@ const help = {
 // the Reporting group moved here; the group itself is gone.
 const mainItems: NavItem[] = [
   { title: "Home",                  url: "/",             icon: LayoutDashboard, help: help.dashboard },
+  { title: "Dashboard",             url: "/team-summary", icon: BarChart2 },
   { title: "Your Call List",        url: "/assignments",  icon: CalendarCheck,   help: help.assignments },
   { title: "Input Results",         url: "/outcomes",     icon: ClipboardList,   help: help.callHistory },
   { title: "Upcoming Appointments", url: "/appointments", icon: PhoneForwarded,  badge: "appointments", help: help.appointments },
@@ -233,12 +234,8 @@ const advancedWorkflowItems: NavItem[] = [
   { title: "Shotgun",         url: "/shotgun",     icon: Zap },
 ];
 
-/** The two team dashboards, folded away with everything else you visit weekly. */
+/** The original detailed dashboard stays in Advanced Settings. */
 const advancedDashboardItems: NavItem[] = [
-  // The summary first: it is the one most people want, the week in plain
-  // words with no ranges to choose. The Advanced one is the old manager
-  // dashboard, unchanged and still open to everyone.
-  { title: "How we're doing",    url: "/team-summary",       icon: LayoutDashboard },
   { title: "Advanced Dashboard", url: "/advanced-dashboard", icon: BarChart2, help: help.dashboard },
 ];
 

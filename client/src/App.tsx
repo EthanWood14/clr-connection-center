@@ -163,7 +163,7 @@ const PAGE_TITLES: Record<string, string> = {
   // bookmarked and what older links point at, so it keeps working.
   "/team-dashboard": "Advanced Dashboard",
   "/advanced-dashboard": "Advanced Dashboard",
-  "/team-summary": "How the team is doing",
+  "/team-summary": "Manager Dashboard",
   "/time-off":       "Time Off",
   "/comp-requests":  "Comp Requests",
   "/time-clock":     "Time Clock",

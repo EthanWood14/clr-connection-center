@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +14,7 @@ import {
   CheckCircle2, AlertTriangle, ShieldCheck, Send, RefreshCw, TrendingUp,
   Download, Activity, MapPin, Target, Flame, ArrowDown, ArrowUp,
   Minus, AlertOctagon, Info, BarChart3, PieChart as PieIcon, Award, Users,
-  Clock, ArrowUpDown,
+  Clock, ArrowUpDown, MessageSquare,
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -29,6 +29,7 @@ import { formatTransferCount } from "@shared/transfer-credit";
 import { formatSlaSeconds } from "@shared/shotgun-sla";
 import { DEFAULT_SCORECARD_SORT, resolveScorecardSort, selectScorecardSort, sortScorecardRows, type ScorecardSort } from "@/lib/scorecard-sort";
 import { isClrTrendWorkday } from "@/lib/clr-trend-workday";
+import type { ManagerDailyMetrics } from "@shared/manager-daily-metrics";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -162,6 +163,7 @@ type RangeBlock = {
   };
 };
 type ManagerData = {
+  dailyMetrics?: ManagerDailyMetrics;
   generatedAt: string;
   /** "fast" = KPI/scorecard windows only; "full" = every byRange including all-time. */
   phase?: "fast" | "full";
@@ -246,9 +248,9 @@ function KpiTile({
       <CardContent className="p-3 sm:p-5">
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 min-w-0">
-            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-muted-foreground font-medium truncate">{label}</div>
+            <div className="text-[10px] sm:text-xs uppercase tracking-wider text-muted-foreground font-medium break-words">{label}</div>
             <div className="text-2xl sm:text-3xl font-bold tabular-nums leading-tight truncate" style={{ color }}>{value}</div>
-            {sub && <div className="text-xs text-muted-foreground truncate">{sub}</div>}
+            {sub && <div className="text-xs text-muted-foreground break-words">{sub}</div>}
             {delta && <div className="mt-1">{delta}</div>}
           </div>
           <div className="rounded-lg p-1.5 sm:p-2 flex-shrink-0" style={{ backgroundColor: `${color}15` }}>
@@ -465,6 +467,8 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
   // column whose minimum is a phantom 0 both paints the em dash the reddest
   // colour on the table — the exact verdict the null exists to avoid — and
   // stretches everybody else's spread against a floor nobody stands on.
+  const project = (r: any) =>
+    pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
   const cols: Array<{
     key: string; label: string; get: (r: any) => number | null; better: boolean;
     fmt: (r: any) => string; title?: string; cellTitle?: (r: any) => string | undefined;
@@ -472,6 +476,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     // things on different rows. Optional, and omitted everywhere it would be
     // decoration: see placementCellNote.
     cellNote?: (r: any) => string | null;
+    render?: (r: any) => ReactNode;
   }> = [
     { key: "calls",        label: "Calls",     get: r => r.calls ?? 0,             better: true,  fmt: r => String(r.calls ?? 0) },
     { key: "messages",     label: "Messages",  get: r => r.messages ?? 0,          better: true,  fmt: r => String(r.messages ?? 0) },
@@ -479,9 +484,6 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     { key: "contacts",     label: "Contacts",  get: r => r.callToolsContacts ?? 0, better: true,  fmt: r => String(r.callToolsContacts ?? 0), title: "Dialpad Call Tools contacts" },
     { key: "conversations", label: "Convos", get: r => r.callToolsConversations ?? 0, better: true, fmt: r => String(r.callToolsConversations ?? 0), title: "Dialpad Call Tools conversations" },
     { key: "activeTime", label: "Active", get: r => r.callToolsActiveSeconds ?? 0, better: true, fmt: r => `${Math.floor((r.callToolsActiveSeconds ?? 0) / 3600)}h ${Math.floor(((r.callToolsActiveSeconds ?? 0) % 3600) / 60)}m`, title: "Dialpad Call Tools active time" },
-    { key: "bonzoCalls", label: "Bonzo Calls", get: r => r.bonzoCalls ?? 0, better: true, fmt: r => String(r.bonzoCalls ?? 0), title: "Calls placed inside Bonzo (C3 extension)" },
-    { key: "bonzoContacts", label: "Bonzo Contacts", get: r => r.bonzoContacts ?? 0, better: true, fmt: r => String(r.bonzoContacts ?? 0), title: "Unique Bonzo prospects opened (C3 extension)" },
-    { key: "bonzoConversations", label: "Bonzo Convos", get: r => r.bonzoConversations ?? 0, better: true, fmt: r => String(r.bonzoConversations ?? 0), title: "Unique Bonzo conversations opened (C3 extension)" },
     // Transfer CREDIT — half a transfer each when a shotgun lead is published by
     // one CLR and closed by another — so this cell can legitimately read 4.5 and
     // must never be rounded to a whole. See shared/transfer-credit.ts.
@@ -561,13 +563,28 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
       fmt: r => r.placementScore == null ? "—" : `${r.placementScore}%`,
       title: "A weighted routing score, NOT the percentage sent to LOs marked priority at transfer time. Ordinary LO workload is reconstructed for the morning it was made, but priority flags and the active roster come from current settings, not a saved transfer-time snapshot. Changing those settings can change past scores. The lightest few receiving LOs score 100%, the busiest 0%, and the rest fall between. A currently prioritised desk with assistants scores 60–100% by assistant workload; a missing assistant scores 60%. Investment/2nd Home transfers must record Chris's Justin, Mateo or John: a matching assistant scores 60–100% by workload; a different assistant, or no assistant recorded at all, scores zero. Ordinary transfers are compared with the WHOLE floor, not a borrower-state licensing pool. Longer ranges use a fortnight PLUS the range, not a rolling fortnight, so scores can differ by selected range. Unresolved recipients can be counted at the floor average. Fewer than five readable transfers shows a dash. If the roster cannot resolve the investment assistants, those transfers are scored as ordinary placement instead and the cell notes routing rule off. Hover a cell for its breakdown.",
       cellTitle: placementNote, cellNote: placementCellNote },
+    ...(pace ? [{ key: "pace", label: "Pace", get: project, better: true,
+      fmt: (r: any) => project(r) == null ? "—" : String(project(r)),
+      title: "Projected month-end transfers. Sundays are not counted as worked days.",
+      render: (r: any) => {
+        const projected = project(r);
+        const tier = projected == null ? null : paceTier(projected);
+        return projected == null ? "—" : <span className="inline-flex items-center gap-2">
+          <span className="text-muted-foreground">{projected}</span>
+          {tier && <span className="rounded px-1.5 py-0.5 text-[11px] font-bold"
+            style={{ backgroundColor: tier.color, color: tier.text }}
+            title={`On pace for ${tier.label}+ transfers this month`}>{tier.label}</span>}
+        </span>;
+      },
+    }] : []),
+    // Keep the Bonzo-only fields at the far right, including in MTD with Pace.
+    { key: "bonzoCalls", label: "Bonzo Calls", get: r => r.bonzoCalls ?? 0, better: true, fmt: r => String(r.bonzoCalls ?? 0), title: "Calls placed inside Bonzo (C3 extension)" },
+    { key: "bonzoContacts", label: "Bonzo Contacts", get: r => r.bonzoContacts ?? 0, better: true, fmt: r => String(r.bonzoContacts ?? 0), title: "Unique Bonzo prospects opened (C3 extension)" },
+    { key: "bonzoConversations", label: "Bonzo Convos", get: r => r.bonzoConversations ?? 0, better: true, fmt: r => String(r.bonzoConversations ?? 0), title: "Unique Bonzo conversations opened (C3 extension)" },
   ];
-  const project = (r: any) =>
-    pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
   const sortColumns = [
     { key: "name", label: "CLR", get: (r: any) => r.name ?? null, better: false },
     ...cols,
-    ...(pace ? [{ key: "pace", label: "Pace", get: project, better: true }] : []),
   ];
   const activeSort = resolveScorecardSort(sort, sortColumns);
   const list = sortScorecardRows(rows, activeSort, sortColumns);
@@ -612,7 +629,6 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
               <th scope="col" className="text-left px-3 py-2 font-medium w-8" title="Position in the selected sort">#</th>
               <th scope="col" aria-sort={sortAria("name")} className="text-left px-3 py-2 font-medium">{sortHeader("name", "CLR")}</th>
               {cols.map(c => <th scope="col" key={c.key} aria-sort={sortAria(c.key)} title={c.title} className="text-center px-3 py-2 font-medium whitespace-nowrap">{sortHeader(c.key, c.label)}</th>)}
-              {pace && <th scope="col" aria-sort={sortAria("pace")} className="text-center px-3 py-2 font-medium whitespace-nowrap" title="Projected month-end transfers. Sundays are not counted as worked days.">{sortHeader("pace", "Pace")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -629,7 +645,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
                   const v = c.get(r);
                   // No value, no verdict: an unpainted cell in the table's own
                   // muted ink, not the bottom of a red-to-green ramp.
-                  const heat = v == null ? null : heatColor(v, ranges[ci].min, ranges[ci].max, c.better);
+                  const heat = v == null || c.key === "pace" ? null : heatColor(v, ranges[ci].min, ranges[ci].max, c.better);
                   return (
                     <td
                       key={c.key}
@@ -637,7 +653,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
                       className={"px-3 py-2 text-center tabular-nums font-semibold" + (heat ? "" : " text-muted-foreground")}
                       style={heat ? { backgroundColor: heat, color: "#1f2937" } : undefined}
                     >
-                      {c.fmt(r)}
+                      {c.render ? c.render(r) : c.fmt(r)}
                       {(() => {
                         const note = c.cellNote?.(r);
                         return note ? (
@@ -648,28 +664,6 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
                     </td>
                   );
                 })}
-                {pace && (() => {
-                  const projected = project(r);
-                  const tier = projected == null ? null : paceTier(projected);
-                  return (
-                    <td className="px-3 py-2 text-center tabular-nums font-semibold whitespace-nowrap">
-                      {projected == null ? "—" : (
-                        <span className="inline-flex items-center gap-2">
-                          <span className="text-muted-foreground">{projected}</span>
-                          {tier && (
-                            <span
-                              className="rounded px-1.5 py-0.5 text-[11px] font-bold"
-                              style={{ backgroundColor: tier.color, color: tier.text }}
-                              title={`On pace for ${tier.label}+ transfers this month`}
-                            >
-                              {tier.label}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </td>
-                  );
-                })()}
               </tr>
             ))}
           </tbody>
@@ -905,7 +899,8 @@ function SplitTable({ rows, helperName, loading, subject, testId }: {
   );
 }
 
-export default function ManagerDashboard() {
+export default function ManagerDashboard({ view = "advanced" }: { view?: "advanced" | "overview" } = {}) {
+  const overview = view === "overview";
   const isMobile = useIsMobile();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -963,6 +958,7 @@ export default function ManagerDashboard() {
   const refetch = () => {
     void fastQ.refetch();
     void fullQ.refetch();
+    void loSplit.refetch();
   };
 
   const loSplit = useQuery<LoSplitResp>({
@@ -975,7 +971,7 @@ export default function ManagerDashboard() {
     queryKey: [`/api/meta-conversion?days=${metaDays}`],
     queryFn: () => apiRequest("GET", `/api/meta-conversion?days=${metaDays}`),
     refetchInterval: 60_000,
-    enabled: fastQ.isSuccess,
+    enabled: fastQ.isSuccess && !overview,
   });
 
   /**
@@ -1042,6 +1038,13 @@ export default function ManagerDashboard() {
     }));
   }, [data?.byRange, rangeMix]);
 
+  if (!data && fastQ.isError) {
+    return <div className="p-6"><Card><CardContent className="p-6 space-y-3" role="alert">
+      <h1 className="text-xl font-semibold">Dashboard couldn't load</h1>
+      <p className="text-sm text-muted-foreground">Your numbers are unavailable right now. Try loading them again.</p>
+      <Button onClick={refetch} disabled={isFetching}>Try again</Button>
+    </CardContent></Card></div>;
+  }
   if (isLoading || !data) {
     return (
       <div className="p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 min-w-0 max-w-full">
@@ -1056,6 +1059,7 @@ export default function ManagerDashboard() {
   }
 
   const { stats, callActivity, clrCards, eod, pipeline, activityFeed, alerts, byRange } = data;
+  const daily = data.dailyMetrics;
 
   // KPI summary numbers (pulled from week range trend so they match KPI tiles)
   const trend30 = byRange["30d"]?.trend ?? [];
@@ -1219,33 +1223,32 @@ export default function ManagerDashboard() {
   };
 
   return (
-    <div className="p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 min-w-0 max-w-full">
+    <div className="p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 min-w-0 max-w-full" data-testid={overview ? "manager-overview" : "advanced-dashboard"}>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider"
                   style={{ backgroundColor: NAVY, color: GOLD }}>
-              {/* It says Advanced, not Manager: this page has been open to the
-                  whole team for a while, and a CLR reading "Manager view" on a
-                  page they were sent to reasonably assumes they are somewhere
-                  they should not be. The summary at /team-summary is the other
-                  door onto the same numbers (owner 9/9/26). */}
-              Advanced view
+              {overview ? "The team, at a glance" : "Advanced view"}
             </span>
           </div>
           <h1 className="text-2xl md:text-3xl font-bold mt-1 brand-text">
-            Welcome back, {user?.name?.split(" ")[0] ?? "there"}
+            {overview ? "Manager Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] ?? "there"}`}
           </h1>
           <p className="text-sm text-muted-foreground">
             Team overview · {format(parseISO(data.today), "EEEE, MMMM d, yyyy")}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {overview && <Link href="/advanced-dashboard"><Button variant="outline" size="sm">
+            <BarChart3 className="w-4 h-4 mr-2" />Advanced Dashboard
+          </Button></Link>}
+          {!overview &&
           <Button variant="outline" size="sm" onClick={handleExportCsv}>
             <Download className="w-4 h-4 mr-2" />
             Export CSV
-          </Button>
+          </Button>}
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
             <RefreshCw className={`w-4 h-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
             Refresh
@@ -1253,6 +1256,27 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
+      {fullQ.isError && <div role="alert" className="rounded-lg border border-amber-400/40 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+        Some dashboard data couldn't refresh. Showing the last available numbers; use Refresh to try again.
+      </div>}
+
+      {overview && <section aria-label="Today's activity" data-testid="manager-daily-metrics">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h2 className="font-semibold brand-text">Today so far</h2>
+          <span className="text-xs text-muted-foreground">Separate feeds · not added together</span>
+        </div>
+        {daily ? <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-3">
+          <KpiTile label="CallTools calls" value={daily.callToolsCalls.toLocaleString()} icon={PhoneCall} color={isDark ? GOLD : NAVY}
+            sub={daily.callToolsSource === "provider" ? "Dialer total · synced feed" : data.phase === "fast" ? "Local feed · total loading" : "Local feed only · partial"} />
+          <KpiTile label="Transfers" value={formatTransferCount(daily.transfers)} icon={ArrowUpRight} color={GREEN} sub="Recorded in C3" />
+          <KpiTile label="Appointments" value={daily.appointments.toLocaleString()} icon={Calendar} color={BLUE} sub="Recorded in C3" />
+          <KpiTile label="CT conversations" value={daily.callToolsConversations.toLocaleString()} icon={Activity} color={AMBER} sub="Synced CallTools feed" />
+          <KpiTile label="Dialpad calls" value={daily.dialpadCalls.toLocaleString()} icon={PhoneCall} color={PURPLE} sub="Synced, linked agents" />
+          <KpiTile label="Dialpad messages" value={daily.dialpadMessages.toLocaleString()} icon={MessageSquare} color={CYAN} sub="Sent texts · linked agents" />
+        </div> : <p className="rounded-lg border p-4 text-sm text-muted-foreground">Daily totals aren't available yet. Refresh to load the latest dashboard.</p>}
+      </section>}
+
+      {!overview && <>
       {/* Alerts banner */}
       <AlertsBanner alerts={alerts} />
 
@@ -1311,6 +1335,8 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
+      </>}
+
       {/* Weekly Scorecard — running last-7-days per-CLR snapshot (heatmap) */}
       <div>
         <SectionTitle
@@ -1329,7 +1355,9 @@ export default function ManagerDashboard() {
             ))}
           </div>
         )}
-        <TransferScorecard
+        {!byRange[scorecardRange] ? <div className="rounded-lg border p-6 text-sm text-muted-foreground" role="status">
+          {fullQ.isError ? "Scorecard unavailable for this range. Use Refresh to try again." : "Loading this scorecard range…"}
+        </div> : <TransferScorecard
           pace={scorecardRange === "mtd" ? (() => {
             const w = byRange.mtd?.window;
             if (!w?.endDate) return undefined;
@@ -1346,17 +1374,18 @@ export default function ManagerDashboard() {
           })() : undefined}
           rows={byRange[scorecardRange]?.leaderboard ?? []}
           rangeLabel={byRange[scorecardRange]?.window?.label ?? SCORECARD_OPTIONS.find(option => option.key === scorecardRange)?.label ?? "selected"}
-        />
+        />}
         <p className="text-[11px] text-muted-foreground mt-2">
           {scorecardRange === "today"
             ? "Today only, and still filling in as the day goes on."
             : scorecardRange === "mtd"
               ? "From the 1st of the month to today, so it grows as the month goes on. Pace projects the whole month at the rate so far — treat it lightly in the first few days."
               : "Includes today and the selected number of previous calendar days."}
-          {" "}Each cell is graded against the column — green is strongest, red weakest. Fell-through is inverted (fewer is better). C&gt;T% = transfers per call.
+          {" "}Each cell is graded against the column — green is strongest, red weakest. Lower claim time is better. Bonzo activity is at the far right.
         </p>
       </div>
 
+      {!overview && <>
       {/* Trend chart with range selector */}
       <Card>
         <CardHeader className="pb-2">
@@ -1647,6 +1676,8 @@ export default function ManagerDashboard() {
         </Card>
       </div>
 
+      </>}
+
       {/* Per-CLR trend comparison — one line per selected CLR */}
       <div>
         <SectionTitle
@@ -1692,7 +1723,7 @@ export default function ManagerDashboard() {
             {/* CLR selection pills */}
             <div className="flex flex-wrap gap-1.5 mb-3">
               {clrTrendTotals.length === 0 ? (
-                <span className="text-xs text-muted-foreground">No CLRs available</span>
+                <span className="text-xs text-muted-foreground">{byRange[rangeClrTrend] ? "No CLRs available" : ""}</span>
               ) : (
                 <>
                   {clrTrendTotals.map((t: any) => {
@@ -1730,7 +1761,9 @@ export default function ManagerDashboard() {
               )}
             </div>
 
-            {clrTrendChartData.length === 0 || effectiveSelected.length === 0 ? (
+            {!byRange[rangeClrTrend] ? <div className="h-64 flex items-center justify-center text-muted-foreground text-sm" role="status">
+              {fullQ.isError ? "CLR trend unavailable. Use Refresh to try again." : "Loading CLR trend…"}
+            </div> : clrTrendChartData.length === 0 || effectiveSelected.length === 0 ? (
               <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
                 {effectiveSelected.length === 0 ? "Select a CLR to display" : "No data in this range"}
               </div>
@@ -1803,6 +1836,7 @@ export default function ManagerDashboard() {
         </Card>
       </div>
 
+      {!overview && <>
       {/* CLR conversion comparison — stacked %s by CLR */}
       <div>
         <SectionTitle
@@ -2075,14 +2109,16 @@ export default function ManagerDashboard() {
         </Card>
       </div>
 
+      </>}
+
       {/* Top LOs + Top States (each with own range) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={overview ? "space-y-6" : "grid grid-cols-1 lg:grid-cols-2 gap-6"}>
         <div>
           <SectionTitle icon={Award}
             action={
               <div className="flex items-center gap-2">
                 <RangePills options={RANGE_OPTIONS} value={rangeTopLos} onChange={setRangeTopLos} ariaLabel="Top LOs range" />
-                <Link href="/lo-stats"><Button variant="ghost" size="sm" className="px-0 h-auto brand-text underline-offset-4 hover:underline">LO stats →</Button></Link>
+                <Link href="/lo-performance"><Button variant="ghost" size="sm" className="px-0 h-auto brand-text underline-offset-4 hover:underline">LO stats →</Button></Link>
               </div>
             }
           >
@@ -2090,7 +2126,9 @@ export default function ManagerDashboard() {
           </SectionTitle>
           <Card>
             <CardContent className="p-4">
-              {(topLosBlock?.topLos ?? []).length === 0 ? (
+              {!topLosBlock ? <div className="py-6 text-center text-sm text-muted-foreground" role="status">
+                {fullQ.isError ? "LO rankings unavailable. Use Refresh to try again." : "Loading LO rankings…"}
+              </div> : (topLosBlock?.topLos ?? []).length === 0 ? (
                 <div className="text-center text-muted-foreground text-sm py-6">No transfers in this range</div>
               ) : (
                 <ul className="space-y-2.5">
@@ -2121,7 +2159,7 @@ export default function ManagerDashboard() {
         {/* Meta lead -> transfer conversion, split by which Meta pipe fed it.
             Hidden entirely when LeadVault isn't configured — an unconfigured
             install should show nothing, not an empty chart. */}
-        {metaConv.data?.configured ? (
+        {!overview && metaConv.data?.configured ? (
           <div>
             <SectionTitle icon={Target}
               action={
@@ -2206,14 +2244,18 @@ export default function ManagerDashboard() {
           <SectionTitle icon={Users}
             action={<RangePills options={LO_SPLIT_OPTIONS} value={loSplitWindow} onChange={setLoSplitWindow} ariaLabel="Transfers by LO range" />}
           >
-            Transfers by loan officer — {LO_SPLIT_OPTIONS.find((o) => o.key === loSplitWindow)?.label}
+            Transfers by loan officer / LOA — {LO_SPLIT_OPTIONS.find((o) => o.key === loSplitWindow)?.label}
           </SectionTitle>
           {loSplit.data?.helperNotice && (
             <p className="mb-2 text-xs text-amber-700 dark:text-amber-400" data-testid="lo-split-helper-notice">
               {loSplit.data.helperNotice}
             </p>
           )}
-          <div className="grid gap-5 lg:grid-cols-2">
+          {loSplit.isError && <p role="alert" className="mb-3 text-sm text-amber-700 dark:text-amber-400">
+            The LO/LOA breakdown couldn't refresh. {loSplit.data ? "Showing its last available totals." : "No totals are available yet."}
+            <Button variant="link" size="sm" onClick={() => void loSplit.refetch()} disabled={loSplit.isFetching}>Try again</Button>
+          </p>}
+          {(!loSplit.isError || loSplit.data) && <div className="grid gap-5 lg:grid-cols-2">
             <Card>
               <CardContent className="p-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Loan officers</p>
@@ -2238,7 +2280,7 @@ export default function ManagerDashboard() {
                 />
               </CardContent>
             </Card>
-          </div>
+          </div>}
           <p className="mt-3 text-xs text-muted-foreground">
             Counted as whole transfers to whoever received them, split by who logged the call. A
             shotgun lead shared between two CLRs is still one borrower. The two tables overlap on
@@ -2248,7 +2290,7 @@ export default function ManagerDashboard() {
         </div>
 
         {/* Top states by NPA — render only if there's any data, otherwise hidden */}
-        {(statesBlock?.topStates?.length ?? 0) > 0 ? (
+        {!overview && (statesBlock?.topStates?.length ?? 0) > 0 ? (
           <div>
             <SectionTitle icon={MapPin}
               action={<RangePills options={RANGE_OPTIONS} value={rangeStates} onChange={setRangeStates} ariaLabel="States range" />}
@@ -2292,6 +2334,7 @@ export default function ManagerDashboard() {
         ) : null}
       </div>
 
+      {!overview && <>
       {/* Pipeline */}
       <div>
         <SectionTitle icon={ArrowUpRight}
@@ -2446,6 +2489,8 @@ export default function ManagerDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      </>}
 
       <div className="text-xs text-muted-foreground text-center pt-2">
         Updated {format(new Date(data.generatedAt), "h:mm a")} · auto-refresh every 60s

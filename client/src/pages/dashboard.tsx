@@ -26,7 +26,7 @@ import { Link } from "wouter";
 import { formatDistanceToNow, parseISO, isToday, isPast, format } from "date-fns";
 import { HelpIcon, OnboardingChecklist, SampleDataBanner, useSampleDataMode, SAMPLE_STATS } from "@/components/onboarding";
 import { copyToClipboard } from "@/lib/utils";
-const ManagerDashboard = lazy(() => import("./manager-dashboard"));
+const ManagerDashboard = lazy(() => import("./team-summary"));
 import { TournamentBoard } from "./tournament";
 import { TOURNAMENT_ENABLED } from "@shared/tournament";
 import { businessTodayClient } from "@/lib/business-day";
@@ -1013,10 +1013,10 @@ function MorningCheckInCard() {
 
 export default function Dashboard() {
   const { user: _authUser } = useAuth();
-  // Admins see the manager view at Home; CLRs (and other roles) see the
+  // Managers/admins see the team overview at Home; CLRs (and other roles) see the
   // existing personal dashboard. Hooks must not run conditionally, so each
   // branch renders its own self-contained component below.
-  if (_authUser?.role === "admin") {
+  if (_authUser?.role === "admin" || _authUser?.isManager) {
     // Lazy so CLRs never pay the ManagerDashboard chunk parse cost on Home.
     return (
       <Suspense fallback={

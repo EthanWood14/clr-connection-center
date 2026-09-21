@@ -10,6 +10,7 @@ import { BONZO_CALL_EVENT_BATCH_MAX, BONZO_CALL_KINDS, BONZO_CALL_PATH_SOURCE, B
 import { BONZO_VIEW_EVENT_BATCH_MAX, BONZO_VIEW_TYPES, type BonzoViewType } from "@shared/bonzo-views";
 import type { BonzoCallEventInput } from "./storage";
 import { notesBetween } from "@shared/release-notes";
+import { managerDailyMetrics } from "../shared/manager-daily-metrics";
 import { isCompDrawPerson } from "@shared/comp-draws";
 import { orgClientFacingName, orgInternalLabel } from "@shared/org-names";
 import {
@@ -15705,6 +15706,14 @@ ${note}` : daysLine;
       generatedAt: new Date().toISOString(),
       phase: isFast ? "fast" : "full",
       today: todayStr,
+      dailyMetrics: managerDailyMetrics({
+        callToolsTotal: leadvaultCallTools.get(todayStr),
+        localCallTools: callActivity.today,
+        transfers: todayStats.transfers,
+        appointments: todayStats.appointments,
+        dialpadCalls: byRange.today.trend.find((day: any) => day.date === todayStr)?.dialpadCalls ?? 0,
+        dialpadTextsByUser: storageExtra.getDialpadTextsByUser(Number(currentOrgId() ?? 1), todayStr, todayStr),
+      }),
       ranges: { week, month, last30 },
       stats: {
         today: { ...todayStats, totalCallsToday: Number((todayStats as any).totalCallsToday ?? 0) + callActivity.today.calls },

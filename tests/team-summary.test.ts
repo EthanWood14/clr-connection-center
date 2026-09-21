@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
+import * as dates from "date-fns";
+import { managerDailyMetrics } from "../shared/manager-daily-metrics";
+import { dropWeekendRows, isWeekday } from "../client/src/lib/weekday-date";
+import { isClrTrendWorkday } from "../client/src/lib/clr-trend-workday";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(root, rel), "utf8");
@@ -11,94 +16,162 @@ const app = read("client/src/App.tsx");
 const sidebar = read("client/src/components/app-sidebar.tsx");
 const advanced = read("client/src/pages/manager-dashboard.tsx");
 const routes = read("server/routes.ts");
+const home = read("client/src/pages/dashboard.tsx");
 
-test("the summary is reachable, and so is the advanced view it replaces at the top", () => {
+test("new dashboard replaces the summary and manager Home; old dashboard/bookmarks remain", () => {
   assert.match(app, /<Route path="\/team-summary" component=\{TeamSummary\} \/>/);
   assert.match(app, /<Route path="\/advanced-dashboard" component=\{ManagerDashboard\} \/>/);
-  // The old path stays: it is what people have bookmarked, and what every
-  // link written before today points at.
   assert.match(app, /<Route path="\/team-dashboard" component=\{ManagerDashboard\} \/>/);
-  assert.match(sidebar, /url: "\/team-summary"/);
+  assert.match(page, /<ManagerDashboard view="overview" \/>/);
+  assert.match(home, /import\("\.\/team-summary"\)/);
+  assert.match(home, /_authUser\?\.role === "admin" \|\| _authUser\?\.isManager/);
+  assert.match(home, /return <ClrDashboard \/>/);
+  assert.match(sidebar, /title: "Dashboard",\s+url: "\/team-summary"/);
   assert.match(sidebar, /title: "Advanced Dashboard",\s+url: "\/advanced-dashboard"/);
-  assert.ok(!/title: "Team Dashboard"/.test(sidebar), "the old name must not survive in the nav");
+  assert.doesNotMatch(sidebar, /title: "How we're doing"/);
 });
 
-test("both pages read the same endpoint, so they cannot disagree", () => {
-  // A second source would drift, and then neither number would be trusted.
-  assert.match(page, /queryKey: \["\/api\/manager-dashboard"\]/);
+test("shared dashboard keeps the existing data and internal-only security boundary", () => {
   assert.match(advanced, /queryKey: \["\/api\/manager-dashboard"\]/);
-  // That endpoint is already open to the internal team and closed to portal
-  // accounts, so the summary adds no new access.
+  assert.doesNotMatch(page, /useQuery|fetch\(/, "wrapper cannot introduce a competing data source");
   const fn = routes.slice(routes.indexOf('app.get("/api/manager-dashboard"'), routes.indexOf('app.get("/api/manager-dashboard"') + 1_200);
   assert.match(fn, /const internal = !me\?\.portal \|\| me\.portal === "c3";/);
   assert.match(fn, /return res\.status\(403\)/);
+  assert.match(routes, /dialpadTextsByUser: storageExtra.getDialpadTextsByUser\(Number\(currentOrgId\(\) \?\? 1\), todayStr, todayStr\)/);
+  assert.match(routes, /callToolsTotal: leadvaultCallTools.get\(todayStr\)/);
 });
 
-test("the summary states a change in counts, never a percentage", () => {
-  // "Up 12.5%" on a base of 8 is one transfer. Reading a percentage as a
-  // number is the exact mistake this page exists to stop somebody making.
-  const change = page.slice(page.indexOf("function change("), page.indexOf("function invert("));
-  assert.match(change, /more \$\{word\} than last week/);
-  assert.match(change, /fewer \$\{word\} than last week/);
-  assert.match(change, /Same as last week/);
-  assert.ok(!/%/.test(change), "no percentages in the change sentence");
-  // Singular and plural both read as English.
-  assert.match(change, /Math\.abs\(diff\) === 1 \? unit : `\$\{unit\}s`/);
+const input = {
+  callToolsTotal: 8123, localCallTools: { calls: 201, conversations: 91 },
+  transfers: 17, appointments: 6, dialpadCalls: 405,
+  dialpadTextsByUser: new Map([[1, 30], [2, 12], [99, 8]]),
+};
+test("today's six totals remain source-separated and include mapped inactive staff SMS", () => {
+  assert.deepEqual(managerDailyMetrics(input), {
+    callToolsCalls: 8123, callToolsSource: "provider", transfers: 17,
+    appointments: 6, callToolsConversations: 91, dialpadCalls: 405, dialpadMessages: 50,
+  });
+});
+test("zero provider total is authoritative; missing provider total is explicitly partial", () => {
+  assert.equal(managerDailyMetrics({ ...input, callToolsTotal: 0 }).callToolsCalls, 0);
+  const local = managerDailyMetrics({ ...input, callToolsTotal: undefined });
+  assert.equal(local.callToolsCalls, 201);
+  assert.equal(local.callToolsSource, "local");
+  assert.equal(managerDailyMetrics({ ...input, callToolsTotal: NaN }).callToolsSource, "local");
+  assert.equal(managerDailyMetrics({ ...input, transfers: 1.5 }).transfers, 1.5);
+  assert.equal(managerDailyMetrics({ ...input, dialpadTextsByUser: new Map() }).dialpadMessages, 0);
 });
 
-test("fewer fell-through leads is good news, and is coloured that way", () => {
-  assert.match(page, /function invert\(/);
-  assert.match(page, /tone: invert\(c\.tone\)/, "the fell-through card must invert the tone");
-});
+// Run the real page with inert UI elements and synthetic query data. This tests
+// which sections actually render, not whether unused strings survive in source.
+function harness(options: { fast?: any; full?: any; fastError?: boolean; fullError?: boolean; splitError?: boolean } = {}) {
+  const queries: any[] = [];
+  const refreshes: string[] = [];
+  const React = {
+    createElement: (type: any, props: any, ...children: any[]) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
+    Fragment: "Fragment",
+    useState: (initial: any) => [typeof initial === "function" ? initial() : initial, () => {}],
+    useEffect: () => {}, useMemo: (fn: any) => fn(),
+  };
+  const defaults = fixture();
+  const fast = Object.hasOwn(options, "fast") ? options.fast : defaults;
+  const full = Object.hasOwn(options, "full") ? options.full : defaults;
+  const ui = new Proxy({}, { get: (_, key) => String(key) });
+  const modules: Record<string, any> = {
+    react: React,
+    "@tanstack/react-query": {
+      useQuery: (config: any) => {
+        queries.push(config);
+        const key = config.queryKey[0];
+        const data = key.includes("phase=fast") ? fast
+          : key === "/api/manager-dashboard" ? full
+          : key === "/api/lo-transfer-split" ? options.splitError ? undefined : { helperName: "Helper", windows: {}, loaWindows: {} } : undefined;
+        const isError = key.includes("phase=fast") ? options.fastError
+          : key === "/api/manager-dashboard" ? options.fullError
+          : key === "/api/lo-transfer-split" ? options.splitError : false;
+        return { data, isSuccess: !!data, isError: !!isError, isLoading: !data && !isError,
+          refetch: () => { refreshes.push(key); } };
+      },
+      useMutation: () => ({ mutate: () => {} }),
+    },
+    "@/lib/auth": { useAuth: () => ({ user: { name: "Manager" } }) },
+    "@/hooks/use-mobile": { useIsMobile: () => false },
+    "@/hooks/use-toast": { useToast: () => ({ toast: () => {} }) },
+    "@/lib/weekday-date": { dropWeekendRows, isWeekday },
+    "@/lib/clr-trend-workday": { isClrTrendWorkday },
+    "@shared/transfer-credit": { formatTransferCount: String },
+    "date-fns": dates,
+  };
+  const compiled = ts.transpileModule(advanced, { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React,
+  } }).outputText;
+  const exports: any = {};
+  new Function("require", "exports", "React", compiled)((id: string) => modules[id] ?? ui, exports, React);
+  return { render: (view?: string) => exports.default({ view }), queries, refreshes };
+}
+function fixture() {
+  const block = { window: { label: "Last 30 days" }, trend: [], leaderboard: [], outcomeBreakdown: [], topLos: [], fellThroughReasons: [] };
+  const activity = { calls: 201, contacts: 110, conversations: 91, activeSeconds: 3600 };
+  return {
+    generatedAt: "2026-09-21T18:00:00Z", today: "2026-09-21", phase: "full", dailyMetrics: managerDailyMetrics(input),
+    stats: { today: {}, week: {}, month: {}, priorWeek: {}, priorMonth: {} },
+    callActivity: { today: activity, week: activity, month: activity, priorWeek: activity, priorMonth: activity },
+    clrCards: [], activityFeed: [], alerts: [],
+    pipeline: { transfers7d: [], overdueAppointments: [], overdueNmls: [] },
+    eod: { totals: {}, rows: [], checklistGaps: [], submitted: 0, total: 0, missing: 0 },
+    byRange: { today: block, "30d": block, week: block },
+  };
+}
+function all(node: any): any[] { return node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(all)] : []; }
+function textOf(node: any): string { return node == null || node === false ? "" : typeof node === "object" ? (node.children ?? []).map(textOf).join(" ") : String(node); }
 
-test("every number on the page says what it means", () => {
-  // The point of the page. A tile reading "Contacts 412" is the dashboard we
-  // already have.
-  for (const phrase of [
-    "onto the phone with a loan officer",
-    "Every number we dialled this week",
-    "the ones where somebody answered",
-    "we set a time for the loan officer to call them",
-    "What the words mean",
-  ]) {
-    assert.ok(page.includes(phrase), `missing plain-language line: ${phrase}`);
+test("overview renders six daily tiles and exactly the requested shared reporting sections", () => {
+  const h = harness();
+  const node = h.render("overview");
+  const elements = all(node);
+  const labels = elements.filter(n => n.type?.name === "KpiTile").map(n => [n.props.label, n.props.value]);
+  assert.deepEqual(labels, [
+    ["CallTools calls", "8,123"], ["Transfers", "17"], ["Appointments", "6"],
+    ["CT conversations", "91"], ["Dialpad calls", "405"], ["Dialpad messages", "50"],
+  ]);
+  const headings = elements.filter(n => n.type?.name === "SectionTitle").map(textOf);
+  assert.equal(headings.length, 4);
+  for (const name of ["Transfer Scorecard", "CLR trend comparison", "Top LOs by transfers", "Transfers by loan officer / LOA"]) {
+    assert.ok(headings.some(s => s.includes(name)), name);
   }
-  // And it points at the detail rather than pretending to replace it.
-  assert.match(page, /Open the Advanced Dashboard/);
+  const types = elements.map(n => n.type?.name);
+  assert.equal(types.filter(n => n === "TransferScorecard").length, 1);
+  assert.deepEqual(elements.filter(n => n.type?.name === "SplitTable").map(n => n.props.testId), ["lo-split-table", "loa-split-table"]);
+  assert.ok(!textOf(node).includes("Team trend —"));
+  assert.ok(!textOf(node).includes("EOD Reports"));
+  assert.ok(elements.some(n => n.props.href === "/advanced-dashboard"));
+  assert.equal(h.queries.find(q => q.queryKey[0].startsWith("/api/meta-conversion")).enabled, false);
+  elements.find(n => n.type === "Button" && textOf(n).trim() === "Refresh").props.onClick();
+  assert.deepEqual(h.refreshes, ["/api/manager-dashboard?phase=fast", "/api/manager-dashboard", "/api/lo-transfer-split"]);
 });
-
-test("the advanced page no longer calls itself the manager's", () => {
-  // It has been open to the whole team for a while. A CLR who follows a link
-  // to a page badged "Manager view" reasonably assumes they are trespassing.
-  assert.match(advanced, /Advanced view/);
-  assert.ok(!/>\s*Manager view\s*</.test(advanced));
+test("default advanced view retains the original sections and its Meta feed", () => {
+  const h = harness();
+  const node = h.render();
+  assert.equal(node.props["data-testid"], "advanced-dashboard");
+  assert.ok(textOf(node).includes("Team trend —"));
+  assert.ok(textOf(node).includes("Pipeline —"));
+  assert.equal(h.queries.find(q => q.queryKey[0].startsWith("/api/meta-conversion")).enabled, true);
+  assert.equal(all(node).some(n => n.props["data-testid"] === "manager-daily-metrics"), false);
 });
-
-test("two charts, and only two", () => {
-  // Owner, 9 Sep 2026: the summary was too simple; it should have two charts
-  // and still be simple. Nine is the Advanced page's number and the reason
-  // people bounce off it.
-  assert.match(page, /data-testid="summary-chart-daily"/);
-  assert.match(page, /data-testid="summary-chart-week-over-week"/);
-  const charts = page.match(/data-testid="summary-chart-[a-z-]+"/g) ?? [];
-  assert.equal(charts.length, 2, "a third chart needs a decision, not a commit");
-});
-
-test("the charts are bars, and weekends are dropped rather than drawn as zero", () => {
-  // A line implies a quantity between the points and there is no such thing as
-  // Tuesday-and-a-half. And a fortnight of alternating spikes and troughs
-  // looks like a problem when it is only the calendar.
-  assert.match(page, /dropWeekendRows\(data\.byRange\?\.\["30d"\]\?\.trend \?\? \[\], "date"\)/);
-  assert.ok(!/<LineChart/.test(page), "bars, not lines");
-  assert.match(page, /<BarChart/);
-  // Counts on the axis, never a percentage: this page states differences in
-  // whole things.
-  assert.match(page, /allowDecimals=\{false\}/);
-});
-
-test("a chart with nothing to show does not draw an empty box", () => {
-  assert.match(page, /if \(rows\.length < 2\) return null;/);
-  assert.match(page, /if \(rows\.every\(\(r\) => r\["This week"\] === 0 && r\["Last week"\] === 0\)\) return null;/);
+test("fast load, failures and missing breakdowns never masquerade as zero history", () => {
+  const fast = fixture();
+  fast.phase = "fast";
+  delete (fast.byRange as any)["30d"];
+  const loading = textOf(harness({ fast, full: undefined }).render("overview"));
+  assert.ok(loading.includes("Loading CLR trend…"));
+  assert.ok(loading.includes("Loading LO rankings…"));
+  assert.ok(!loading.includes("No transfers in this range"));
+  const failed = textOf(harness({ fast: undefined, full: undefined, fastError: true }).render("overview"));
+  assert.ok(failed.includes("Dashboard couldn't load"));
+  const partial = textOf(harness({ fast, full: undefined, fullError: true, splitError: true }).render("overview"));
+  assert.ok(partial.includes("CLR trend unavailable"));
+  assert.ok(partial.includes("LO rankings unavailable"));
+  assert.ok(partial.includes("The LO/LOA breakdown couldn't refresh"));
 });
 
 test("the pages you do not touch every call live behind the Advanced fold", () => {
@@ -106,7 +179,7 @@ test("the pages you do not touch every call live behind the Advanced fold", () =
   // The script is read until it is known, Shotgun answers itself (the offer is
   // a full-screen alert wherever you are, and the write-up prompt follows
   // you), and the EOD report is once at the end of the day.
-  for (const moved of ["/call-script", "/eod-report", "/shotgun", "/team-summary", "/advanced-dashboard", "/app-review"]) {
+  for (const moved of ["/call-script", "/eod-report", "/shotgun", "/advanced-dashboard", "/app-review"]) {
     const main = sidebar.slice(sidebar.indexOf("const mainItems"), sidebar.indexOf("const personalItems"));
     assert.ok(!main.includes(moved), `${moved} must not be in Main`);
   }

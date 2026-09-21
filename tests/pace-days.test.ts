@@ -130,7 +130,7 @@ test("the screen says Sundays are not counted", () => {
   const legend = dash.slice(legendStart, legendStart + 900);
   assert.match(legend, /Sundays not counted/i, "the tier legend spells the rule out");
   // And the Pace column header carries it too, at zero cost in table density.
-  assert.match(dash, /title="Projected month-end transfers\. Sundays are not counted as worked days\."/);
+  assert.match(dash, /title: "Projected month-end transfers\. Sundays are not counted as worked days\."/);
 });
 
 // ---------------------------------------------------------------------------

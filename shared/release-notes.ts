@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.122.35", headline: "A focused manager dashboard for the day.", items: [
+    { text: "Managers' Home and the former How we're doing page now show today's CallTools calls, transfers, appointments, CT conversations, Dialpad calls and sent messages, followed by the Transfer Scorecard, CLR trend, Top LOs and separate LO/LOA transfer tables. The original page remains in Advanced Dashboard.", audience: "manager" },
+    { text: "Find Bonzo activity at the far right of the Transfer Scorecard, including MTD. Sorting, claim-time scoring and existing trend calculations are unchanged.", audience: "manager" },
+  ] },
   { version: "4.122.34", headline: "Unclaimed leads now count in claim-time averages.", items: [
     { text: "Each timed-out offer counts as 4 minutes in a CLR's median and average claim time on the Transfer Scorecard. The Shotgun speed board also counts never-claimed leads at 4 minutes each. Actual claim times stay unchanged, even above 4 minutes; claimed and unclaimed counts stay separate.", audience: "manager" },
   ] },
