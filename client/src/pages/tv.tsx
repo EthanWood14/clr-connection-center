@@ -61,6 +61,15 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
   const [tipSeed, setTipSeed] = useState(() => Math.floor(Date.now() / TIP_MS));
   useEffect(() => { const id = setInterval(() => setTipSeed((s) => s + 1), TIP_MS); return () => clearInterval(id); }, []);
 
+  // Idle / hidden tabs must not keep hitting the feed — a background laptop
+  // should not burn egress while nobody is watching the wall.
+  const [tabVisible, setTabVisible] = useState(() => typeof document === "undefined" || !document.hidden);
+  useEffect(() => {
+    const onVis = () => setTabVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
   const { data, isError } = useQuery<Feed>({
     queryKey: ["/api/tv", publicPath ? "public" : token, "feed", tipSeed],
     queryFn: async () => {
@@ -71,7 +80,8 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
       return r.json();
     },
     enabled: publicPath || !!token,
-    refetchInterval: POLL_MS,
+    refetchInterval: tabVisible ? POLL_MS : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
     retry: 2,
   });
@@ -269,7 +279,8 @@ export default function TvBoard({ publicPath = false }: { publicPath?: boolean }
       return res.json();
     },
     enabled: publicPath || !!token,
-    refetchInterval: PAGES_POLL_MS,
+    refetchInterval: tabVisible ? PAGES_POLL_MS : false,
+    refetchIntervalInBackground: false,
     staleTime: PAGES_POLL_MS,
   });
 

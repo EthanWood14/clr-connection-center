@@ -164,7 +164,7 @@ test("upload persists one private sidecar wrap; color saves preserve it and dele
   assert.equal(ownImage.status, 200);
   assert.equal(ownImage.headers.get("content-type"), "image/png");
   assert.equal(ownImage.headers.get("x-content-type-options"), "nosniff");
-  assert.match(ownImage.headers.get("cache-control") ?? "", /no-store/);
+  assert.match(ownImage.headers.get("cache-control") ?? "", /public.*max-age=31536000.*immutable|immutable.*max-age=31536000/);
   assert.deepEqual(Buffer.from(await ownImage.arrayBuffer()), png());
   assert.equal((h.db.prepare("SELECT COUNT(*) AS n FROM lapfiles.tv_car_wrap_blobs").get() as any).n, 1);
   const schema = h.db.prepare("SELECT sql FROM sqlite_master WHERE name='tv_car_wraps'").get() as any;

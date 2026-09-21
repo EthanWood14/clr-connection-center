@@ -118,7 +118,7 @@ test("both cards secure their lead before opening Dialpad, and the new-lead card
   assert.match(card, /data-testid="assigned-lo-lead-claim"/);
   assert.match(card, /Goes to Shotgun in/);
   assert.match(card, /loNewLeadSecondsLeft\(escalateAt, clockNow\)/);
-  assert.match(card, /refetchIntervalInBackground: true/);
+  assert.match(card, /refetchIntervalInBackground: false/);
   const offer = read("client/src/components/shotgun-offer-alert.tsx");
   assert.match(offer, /data-testid="shotgun-offer-call"/);
   assert.match(offer, /const prepareDialpadCall = useDialpadCall\(\)/);
@@ -128,7 +128,7 @@ test("both cards secure their lead before opening Dialpad, and the new-lead card
   assert.match(offer, /open-phone/);
   assert.match(offer, /dialpad\.cancel\(\)/);
   assert.doesNotMatch(offer, /tel:|window\.location/);
-  assert.match(offer, /refetchIntervalInBackground: true/);
+  assert.match(offer, /refetchIntervalInBackground: false/);
 });
 
 function claimFixture() {

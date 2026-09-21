@@ -88,7 +88,8 @@ export default function Chat({ portal = "c3" }: ChatProps) {
 
   const { data, isLoading, isError, refetch } = useQuery<{ messages: any[] }>({
     queryKey: chatQueryKey,
-    refetchInterval: 3000, // poll every 3s
+    refetchInterval: 3000, // poll every 3s while this tab is visible
+    refetchIntervalInBackground: false,
   });
 
   const messages = data?.messages ?? [];

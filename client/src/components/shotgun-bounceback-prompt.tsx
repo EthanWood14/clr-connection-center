@@ -23,7 +23,7 @@ export function ShotgunBouncebackPrompt() {
     queryKey: ["/api/shotgun"],
     enabled: eligible && shellReady,
     refetchInterval: (query) => ((query.state.data as ShotgunPayload | undefined)?.bouncebacks?.length ? 3_000 : 15_000),
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
     staleTime: 0,
   });
   const target = useMemo(() => {
