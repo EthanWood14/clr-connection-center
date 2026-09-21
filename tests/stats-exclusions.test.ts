@@ -14,6 +14,11 @@ import {
 } from "../shared/stats-exclusions";
 import { TOURNAMENT_EXCLUDED_FROM, isTournamentExcluded } from "../shared/tournament";
 import { isDayRaceExcluded } from "../shared/tv-day-race";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("Jordon name match: Jordon/Jordan Chang yes, Jordan Rivera no", () => {
   assert.equal(matchesStatsExcludedName("Jordon Chang"), true);
@@ -95,4 +100,14 @@ test("SQL fragments mention Jordon from-date and time_off / Rosas", () => {
   const both = transferCreditExclusionSql();
   assert.match(both, /jordon/);
   assert.match(both, /time_off_requests/);
+});
+
+test("storage credit helpers default to exclusion and allow personal opt-out", () => {
+  // Source contract: team boards keep transferCreditExclusionSql; personal
+  // surfaces pass applyStatsExclusions: false (proven in transfer-credit.test.ts).
+  const storage = readFileSync(join(ROOT, "server/storage.ts"), "utf8");
+  assert.match(storage, /applyStatsExclusions\?: boolean/);
+  assert.match(storage, /if \(f\.applyStatsExclusions !== false\)[\s\S]*?transferCreditExclusionSql/);
+  // Default path still pushes the exclusion (team aggregates unchanged).
+  assert.match(storage, /wheres\.push\(transferCreditExclusionSql\("tc\.date", "tc\.user_id", "tc\.org_id"\)\)/);
 });
