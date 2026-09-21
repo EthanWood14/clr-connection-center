@@ -222,7 +222,7 @@ export function isHalfDayExcusedFromLate(db: any, orgId: number, userId: number,
 export function paceHalfDayContext(db: any, orgId: number, from: string, today: string): {
   halfDays: Set<string>;
   fullOffDays: Set<string>;
-  /** Credit exclusions: from-date + half + full off + Jeremy (boards drop credit). */
+  /** Credit exclusions: from-date + full off + Jeremy (boards drop credit). Half keeps credit. */
   excludedDays: Array<{ userId: number; date: string }>;
   /**
    * Denominator exclusions only: from-date + Jeremy. Pass THIS to weeklyPace
@@ -278,16 +278,14 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
   // Full day off wins over standing/approved half on the same person-day.
   for (const key of fullOffDays) halfDays.delete(key);
 
-  // Credit list: Jeremy one-offs + Jordon from-date + EVERY half day + EVERY
-  // full off — score/pace boards drop these person-days from transfer CREDIT
-  // (Ethan 18 Sep 2026). Half days still keep weight 0.5 on availability for
-  // goal proration / transfers-per-worked-day (do NOT force half → 0 here).
+  // Credit list: Jeremy one-offs + Jordon from-date + EVERY full off.
+  // Half days KEEP transfer credit (4.122.36 — standing Rosas was blanked) and
+  // still weigh 0.5 on availability for goal proration / transfers-per-day.
   const paceOneOffs = buildPaceExclusions(users).map(({ userId, date }) => ({ userId, date }));
   const excludedDays = buildCreditExcludedPersonDays({
     users,
     from,
     to: today,
-    halfDays,
     fullOffDays,
     extra: paceOneOffs,
   });

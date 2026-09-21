@@ -353,7 +353,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
       // See shared/transfer-credit.ts.
       const paceCtx = paceHalfDayContext(getRawSqlite(), user.orgId, start, end);
       const creditExcludedKeys = creditExcludedDayKeys(paceCtx.excludedDays);
-      // Per-person credit with date-scoped exclusions (Jordon / half / full off).
+      // Per-person credit with date-scoped exclusions (Jordon / full off).
       {
         const creditById = new Map<number, number>();
         for (const o of outcomes as any[]) {

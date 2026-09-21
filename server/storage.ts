@@ -2393,7 +2393,7 @@ function transferCreditQuery(f: TransferCreditFilters, select: string, groupBy: 
   // user_id IS NULL happens on a transfer nobody is named on. It credits
   // nobody, exactly as the old COUNT ... GROUP BY assistant_id skipped it.
   wheres.push(`tc.user_id IS NOT NULL`);
-  // Jordon from-date + approved half/full time off + standing Rosas half days.
+  // Jordon from-date + approved FULL time off (half days keep credit — 4.122.36).
   // Personal surfaces opt out via applyStatsExclusions: false.
   if (f.applyStatsExclusions !== false) {
     wheres.push(transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id"));

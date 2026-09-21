@@ -213,6 +213,10 @@ test("seeded half days, full offs, and standing Rosas wire through sqlite", (t) 
   assert.equal(dayAvailabilityWeight(4, "2026-09-18", ctx.availability), 0.5, "Rosas standing half stays 0.5");
   assert.ok(!ctx.availability.excludedDays?.has("2:2026-09-17"));
   assert.ok(!ctx.availability.excludedDays?.has("4:2026-09-18"));
+  // Credit list (excludedDays): half days KEEP credit; full off still drops.
+  assert.ok(!ctx.excludedDays.some((e) => e.userId === 2 && e.date === "2026-09-17"), "Jackie half keeps team credit");
+  assert.ok(!ctx.excludedDays.some((e) => e.userId === 4 && e.date === "2026-09-18"), "Rosas standing keeps team credit");
+  assert.ok(ctx.excludedDays.some((e) => e.userId === 6 && e.date === "2026-09-17"), "full PTO still drops credit");
   // denomExcludedDays must match availability exclusions (no half keys).
   assert.ok(ctx.denomExcludedDays.some((e) => e.userId === 7 && e.date === "2026-09-16"));
   assert.ok(ctx.denomExcludedDays.some((e) => e.userId === 1 && e.date === "2026-09-17"));

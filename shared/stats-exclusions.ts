@@ -3,16 +3,17 @@
  * TV transfers / pace / day-race, scorecards, lifetime & workday rates,
  * Ask C3, agent-stats, tournament, digests.
  *
- * Ethan via LoanWick — three rules, one module:
+ * Ethan via LoanWick — two credit rules, one module:
  *  1. Jordon Chang — no credit 2026-09-16 through 2026-09-20 PT inclusive
  *     (Jordan Chang spelling included; demo LO "Jordan Rivera" is not matched).
  *     Pre-9/16 and from 9/21 onward credit him normally. Do NOT flip
  *     exclude_from_stats.
  *  2. Approved FULL day off — no credit that calendar date.
- *  3. Approved HALF day AND standing half-day rules (Rosas) — also no credit
- *     that calendar date on the boards above (same as full PTO for credit).
- *     A 0.5 day-portion weight may still apply to display-only availability /
- *     goal proration elsewhere; it must not keep half-day credit on the boards.
+ *
+ * Half days (approved leave day_portion=half AND standing Rosas weekdays) keep
+ * transfer CREDIT on the boards; they only weigh 0.5 in rate denominators /
+ * goal proration (shared/half-day.ts). Wiping credit on half blanked standing
+ * half-day CLRs (Rosas) permanently — fixed 4.122.36.
  *
  * Elleine stays on her existing always-off patterns — do not break those.
  */
@@ -128,12 +129,15 @@ export function parsePersonDayKey(key: string): { userId: number; date: string }
 
 /**
  * Person-days whose transfer CREDIT must be dropped on score/pace boards:
- * Jordon from–to window + every half-day key + every full-off key + extras (Jeremy).
+ * Jordon from–to window + every full-off key + extras (Jeremy).
+ * Half-day keys are NOT credit-excluded (denom 0.5 only) — see 4.122.36.
+ * `halfDays` is accepted but ignored so callers need not change overnight.
  */
 export function buildCreditExcludedPersonDays(input: {
   users: ReadonlyArray<{ id: number; name?: string | null }>;
   from: string;
   to: string;
+  /** Ignored for credit — half days keep transfers (4.122.36). */
   halfDays?: ReadonlySet<string> | null;
   fullOffDays?: ReadonlySet<string> | null;
   extra?: ReadonlyArray<{ userId: number; date: string }> | null;
@@ -156,10 +160,7 @@ export function buildCreditExcludedPersonDays(input: {
     if (start > endCap) continue;
     for (const date of eachIsoDateInclusive(start, endCap)) add(r.userId, date);
   }
-  for (const key of input.halfDays ?? []) {
-    const p = parsePersonDayKey(key);
-    if (p) add(p.userId, p.date);
-  }
+  void input.halfDays; // half days keep credit; weight handled in half-day.ts
   for (const key of input.fullOffDays ?? []) {
     const p = parsePersonDayKey(key);
     if (p) add(p.userId, p.date);
@@ -221,9 +222,9 @@ export function jordonCreditExclusionSql(
 }
 
 /**
- * SQL AND-fragment: drop credit on approved half OR full time-off days, and on
- * standing half-day roster matches (Rosas) Mon–Fri. Requires `time_off_requests`
- * + `users`.
+ * SQL AND-fragment: drop credit on approved FULL time-off days only.
+ * Half days (day_portion=half) and standing Rosas weekdays KEEP credit —
+ * they only weigh 0.5 in denominators (4.122.36). Requires `time_off_requests`.
  */
 export function timeOffCreditExclusionSql(
   dateCol: string = "tc.date",
@@ -236,15 +237,10 @@ export function timeOffCreditExclusionSql(
       SELECT 1 FROM time_off_requests r
        WHERE r.user_id = ${userIdCol}
          AND r.status = 'approved'
+         AND COALESCE(r.day_portion, 'full') != 'half'
          AND r.start_date <= ${dateCol}
          AND r.end_date >= ${dateCol}
          ${orgMatch}
-    )
-    OR (
-      CAST(strftime('%w', ${dateCol}) AS INTEGER) BETWEEN 1 AND 5
-      AND ${userIdCol} IN (
-        SELECT id FROM users WHERE lower(COALESCE(name, '')) LIKE '%rosas%'
-      )
     )
   )`;
 }
