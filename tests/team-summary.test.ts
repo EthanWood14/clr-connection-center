@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import Database from "better-sqlite3";
 import * as dates from "date-fns";
 import { managerDailyMetrics } from "../shared/manager-daily-metrics";
 import { dropWeekendRows, isWeekday } from "../client/src/lib/weekday-date";
@@ -17,6 +18,59 @@ const sidebar = read("client/src/components/app-sidebar.tsx");
 const advanced = read("client/src/pages/manager-dashboard.tsx");
 const routes = read("server/routes.ts");
 const home = read("client/src/pages/dashboard.tsx");
+
+const dashboardRoute = routes.slice(routes.indexOf('app.get("/api/manager-dashboard"'), routes.indexOf('    res.json(payload);', routes.indexOf('app.get("/api/manager-dashboard"')));
+function reportClause(name: string, orgId: number, excludedIds = new Set<number>()) {
+  const expression = dashboardRoute.match(new RegExp(`const ${name} = (.*);`))![1];
+  return new Function("reportOrgId", "excludedIds", `return ${expression}`)(orgId, excludedIds);
+}
+function reportQuery(name: string, orgId: number, excludedIds = new Set<number>()) {
+  const template = dashboardRoute.match(new RegExp(`const ${name} = sqlite.prepare\\(\u0060([\\s\\S]*?)\u0060\\)`))![1];
+  return new Function("exClause", "exClauseO", "exClauseTc", "return `" + template + "`")(
+    reportClause("exClause", orgId, excludedIds), reportClause("exClauseO", orgId, excludedIds), reportClause("exClauseTc", orgId, excludedIds),
+  );
+}
+
+test("dashboard raw reporting is org-scoped even with an empty exclusion list", () => {
+  assert.match(dashboardRoute, /Number\.isSafeInteger\(reportOrgId\)/);
+  assert.match(dashboardRoute, /currentOrgId\(\) !== reportOrgId/);
+  assert.match(dashboardRoute, /const orgKey = String\(reportOrgId\)/);
+  for (const [name, alias] of [["exClause", ""], ["exClauseO", "o."], ["exClauseTc", "tc."]]) {
+    assert.equal(reportClause(name, 2), ` AND ${alias}org_id = 2`);
+    assert.ok(reportClause(name, 2, new Set([5])).includes("NOT IN (5)"));
+  }
+  const rollup = routes.slice(routes.indexOf("async function leadvaultCallToolsByDay"), routes.indexOf('app.get("/api/outbound-calls"'));
+  assert.ok(rollup.indexOf("if (currentOrgId() !== 1) return out") < rollup.indexOf("leadvaultReportingToken()"), "global WCL feed must not reach demo/other orgs");
+});
+
+test("actual dashboard SQL cannot mix demo and real rankings, activity or pipeline records", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec(`
+      CREATE TABLE users (id INTEGER, org_id INTEGER, name TEXT);
+      CREATE TABLE loan_officers (id INTEGER, org_id INTEGER, full_name TEXT);
+      CREATE TABLE lead_outcomes (id INTEGER, org_id INTEGER, assistant_id INTEGER, lo_id INTEGER,
+        date TEXT, outcome_type TEXT, borrower_name TEXT, notes TEXT, transfer_type TEXT, follow_up_date TEXT, created_at TEXT);
+      INSERT INTO users VALUES (1,1,'Live CLR'), (2,2,'Demo CLR');
+      INSERT INTO loan_officers VALUES (11,1,'Live LO'), (22,2,'Demo LO');
+      INSERT INTO lead_outcomes VALUES
+        (1,1,1,11,'2026-09-21','transfer','Live borrower','Private',NULL,NULL,NULL),
+        (2,2,2,22,'2026-09-21','transfer','Demo borrower','Sample',NULL,NULL,NULL),
+        (3,1,1,11,'2026-09-21','appointment','Live appointment','Private',NULL,'2026-09-20',NULL),
+        (4,2,2,22,'2026-09-21','appointment','Demo appointment','Sample',NULL,'2026-09-20',NULL),
+        (5,2,1,11,'2026-09-21','transfer','Broken reference','Sample',NULL,NULL,NULL);
+    `);
+    assert.deepEqual(db.prepare(reportQuery("topLos", 2)).all("2026-09-01", "2026-09-21"), [{ id: 22, name: "Demo LO", transfers: 1 }]);
+    assert.deepEqual(db.prepare(reportQuery("topLos", 1)).all("2026-09-01", "2026-09-21"), [{ id: 11, name: "Live LO", transfers: 1 }]);
+    assert.deepEqual(db.prepare(reportQuery("topLos", 2, new Set([2]))).all("2026-09-01", "2026-09-21"), []);
+    for (const name of ["todayTransfers", "overdueAppointments", "activityFeed"]) {
+      const rows = db.prepare(reportQuery(name, 2)).all(...(name === "activityFeed" ? [2] : [2, "2026-09-21"])) as any[];
+      assert.ok(rows.length > 0);
+      assert.ok(rows.every(r => !String(r.borrower_name).startsWith("Live")), name);
+      assert.ok(rows.every(r => r.clr_name !== "Live CLR" && r.lo_name !== "Live LO"), "cross-org references must not expose names");
+    }
+  } finally { db.close(); }
+});
 
 test("new dashboard replaces the summary and manager Home; old dashboard/bookmarks remain", () => {
   assert.match(app, /<Route path="\/team-summary" component=\{TeamSummary\} \/>/);

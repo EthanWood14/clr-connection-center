@@ -19,7 +19,7 @@ export function managerDailyMetrics(input: {
     dialpadCalls: count(input.dialpadCalls),
     // Include everyone mapped in today's feed, not just the current scorecard
     // roster. The storage helper already scopes the org/date and deduplicates SMS.
-    dialpadMessages: [...input.dialpadTextsByUser.values()].reduce((total, n) => total + count(n), 0),
+    dialpadMessages: Array.from(input.dialpadTextsByUser.values()).reduce((total, n) => total + count(n), 0),
   };
 }
 

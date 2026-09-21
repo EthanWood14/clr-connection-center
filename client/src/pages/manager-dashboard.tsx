@@ -899,7 +899,7 @@ function SplitTable({ rows, helperName, loading, subject, testId }: {
   );
 }
 
-export default function ManagerDashboard({ view = "advanced" }: { view?: "advanced" | "overview" } = {}) {
+export default function ManagerDashboard({ view = "advanced" }: { view?: "advanced" | "overview"; params?: unknown } = {}) {
   const overview = view === "overview";
   const isMobile = useIsMobile();
   const { user } = useAuth();
@@ -2253,7 +2253,7 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
           )}
           {loSplit.isError && <p role="alert" className="mb-3 text-sm text-amber-700 dark:text-amber-400">
             The LO/LOA breakdown couldn't refresh. {loSplit.data ? "Showing its last available totals." : "No totals are available yet."}
-            <Button variant="link" size="sm" onClick={() => void loSplit.refetch()} disabled={loSplit.isFetching}>Try again</Button>
+            <Button variant="ghost" size="sm" className="underline" onClick={() => void loSplit.refetch()} disabled={loSplit.isFetching}>Try again</Button>
           </p>}
           {(!loSplit.isError || loSplit.data) && <div className="grid gap-5 lg:grid-cols-2">
             <Card>

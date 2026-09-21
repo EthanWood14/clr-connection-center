@@ -14430,7 +14430,11 @@ ${note}` : daysLine;
     // then loads phase=full (default) after paint; Placed shows "—" until then.
     const phaseRaw = String(req.query.phase ?? "full").toLowerCase();
     const isFast = phaseRaw === "fast" || phaseRaw === "light";
-    const orgKey = String(sess?.orgId ?? currentOrgId() ?? 1);
+    const reportOrgId = Number(sess?.orgId ?? currentOrgId());
+    if (!Number.isSafeInteger(reportOrgId) || reportOrgId <= 0 || currentOrgId() !== reportOrgId) {
+      return res.status(403).json({ error: "Organization context required." });
+    }
+    const orgKey = String(reportOrgId);
     if (!isFast) {
       const hit = dashboardFullCache.get(orgKey);
       if (hit && Date.now() - hit.at < DASHBOARD_FULL_CACHE_TTL_MS) {
@@ -14479,14 +14483,15 @@ ${note}` : daysLine;
       clrRoleMatches(u) && !excludedIds.has(u.id)
     );
     const trainingByUser = clrTrainingByUser(Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1);
-    // SQL fragment appended to raw team COUNT/aggregate queries.
-    const exClause = excludedIds.size ? ` AND assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
-    const exClauseO = excludedIds.size ? ` AND o.assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
+    // Raw SQLite reads do not inherit storage's org scope. Always constrain the
+    // authenticated org, including when there are no excluded CLRs.
+    const exClause = ` AND org_id = ${reportOrgId}` + (excludedIds.size ? ` AND assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "");
+    const exClauseO = ` AND o.org_id = ${reportOrgId}` + (excludedIds.size ? ` AND o.assistant_id NOT IN (${Array.from(excludedIds).join(",")})` : "");
     // The same exclusion said in the credit expansion's own column name. A
     // per-person transfer figure on this page is CREDIT — half a transfer each
     // to the CLR who published a shotgun lead and the one who claimed it — and
     // the expansion names its person `user_id`, not `assistant_id`.
-    const exClauseTc = excludedIds.size ? ` AND tc.user_id NOT IN (${Array.from(excludedIds).join(",")})` : "";
+    const exClauseTc = ` AND tc.org_id = ${reportOrgId}` + (excludedIds.size ? ` AND tc.user_id NOT IN (${Array.from(excludedIds).join(",")})` : "");
     const todayReports = (storageExtra.getEodReportsByRange(todayStr, todayStr) as any[]);
     const reportByUser = new Map<number, any>();
     for (const r of todayReports) {
@@ -14562,11 +14567,11 @@ ${note}` : daysLine;
              o.assistant_id, o.lo_id,
              u.name AS clr_name, lo.full_name AS lo_name
       FROM lead_outcomes o
-      LEFT JOIN users u ON u.id = o.assistant_id
-      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
-      WHERE o.date = ? AND o.outcome_type = 'transfer'
+      LEFT JOIN users u ON u.id = o.assistant_id AND u.org_id = o.org_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id AND lo.org_id = o.org_id
+      WHERE o.org_id = ? AND o.date = ? AND o.outcome_type = 'transfer'
       ORDER BY o.id DESC
-    `).all(todayStr) as any[];
+    `).all(reportOrgId, todayStr) as any[];
 
     // Overdue appointments (follow_up_date < today, type=appointment, status not done)
     const overdueAppointments = sqlite.prepare(`
@@ -14574,14 +14579,14 @@ ${note}` : daysLine;
              o.assistant_id, o.lo_id,
              u.name AS clr_name, lo.full_name AS lo_name
       FROM lead_outcomes o
-      LEFT JOIN users u ON u.id = o.assistant_id
-      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
-      WHERE o.outcome_type = 'appointment'
+      LEFT JOIN users u ON u.id = o.assistant_id AND u.org_id = o.org_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id AND lo.org_id = o.org_id
+      WHERE o.org_id = ? AND o.outcome_type = 'appointment'
         AND o.follow_up_date IS NOT NULL
         AND o.follow_up_date < ?
       ORDER BY o.follow_up_date ASC
       LIMIT 25
-    `).all(todayStr) as any[];
+    `).all(reportOrgId, todayStr) as any[];
 
     // NMLS overdue checks across the team
     let overdueNmls: any[] = [];
@@ -14728,11 +14733,12 @@ ${note}` : daysLine;
       SELECT o.id, o.date, o.outcome_type, o.borrower_name, o.notes,
              o.created_at, u.name AS clr_name, lo.full_name AS lo_name
       FROM lead_outcomes o
-      LEFT JOIN users u ON u.id = o.assistant_id
-      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+      LEFT JOIN users u ON u.id = o.assistant_id AND u.org_id = o.org_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id AND lo.org_id = o.org_id
+      WHERE o.org_id = ?
       ORDER BY o.id DESC
       LIMIT 25
-    `).all() as any[];
+    `).all(reportOrgId) as any[];
 
     // ── Pipeline: last 7 days of transfers (frontend slices to 1d/3d/7d) ──
     const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
@@ -14742,8 +14748,8 @@ ${note}` : daysLine;
              o.assistant_id, o.lo_id,
              u.name AS clr_name, lo.full_name AS lo_name
       FROM lead_outcomes o
-      LEFT JOIN users u ON u.id = o.assistant_id
-      LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+      LEFT JOIN users u ON u.id = o.assistant_id AND u.org_id = o.org_id
+      LEFT JOIN loan_officers lo ON lo.id = o.lo_id AND lo.org_id = o.org_id
       WHERE o.date >= ? AND o.date <= ? AND o.outcome_type = 'transfer'${exClauseO}
       ORDER BY o.date DESC, o.id DESC
     `).all(sevenDaysAgoStr, todayStr) as any[];
@@ -14821,7 +14827,7 @@ ${note}` : daysLine;
       const writeUpByDate = new Map<string, number | null>();
       try {
         const wuLoaLos = new Set<number>(
-          (sqlite.prepare(`SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`).all() as any[])
+          (sqlite.prepare(`SELECT DISTINCT a.lo_id FROM loan_officer_assistants a JOIN loan_officers lo ON lo.id=a.lo_id WHERE a.active=1 AND lo.org_id=?`).all(reportOrgId) as any[])
             .map((r: any) => Number(r.lo_id)),
         );
         const byDay = new Map<string, CompletenessRow[]>();
@@ -14907,7 +14913,7 @@ ${note}` : daysLine;
       const topLos = sqlite.prepare(`
         SELECT lo.id, lo.full_name AS name, COUNT(*) AS transfers
         FROM lead_outcomes o
-        LEFT JOIN loan_officers lo ON lo.id = o.lo_id
+        LEFT JOIN loan_officers lo ON lo.id = o.lo_id AND lo.org_id = o.org_id
         WHERE o.date >= ? AND o.date <= ?
           AND o.outcome_type = 'transfer'
           AND lo.id IS NOT NULL${exClauseO}
@@ -15022,7 +15028,7 @@ ${note}` : daysLine;
       const writeUpByUser = new Map<number, number | null>();
       try {
         const lbLoaLos = new Set<number>(
-          (sqlite.prepare(`SELECT DISTINCT lo_id FROM loan_officer_assistants WHERE active=1`).all() as any[])
+          (sqlite.prepare(`SELECT DISTINCT a.lo_id FROM loan_officer_assistants a JOIN loan_officers lo ON lo.id=a.lo_id WHERE a.active=1 AND lo.org_id=?`).all(reportOrgId) as any[])
             .map((r: any) => Number(r.lo_id)),
         );
         const rowsByUser = new Map<number, CompletenessRow[]>();
@@ -15343,9 +15349,8 @@ ${note}` : daysLine;
       // Days each CLR left any trace, for the transfers-per-worked-day column.
       //
       // eod_reports has NO org_id column — filtering on it made prepare()
-      // throw, which took the WHOLE manager dashboard down (4.68.1, live for
-      // about an hour on 8 Sep 2026). It is single-org anyway, so there is
-      // nothing to filter by; the seven tables that DO carry org_id still do.
+      // throw on older installations. Scope EOD via its owning user; the
+      // seven tables that carry org_id are filtered directly.
       //
       // Wrapped as well: this column is a nicety, and no nicety should be able
       // to blank the dashboard. If the query ever fails again the page loses
@@ -15367,6 +15372,7 @@ ${note}` : daysLine;
             UNION SELECT user_id, date FROM morning_checkins WHERE org_id=?
             UNION SELECT user_id, date(clock_in) FROM time_clock_entries WHERE org_id=?
             UNION SELECT assistant_id, report_date FROM eod_reports WHERE
+              assistant_id IN (SELECT id FROM users WHERE org_id=${reportOrgId}) AND
               (calls_made>0 OR messages_sent>0 OR additional_conversations>0 OR calltools_conversations>0
                OR calltools_active_seconds>0 OR dialpad_calls>0 OR transfers>0 OR appointments>0)
           ) WHERE d BETWEEN ? AND ?
@@ -20747,6 +20753,9 @@ ${note}` : daysLine;
 
   async function leadvaultCallToolsByDay(days: number): Promise<Map<string, number>> {
     const out = new Map<string, number>();
+    // This installation-wide integration/cache belongs to WCL (org 1).
+    // Other orgs must use their own scoped local feed, never WCL's totals.
+    if (currentOrgId() !== 1) return out;
     const token = leadvaultReportingToken();
     if (!token) return out;
     const window = [7, 30, 90].includes(days) ? days : 90;
