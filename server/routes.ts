@@ -145,7 +145,7 @@ import type { ShotgunSlaClrSummary } from "../shared/shotgun-sla";
 import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/weekly-pace";
 import {
   availableWeekdayPortions, ensureHalfDaySchema, ensureSeededHalfDays,
-  isHalfDayExcusedFromLate, paceHalfDayContext, parseDayPortionBody,
+  isHalfDayExcusedFromLate, paceHalfDayContext, parseDayPortionBody, parseLeaveKindBody, dayPortionForLeaveKind, normalizeLeaveKind, LEAVE_KIND_LABELS,
   prorateWeeklyGoal, sumAvailabilityPortions, sumWorkedAvailabilityPortions,
   weeksElapsedFromPortions,
 } from "./half-day";
@@ -10283,6 +10283,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // CLRs submit requests; managers/admins approve or deny. Scoped per org.
   const isYmd = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
   function mapTimeOff(r: any, nameById: Map<number, string>) {
+    const leaveKind = normalizeLeaveKind(r.leave_kind ?? (String(r.day_portion ?? '').toLowerCase() === 'half' ? 'half' : 'pto'));
     const dayPortion = (String(r.day_portion ?? "full").toLowerCase() === "half") ? "half" : "full";
     return {
       id: r.id,
@@ -10294,6 +10295,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       status: r.status,
       dayPortion,
       halfDay: dayPortion === "half",
+      leaveKind,
       reviewedBy: r.reviewed_by ?? null,
       reviewerName: r.reviewed_by ? (nameById.get(r.reviewed_by) ?? null) : null,
       reviewerNote: r.reviewer_note ?? "",
@@ -10387,7 +10389,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const body = req.body ?? {};
     const startDate = body.startDate;
     const endDate = body.endDate;
-    const reason = typeof body.reason === "string" ? body.reason.slice(0, 1000) : "";
+    let reason = typeof body.reason === "string" ? body.reason.slice(0, 1000) : "";
     if (!isYmd(startDate) || !isYmd(endDate)) return res.status(400).json({ error: "Start and end dates are required (YYYY-MM-DD)." });
     if (endDate < startDate) return res.status(400).json({ error: "End date cannot be before the start date." });
     // Managers/admins may submit on behalf of another CLR; everyone else only for themselves.
@@ -10409,14 +10411,17 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
     const nowIso = new Date().toISOString();
     const token = managerScheduled ? null : crypto.randomBytes(24).toString("hex");
-    const dayPortion = parseDayPortionBody(body);
+    const leaveKindRaw = parseLeaveKindBody(body);
+    const leaveKind = leaveKindRaw ?? (parseDayPortionBody(body) === "half" ? "half" : "pto");
+    const dayPortion = leaveKindRaw ? dayPortionForLeaveKind(leaveKind) : parseDayPortionBody(body);
     const isHalf = dayPortion === "half";
+    if (!reason.trim()) reason = LEAVE_KIND_LABELS[leaveKind];
     try {
       const db = storageExtra.getRawSqlite();
       ensureHalfDaySchema(db);
       const status = managerScheduled ? "approved" : "pending";
-      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, reviewed_by, reviewed_at, created_at, updated_at, day_portion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(orgId, requesterId, startDate, endDate, reason, status, token, managerScheduled ? sessUserId : null, managerScheduled ? nowIso : null, nowIso, nowIso, dayPortion);
+      const info = db.prepare("INSERT INTO time_off_requests (org_id, user_id, start_date, end_date, reason, status, approval_token, reviewed_by, reviewed_at, created_at, updated_at, day_portion, leave_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(orgId, requesterId, startDate, endDate, reason, status, token, managerScheduled ? sessUserId : null, managerScheduled ? nowIso : null, nowIso, nowIso, dayPortion, leaveKind);
       const nameById = timeOffNameMap();
       const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(info.lastInsertRowid) as any;
       const requester = (storage.getUsers() as any[]).find(u => u.id === requesterId);
@@ -10511,29 +10516,67 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
+  
   app.patch("/api/time-off/:id", requireAuth, async (req: any, res) => {
     if (!requireManagerOrAdmin(req, res)) return;
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;
     const reviewerId = Number(sess?.userId);
     const id = parseInt(req.params.id, 10);
-    const status = req.body?.status;
-    const reviewerNote = typeof req.body?.reviewerNote === "string" ? req.body.reviewerNote.slice(0, 1000) : "";
-    if (status !== "approved" && status !== "denied") return res.status(400).json({ error: "status must be 'approved' or 'denied'." });
+    const body = req.body ?? {};
     const nowIso = new Date().toISOString();
     try {
       const db = storageExtra.getRawSqlite();
+      ensureHalfDaySchema(db);
       const existing = db.prepare("SELECT * FROM time_off_requests WHERE id=? AND org_id=?").get(id, orgId) as any;
       if (!existing) return res.status(404).json({ error: "Request not found" });
+      const nameById = timeOffNameMap();
+      const actor = (storage.getUsers() as any[]).find(u => u.id === reviewerId);
+
+      // Manager edit / cancel path (CLR profile): dates, leave kind, reason, or cancel.
+      const editing = body.startDate != null || body.endDate != null || body.leaveKind != null
+        || body.leave_kind != null || body.dayPortion != null || body.reason != null
+        || body.status === "cancelled" || body.status === "canceled";
+      if (editing && body.status !== "approved" && body.status !== "denied") {
+        const startDate = body.startDate != null ? String(body.startDate) : String(existing.start_date);
+        const endDate = body.endDate != null ? String(body.endDate) : String(existing.end_date);
+        if (!isYmd(startDate) || !isYmd(endDate)) return res.status(400).json({ error: "Start and end dates are required (YYYY-MM-DD)." });
+        if (endDate < startDate) return res.status(400).json({ error: "End date cannot be before the start date." });
+        const leaveKind = parseLeaveKindBody(body)
+          ?? normalizeLeaveKind(existing.leave_kind ?? (String(existing.day_portion ?? "") === "half" ? "half" : "pto"));
+        const dayPortion = dayPortionForLeaveKind(leaveKind);
+        let reason = typeof body.reason === "string" ? body.reason.slice(0, 1000) : String(existing.reason ?? "");
+        if (!reason.trim()) reason = LEAVE_KIND_LABELS[leaveKind];
+        const status = (body.status === "cancelled" || body.status === "canceled") ? "cancelled" : String(existing.status ?? "approved");
+        // Edits from the profile stay approved so credit/denom pick them up immediately
+        // (unless explicitly cancelled). Pending must not linger and block half seeds.
+        const nextStatus = status === "cancelled" ? "cancelled" : (status === "pending" ? "approved" : status);
+        db.prepare(
+          `UPDATE time_off_requests
+              SET start_date=?, end_date=?, reason=?, day_portion=?, leave_kind=?, status=?,
+                  reviewed_by=?, reviewed_at=?, updated_at=?
+            WHERE id=? AND org_id=?`,
+        ).run(startDate, endDate, reason, dayPortion, leaveKind, nextStatus, reviewerId, nowIso, nowIso, id, orgId);
+        const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(id) as any;
+        audit({
+          userId: reviewerId, userName: actor?.name ?? "Unknown", action: "update",
+          entityType: "time_off", entityId: id,
+          entityLabel: (nameById.get(existing.user_id) ?? "CLR") + " " + startDate + "->" + endDate,
+          details: JSON.stringify({ edit: true, leaveKind, dayPortion, nextStatus, previousStatus: existing.status }),
+        });
+        return res.json(mapTimeOff(row, nameById));
+      }
+
+      const status = body.status;
+      const reviewerNote = typeof body.reviewerNote === "string" ? body.reviewerNote.slice(0, 1000) : "";
+      if (status !== "approved" && status !== "denied") return res.status(400).json({ error: "status must be 'approved' or 'denied'." });
       const previousStatus = String(existing.status ?? "pending");
       const approvalReversed = previousStatus === "approved" && status === "denied";
       db.prepare("UPDATE time_off_requests SET status=?, reviewer_note=?, reviewed_by=?, reviewed_at=?, updated_at=? WHERE id=? AND org_id=?").run(status, reviewerNote, reviewerId, nowIso, nowIso, id, orgId);
       const reassignedAssignments = status === "approved" && String(existing.day_portion ?? "full") !== "half"
         ? rebalanceClrVacationAssignments(orgId, Number(existing.user_id), existing.start_date, existing.end_date)
         : 0;
-      const nameById = timeOffNameMap();
       const row = db.prepare("SELECT * FROM time_off_requests WHERE id=?").get(id) as any;
-      const actor = (storage.getUsers() as any[]).find(u => u.id === reviewerId);
       audit({
         userId: reviewerId, userName: actor?.name ?? "Unknown", action: "update",
         entityType: "time_off", entityId: id,
@@ -10566,8 +10609,6 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     }
   });
 
-  // Cancel a request. Requester can cancel their own pending request; managers
-  // and admins can remove any request in their org.
   app.delete("/api/time-off/:id", requireAuth, (req: any, res) => {
     const sess = req.session_user;
     const orgId = Number(sess?.orgId ?? 1) || 1;

@@ -13,6 +13,10 @@ import {
   isHalfDayPortion,
   nameMatchesWho,
   normalizeDayPortion,
+  normalizeLeaveKind,
+  dayPortionForLeaveKind,
+  parseLeaveKindBody,
+  LEAVE_KIND_LABELS,
   prorateWeeklyGoal,
   resolveRosterUserIds,
   standingHalfDayUserIds,
@@ -28,6 +32,10 @@ import { buildCreditExcludedPersonDays } from "@shared/stats-exclusions";
 
 export {
   asAvailabilityContext,
+  normalizeLeaveKind,
+  dayPortionForLeaveKind,
+  parseLeaveKindBody,
+  LEAVE_KIND_LABELS,
   availableWeekdayPortions,
   buildPaceExclusions,
   dayAvailabilityWeight,
@@ -49,6 +57,10 @@ export {
 export function ensureHalfDaySchema(db: { exec: (sql: string) => unknown }): void {
   try {
     db.exec(`ALTER TABLE time_off_requests ADD COLUMN day_portion TEXT NOT NULL DEFAULT 'full'`);
+  } catch { /* column already present */ }
+
+  try {
+    db.exec(`ALTER TABLE time_off_requests ADD COLUMN leave_kind TEXT NOT NULL DEFAULT 'pto'`);
   } catch { /* column already present */ }
 }
 
@@ -83,8 +95,11 @@ function eachDateInRange(start: string, end: string, visit: (d: string) => void)
 
 /**
  * Insert approved half-day rows for Jackie (2026-09-17) and Chris Bermudez
- * (2026-09-18) when those people exist and no overlapping request is on file.
- * Idempotent.
+ * (2026-09-18) when those people exist. Idempotent.
+ *
+ * Pending (or denied) full PTO that overlaps the seed date must NOT block the
+ * half seed — Jackie 1231 on 2026-09-17 had a pending full request that made
+ * the old "any overlap → skip" path leave her at weight 1 with transfer credit.
  */
 export function ensureSeededHalfDays(db: any): { inserted: number; matched: Array<{ who: string; userId: number; name: string; date: string }> } {
   ensureHalfDaySchema(db);
@@ -99,21 +114,35 @@ export function ensureSeededHalfDays(db: any): { inserted: number; matched: Arra
       const userId = Number(user.id);
       const orgId = Number(user.org_id ?? user.orgId ?? 1) || 1;
       matched.push({ who: seed.who, userId, name: String(user.name ?? ""), date: seed.date });
-      const existing = db.prepare(
-        `SELECT id, day_portion, status FROM time_off_requests
-          WHERE org_id=? AND user_id=? AND start_date<=? AND end_date>=?
-          ORDER BY id DESC LIMIT 1`,
+
+      // Already have an approved half covering this date — done (ignore newer pending full).
+      const approvedHalf = db.prepare(
+        `SELECT id FROM time_off_requests
+          WHERE org_id=? AND user_id=? AND status='approved'
+            AND start_date<=? AND end_date>=?
+            AND COALESCE(day_portion, 'full') = 'half'
+          LIMIT 1`,
       ).get(orgId, userId, seed.date, seed.date) as any;
-      if (existing) {
-        if (existing.status === "approved" && !isHalfDayPortion(existing.day_portion)) {
-          try {
-            db.prepare(
-              `UPDATE time_off_requests SET day_portion='half', reason=?, updated_at=? WHERE id=?`,
-            ).run(seed.reason, now, existing.id);
-          } catch { /* ignore */ }
-        }
+      if (approvedHalf) continue;
+
+      // Single-day approved full on exactly the seed date → flip to half.
+      const approvedFullSameDay = db.prepare(
+        `SELECT id FROM time_off_requests
+          WHERE org_id=? AND user_id=? AND status='approved'
+            AND start_date=? AND end_date=?
+            AND COALESCE(day_portion, 'full') != 'half'
+          LIMIT 1`,
+      ).get(orgId, userId, seed.date, seed.date) as any;
+      if (approvedFullSameDay) {
+        try {
+          db.prepare(
+            `UPDATE time_off_requests SET day_portion='half', reason=?, updated_at=? WHERE id=?`,
+          ).run(seed.reason, now, approvedFullSameDay.id);
+        } catch { /* ignore */ }
         continue;
       }
+
+      // Pending/denied/other overlap (or nothing): insert the approved half seed.
       try {
         db.prepare(
           `INSERT INTO time_off_requests

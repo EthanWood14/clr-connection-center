@@ -29,6 +29,37 @@ export const FULL_DAY_OFF_WEIGHT = 0;
 
 export type DayPortion = "full" | "half";
 
+/** How the absence was classified when recorded (scorecard still keys off day_portion). */
+export type LeaveKind = "half" | "pto" | "sick_documented" | "sick_undocumented";
+
+export const LEAVE_KIND_LABELS: Record<LeaveKind, string> = {
+  half: "Half day",
+  pto: "Full PTO",
+  sick_documented: "Documented sick",
+  sick_undocumented: "Undocumented sick",
+};
+
+export function normalizeLeaveKind(raw: unknown): LeaveKind {
+  const s = String(raw ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (s === "half" || s === "half_day" || s === "pto_half") return "half";
+  if (s === "sick_documented" || s === "documented_sick" || s === "sick_doc") return "sick_documented";
+  if (s === "sick_undocumented" || s === "undocumented_sick" || s === "sick_undoc" || s === "sick") return "sick_undocumented";
+  if (s === "pto" || s === "full" || s === "full_pto" || s === "vacation" || s === "pto_full") return "pto";
+  return "pto";
+}
+
+/** day_portion for rates: only "half" is 0.5; PTO + both sick kinds are full-day (weight 0 when approved). */
+export function dayPortionForLeaveKind(kind: LeaveKind): DayPortion {
+  return kind === "half" ? "half" : "full";
+}
+
+export function parseLeaveKindBody(body: any): LeaveKind | null {
+  const raw = body?.leaveKind ?? body?.leave_kind ?? body?.kind ?? null;
+  if (raw == null || raw === "") return null;
+  return normalizeLeaveKind(raw);
+}
+
+
 /**
  * Sets keyed as `${userId}:${YYYY-MM-DD}` (see halfDayKey).
  * Full day off and exclusions both force weight 0; full off wins over activity.

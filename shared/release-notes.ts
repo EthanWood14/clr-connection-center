@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.30",
+    headline: "CLR profiles record half day / PTO / sick (approved), and Jackie\'s half day is no longer blocked by pending PTO.",
+    items: [
+      { text: "On a CLR profile, managers can record half day, full PTO, documented sick, or undocumented sick — with edit and cancel. Entries are approved immediately so scorecard transfers/day and TV Weekly Pace pick them up (same time_off_requests table).", audience: "manager" },
+      { text: "Documented sick and undocumented sick are separate leave kinds (both full-day weight 0 when approved); half day stays 0.5.", audience: "manager" },
+      { text: "Pending full PTO can no longer block the Jackie half-day seed for 2026-09-17 — her transfers/day weight is 0.5 again instead of a full day with credit.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.122.29",
     headline: "Weekly Pace no longer counts quiet CLRs with zero transfers that week.",
     items: [
