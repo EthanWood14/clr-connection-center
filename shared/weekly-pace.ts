@@ -11,16 +11,21 @@
  * Ethan's rules, 15-16 Sep 2026, in the order he gave them:
  *  - exclude Elleine and the system accounts (the caller supplies the roster)
  *  - count somebody only once they are past their first two weeks
- *  - count the people who have gone quiet as well as the producers, for the
- *    weeks they were still here
  *  - "someone shouldn't count for a week if they only worked a day. Count by
  *    days."
  *  - "for this week, include today as half of a day"
+ *
+ * Quiet week (21 Sep 2026): a CLR with zero credited transfers that week does
+ * not belong in clrDays — dial/SMS/EOD activity alone must not inflate the
+ * denom (Kristi). STATS_EXCLUDED_FROM people (Jordon) stay via
+ * keepZeroCreditUserIds so pre-fromDate activity days still count at 0 credit.
  *
  * Half days (18 Sep 2026): an approved half day — or a standing half-day rule —
  * halves that person's day weight. A full approved day off ("no day") drops the
  * day to weight 0 even if activity leaked. A named person-day exclusion (Jeremy
  * on 2026-09-17) likewise drops both the day and any transfers that day.
+ * Callers must pass from-date/Jeremy exclusions only in excludedDays — not
+ * half-day credit exclusions — or half days collapse to weight 0.
  *
  * Pure, so the wallboard and any report read the same numbers from the same
  * rules rather than two lots of SQL that drift.
@@ -94,14 +99,25 @@ export function weeklyPace(input: {
   halfDays?: ReadonlySet<string>;
   /** Approved full-day time off ("no days"). Keyed as `${userId}:${date}`. */
   fullOffDays?: ReadonlySet<string>;
-  /** Person-days dropped from both denominator and numerator. */
+  /**
+   * Person-days dropped from both denominator and numerator (Jeremy one-offs,
+   * STATS_EXCLUDED_FROM from-date days). Do NOT put half-day credit keys here —
+   * those belong in halfDays at weight 0.5.
+   */
   excludedDays?: ReadonlyArray<{ userId: number; date: string }>;
+  /**
+   * STATS_EXCLUDED_FROM user ids (Jordon). Their activity days stay in clrDays
+   * even when the week's credited transfers are 0 — from-date may zero credit
+   * while pre-fromDate Mon–Tue must still count.
+   */
+  keepZeroCreditUserIds?: ReadonlySet<number>;
 }): PaceWeek[] {
   const { days, credits, today } = input;
   const count = Math.max(1, Math.min(52, input.weeks ?? 10));
   const halfDays = input.halfDays ?? new Set<string>();
   const fullOffDays = input.fullOffDays ?? new Set<string>();
   const excluded = input.excludedDays ?? [];
+  const keepZero = input.keepZeroCreditUserIds ?? new Set<number>();
 
   // First day of work per person, for the ramp rule.
   const firstDay = new Map<number, string>();
@@ -143,13 +159,30 @@ export function weeklyPace(input: {
       worked.set(row.userId, (worked.get(row.userId) ?? 0) + weight);
     });
 
-    let clrDays = 0;
-    worked.forEach((n) => { clrDays += n; });
-    let transfers = 0;
+    // Credited transfers this week, by person (before quiet drop).
+    const creditByUser = new Map<number, number>();
     credits.forEach((row) => {
       if (!inWeek(row.date) || !worked.has(row.userId)) return;
       if (excluded.some((e) => e.userId === row.userId && e.date === row.date)) return;
-      transfers += Number(row.credit) || 0;
+      const n = Number(row.credit) || 0;
+      if (n === 0) return;
+      creditByUser.set(row.userId, (creditByUser.get(row.userId) ?? 0) + n);
+    });
+
+    // Quiet week: no credited transfers → out of clrDays, unless from-date
+    // keep list (Jordon Mon–Tue at 0 credit by design).
+    for (const userId of [...worked.keys()]) {
+      if ((creditByUser.get(userId) ?? 0) > 0) continue;
+      if (keepZero.has(userId)) continue;
+      worked.delete(userId);
+    }
+
+    let clrDays = 0;
+    worked.forEach((n) => { clrDays += n; });
+    let transfers = 0;
+    creditByUser.forEach((n, userId) => {
+      if (!worked.has(userId)) return;
+      transfers += n;
     });
 
     return {

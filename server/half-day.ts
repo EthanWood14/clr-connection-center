@@ -193,7 +193,13 @@ export function isHalfDayExcusedFromLate(db: any, orgId: number, userId: number,
 export function paceHalfDayContext(db: any, orgId: number, from: string, today: string): {
   halfDays: Set<string>;
   fullOffDays: Set<string>;
+  /** Credit exclusions: from-date + half + full off + Jeremy (boards drop credit). */
   excludedDays: Array<{ userId: number; date: string }>;
+  /**
+   * Denominator exclusions only: from-date + Jeremy. Pass THIS to weeklyPace
+   * excludedDays so half days stay weight 0.5 (not forced to 0 via credit keys).
+   */
+  denomExcludedDays: Array<{ userId: number; date: string }>;
   /** Ready-to-pass DayAvailabilityContext for dayAvailabilityWeight helpers. */
   availability: DayAvailabilityContext;
   resolved: {
@@ -283,6 +289,7 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
     halfDays,
     fullOffDays,
     excludedDays,
+    denomExcludedDays,
     availability,
     resolved: {
       jeremy: pick("jeremy"),

@@ -29,6 +29,16 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.29",
+    headline: "Weekly Pace no longer counts quiet CLRs with zero transfers that week.",
+    items: [
+      { text: "On the office TV Weekly Pace page, a CLR who logged dials/SMS/EOD but zero credited transfers that week drops out of days worked — quiet roster presence no longer inflates the denominator (e.g. Kristi).", audience: "everyone" },
+      { text: "Jordon Chang's from-date rule is unchanged: Mon–Tue before 2026-09-16 PT still count in the pace denom even at zero credit; from that Wednesday forward those days stay out.", audience: "manager" },
+      { text: "Half days (Rosas standing, Chris/Jackie approved) now weigh 0.5 in Weekly Pace again — a wiring bug had been forcing them to zero via credit-exclusion keys.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.28",
     headline: "TV and desk tabs use less bandwidth when nobody is watching.",
     items: [

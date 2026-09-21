@@ -56,7 +56,7 @@ import {
   formatTransferCount,
   TRANSFER_CREDIT_SQL,
 } from "@shared/transfer-credit";
-import { transferCreditExclusionSql } from "@shared/stats-exclusions";
+import { resolveStatsExcludedUsers, transferCreditExclusionSql } from "@shared/stats-exclusions";
 import { TRAINING_DAYS, TRAINING_AUTHOR } from "@shared/clr-training";
 import {
   filterRecipients, suppressionFromHistory, suppressionWindowArg,
@@ -24068,8 +24068,9 @@ ${note}` : daysLine;
         // Transfers per CLR per DAY WORKED, ten weeks (shared/weekly-pace.ts).
         // Totals cannot be compared across a changing roster — twelve people
         // in late August, seven now — and per-week silently assumes everybody
-        // worked five days. The people who have since gone quiet are counted
-        // for the weeks they were here, and today counts as half a day.
+        // worked five days. Quiet CLRs with zero credited transfers that week
+        // drop out of clrDays (Kristi); from-date keep list preserves Jordon
+        // Mon–Tue. Today counts as half a day; half days weigh 0.5.
         const from = addIsoDays(mondayOf(w.today), -7 * (TV_PACE_WEEKS + 1));
         // The CLR roster this measures: not the TV roster above, because that
         // one is active-only and this has to keep somebody who left in the
@@ -24102,6 +24103,14 @@ ${note}` : daysLine;
             GROUP BY tc.user_id, tc.date`,
         ).all(orgId, ...paceIds, from, w.today) as any[];
         const paceCtx = paceHalfDayContext(sqlite, orgId, from, w.today);
+        // denomExcludedDays (from-date + Jeremy) — NOT credit excludedDays (which
+        // includes half days and would force Rosas/Chris pace weight to 0).
+        const paceRoster = sqlite.prepare(
+          `SELECT id, name FROM users WHERE id IN (${marks})`,
+        ).all(...paceIds) as Array<{ id: number; name: string | null }>;
+        const keepZeroCreditUserIds = new Set(
+          resolveStatsExcludedUsers(paceRoster).map((r) => r.userId),
+        );
         const weeks = weeklyPace({
           days: days.map((r) => ({ userId: Number(r.user_id), date: String(r.d) })),
           credits: credits.map((r) => ({ userId: Number(r.user_id), date: String(r.d), credit: Number(r.credit) || 0 })),
@@ -24109,7 +24118,8 @@ ${note}` : daysLine;
           weeks: TV_PACE_WEEKS,
           halfDays: paceCtx.halfDays,
           fullOffDays: paceCtx.fullOffDays,
-          excludedDays: paceCtx.excludedDays,
+          excludedDays: paceCtx.denomExcludedDays,
+          keepZeroCreditUserIds,
         });
         return {
           weeks,
