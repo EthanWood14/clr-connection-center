@@ -29,6 +29,14 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.31",
+    headline: "Jordon Chang is back on team transfer boards starting today.",
+    items: [
+      { text: "Jordon Chang's team credit exclusion now covers only 2026-09-16 through 2026-09-20 PT (inclusive). From 2026-09-21 onward his transfers count again on TV boards, scorecards, weekly pace, tournament, digests, and Ask C3 — same as everyone else. Personal views were already showing him.", audience: "everyone" },
+      { text: "Pre-9/16 history is still credited; the five excluded days stay out of team credit and days-worked denominators.", audience: "manager" },
+    ],
+  },
+  {
     version: "4.122.30",
     headline: "CLR profiles record half day / PTO / sick (approved), and Jackie\'s half day is no longer blocked by pending PTO.",
     items: [

@@ -35,7 +35,7 @@ export const TOURNAMENT_EXCLUDED_NAME_RE = /\belleine\b/i;
 
 /**
  * Date-scoped tournament exclusions — same source of truth as all-stats
- * exclusions (shared/stats-exclusions.ts). Jordon from 2026-09-16 PT.
+ * exclusions (shared/stats-exclusions.ts). Jordon 2026-09-16..2026-09-20 PT.
  */
 export const TOURNAMENT_EXCLUDED_FROM = STATS_EXCLUDED_FROM;
 
@@ -43,7 +43,7 @@ export const TOURNAMENT_EXCLUDED_FROM = STATS_EXCLUDED_FROM;
 /**
  * Whether this display name is out of tournament scoring / live UI.
  * Pass the tournament window's Pacific `date` ("YYYY-MM-DD") so date-scoped
- * rules only apply on/after their fromDate; omit for "today" (UI gates).
+ * rules apply in their fromDate–toDate window (toDate optional/open-ended); omit date for "today" (UI gates).
  */
 export function isTournamentExcluded(
   name: string | null | undefined,

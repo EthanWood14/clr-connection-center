@@ -138,11 +138,12 @@ test("tournament is on for home pages, with Elleine excluded from the board and 
 });
 
 // Ethan 18 Sep 2026: "jordon shouldn't count since wednesday" — from 2026-09-16 PT.
-test("Jordon Chang is excluded from tournament scoring on/after 2026-09-16 PT", () => {
-  assert.ok(TOURNAMENT_EXCLUDED_FROM.some((r) => r.fromDate === "2026-09-16"));
+test("Jordon Chang is excluded from tournament scoring 2026-09-16..2026-09-20 PT", () => {
+  assert.ok(TOURNAMENT_EXCLUDED_FROM.some((r) => r.fromDate === "2026-09-16" && r.toDate === "2026-09-20"));
   assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-16"), true);
   assert.equal(isTournamentExcluded("Jordan Chang", "2026-09-16"), true, "Jordan spelling variant");
   assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-15"), false, "before Wednesday still counts");
+  assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-21"), false, "back on team from Sep 21");
   assert.equal(isTournamentExcluded("Jordan Rivera", "2026-09-16"), false, "demo LO must not match");
   assert.equal(isTournamentExcluded("Elleine Asuncion", "2026-09-14"), true, "Elleine stays always excluded");
 

@@ -28,28 +28,33 @@ test("Jordon name match: Jordon/Jordan Chang yes, Jordan Rivera no", () => {
   assert.equal(JORDON_STATS_NAME_RE.test("Jordan Rivera"), false);
 });
 
-test("date boundary: 2026-09-15 counts, 2026-09-16 does not", () => {
+test("date boundary: pre-9/16 and 9/21+ count; 9/16–9/20 excluded", () => {
   assert.equal(isStatsExcluded("Jordon Chang", "2026-09-15"), false);
   assert.equal(isStatsExcluded("Jordon Chang", "2026-09-16"), true);
   assert.equal(isStatsExcluded("Jordon Chang", "2026-09-18"), true);
+  assert.equal(isStatsExcluded("Jordon Chang", "2026-09-20"), true);
+  assert.equal(isStatsExcluded("Jordon Chang", "2026-09-21"), false);
   assert.equal(isStatsExcluded("Jordan Rivera", "2026-09-16"), false);
+  assert.equal(STATS_EXCLUDED_FROM[0]?.toDate, "2026-09-20");
 });
 
-test("tournament reuses the shared from-date rule", () => {
+test("tournament reuses the shared from–to rule", () => {
   assert.equal(TOURNAMENT_EXCLUDED_FROM, STATS_EXCLUDED_FROM);
   assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-16"), true);
   assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-15"), false);
+  assert.equal(isTournamentExcluded("Jordon Chang", "2026-09-21"), false);
   assert.equal(isTournamentExcluded("Elleine Asuncion", "2026-09-14"), true);
 });
 
-test("day-race excludes Jordon on/after from-date; Elleine always", () => {
+test("day-race excludes Jordon in from–to window; Elleine always", () => {
   assert.equal(isDayRaceExcluded("Elleine Asuncion"), true);
   assert.equal(isDayRaceExcluded("Jordon Chang", "2026-09-16"), true);
   assert.equal(isDayRaceExcluded("Jordon Chang", "2026-09-15"), false);
+  assert.equal(isDayRaceExcluded("Jordon Chang", "2026-09-21"), false);
   assert.equal(isDayRaceExcluded("Ana", "2026-09-16"), false);
 });
 
-test("credit rollup drops Jordon on/after date and half/full-off person-days", () => {
+test("credit rollup drops Jordon only in from–to window and half/full-off person-days", () => {
   const users = [
     { id: 1, name: "Ana" },
     { id: 2, name: "Jordon Chang" },
@@ -60,15 +65,17 @@ test("credit rollup drops Jordon on/after date and half/full-off person-days", (
   const days = buildCreditExcludedPersonDays({
     users,
     from: "2026-09-15",
-    to: "2026-09-18",
+    to: "2026-09-22",
     halfDays,
     fullOffDays,
   });
   const keys = creditExcludedDayKeys(days);
-  // Jordon from Wed forward
+  // Jordon 9/16–9/20 only
   assert.ok(keys.has("2:2026-09-16"));
   assert.ok(keys.has("2:2026-09-18"));
+  assert.ok(keys.has("2:2026-09-20"));
   assert.equal(keys.has("2:2026-09-15"), false);
+  assert.equal(keys.has("2:2026-09-21"), false);
   // Ana half + person 3 full off
   assert.ok(keys.has("1:2026-09-17"));
   assert.ok(keys.has("3:2026-09-17"));
@@ -76,6 +83,7 @@ test("credit rollup drops Jordon on/after date and half/full-off person-days", (
   const rows = [
     { userId: 2, date: "2026-09-15", credit: 1 },
     { userId: 2, date: "2026-09-16", credit: 1 },
+    { userId: 2, date: "2026-09-21", credit: 1 },
     { userId: 1, date: "2026-09-17", credit: 1 },
     { userId: 1, date: "2026-09-18", credit: 1 },
   ];
@@ -85,13 +93,14 @@ test("credit rollup drops Jordon on/after date and half/full-off person-days", (
   });
   assert.deepEqual(
     kept.map((r) => [r.userId, r.date]),
-    [[2, "2026-09-15"], [1, "2026-09-18"]],
+    [[2, "2026-09-15"], [2, "2026-09-21"], [1, "2026-09-18"]],
   );
 });
 
-test("SQL fragments mention Jordon from-date and time_off / Rosas", () => {
+test("SQL fragments mention Jordon from–to window and time_off / Rosas", () => {
   const j = jordonCreditExclusionSql();
   assert.match(j, /2026-09-16/);
+  assert.match(j, /2026-09-20/);
   assert.match(j, /jordon/);
   assert.match(j, /jordanchang/);
   const t = timeOffCreditExclusionSql();
