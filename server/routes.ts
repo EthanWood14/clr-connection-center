@@ -13750,7 +13750,7 @@ ${note}` : daysLine;
       messagesSentPeriod = sumMessagesSql(` AND assistant_id = ?`, [userId]);
       // One person's own figure, so it is credit: half a transfer each when a
       // bulk-texted lead went out on the shotgun and somebody else closed it.
-      bulkTexterTransfers = storageExtra.getCreditedTransfers(userId, { startDate, endDate })
+      bulkTexterTransfers = storageExtra.getCreditedTransfers(userId, { startDate, endDate, applyStatsExclusions: false })
         .filter((o: any) => Number(o.bulk_texter) === 1)
         .reduce((n: number, o: any) => n + (Number(o.credit) || 0), 0);
       // Elleine's count is org-wide: she assists on other CLRs' transfers too,
@@ -23237,7 +23237,7 @@ ${note}` : daysLine;
     // rows, so the two add back to the headline instead of overshooting it by
     // the halves. A shotgun transfer is half for the publisher and half for the
     // claimer; the publisher's half is on a row `outcomes` never sees.
-    const transfersList = storageExtra.getCreditedTransfers(userId, { startDate, endDate }) as any[];
+    const transfersList = storageExtra.getCreditedTransfers(userId, { startDate, endDate, applyStatsExclusions: false }) as any[];
     const credit = (rows: any[]) => rows.reduce((n, o) => n + (Number(o.credit) || 0), 0);
     const transfers = credit(transfersList);
     return {
@@ -24996,7 +24996,7 @@ ${note}` : daysLine;
       // Transfers per day are this CLR's CREDIT (halves on a shotgun lead) and
       // are read from the expansion, which reaches the rows their assistant_id
       // is not on. Appointments stay a count of their own rows.
-      const transfersByDay = storageExtra.getTransferCreditDates(userId, { startDate, endDate });
+      const transfersByDay = storageExtra.getTransferCreditDates(userId, { startDate, endDate, applyStatsExclusions: false });
       const apptsByDay = new Map<string, number>();
       for (const o of outcomes) {
         if (ot(o) === "appointment") apptsByDay.set(o.date, (apptsByDay.get(o.date) ?? 0) + 1);
@@ -25306,7 +25306,7 @@ ${note}` : daysLine;
     // goes to the CLR at the other end). This list is read instead of the
     // transfers inside `outcomes`, because `outcomes` is filtered by
     // assistant_id and a publisher's half sits on the claimer's row.
-    const creditedTransfers = storageExtra.getCreditedTransfers(userId, { startDate, endDate }) as any[];
+    const creditedTransfers = storageExtra.getCreditedTransfers(userId, { startDate, endDate, applyStatsExclusions: false }) as any[];
     const sumCredit = (rows: any[]) => rows.reduce((n, o) => n + (Number(o.credit) || 0), 0);
 
     const totalCalls = sumCalls(callLogs);
@@ -25472,7 +25472,7 @@ ${note}` : daysLine;
     // day this CLR moved a lead, so it keeps a streak alive — the test below is
     // ">= 1", which a lone half would fail, so the halves are summed first.
     const transfersByDate: Record<string, number> = {};
-    storageExtra.getTransferCreditDates(userId).forEach((credit, d) => {
+    storageExtra.getTransferCreditDates(userId, { applyStatsExclusions: false }).forEach((credit, d) => {
       transfersByDate[d.slice(0, 10)] = credit;
     });
     const toPrevWeekday = (d: Date): Date => {
@@ -25504,7 +25504,7 @@ ${note}` : daysLine;
       startDate: wtd.startDate,
       endDate: wtd.endDate,
       calls: sumCalls(wtdLogs),
-      transfers: storageExtra.getTransferCreditForUser(userId, { startDate: wtd.startDate, endDate: wtd.endDate }),
+      transfers: storageExtra.getTransferCreditForUser(userId, { startDate: wtd.startDate, endDate: wtd.endDate, applyStatsExclusions: false }),
       appointments: wtdOutcomes.filter((o: any) => ot(o) === "appointment").length,
       fellThrough: wtdOutcomes.filter((o: any) => ot(o) === "fell_through").length,
     };

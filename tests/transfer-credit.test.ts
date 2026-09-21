@@ -382,6 +382,7 @@ test("the manager dashboard's scorecard and leaderboard read credit", () => {
 test("the dashboard scorecard credits one person and counts the team", () => {
   const stats = section(storage, "getDashboardStats(startDate: string, endDate: string, assistantId?: number, tz?: string) {", "  getLeaderboard(");
   assert.match(stats, /getTransferCreditForUser\(Number\(assistantId\)/);
+  assert.match(stats, /applyStatsExclusions:\s*false/, "personal Home Transfer KPI must not zero Jordon credit");
   assert.match(stats, /outcomes\.filter\(\(o: any\) => o\.outcome_type === "transfer"\)\.length/);
   assert.match(storage, /const transfers = transferCreditIn\(outcomes, user\.id\);/);
 });
@@ -472,4 +473,30 @@ test("the wall's race caption prints a half rather than rounding it", () => {
   const race = read("client/src/components/tv/race.tsx");
   assert.match(race, /const countLabel = formatTransferCount\(count\);/);
   assert.match(race, /\{countLabel\} \{plural\} today/);
+});
+
+test("personal credit readers can skip stats exclusions; team readers keep them", () => {
+  // Storage: default still ANDs transferCreditExclusionSql; applyStatsExclusions:false skips it.
+  assert.match(storage, /applyStatsExclusions\?:\s*boolean/);
+  assert.match(storage, /if \(f\.applyStatsExclusions !== false\)/);
+  assert.match(storage, /wheres\.push\(transferCreditExclusionSql\("tc\.date", "tc\.user_id", "tc\.org_id"\)\)/);
+
+  // Personal surfaces opt out so Jordon (and anyone on a from-date exclusion) sees real transfers.
+  const myReport = section(routes, "app.get('/api/my-report'", "res.json({");
+  assert.match(myReport, /getCreditedTransfers\(userId, \{ startDate, endDate, applyStatsExclusions: false \}\)/);
+  assert.match(myReport, /getTransferCreditDates\(userId, \{ applyStatsExclusions: false \}\)/);
+  assert.match(myReport, /getTransferCreditForUser\(userId, \{ startDate: wtd\.startDate, endDate: wtd\.endDate, applyStatsExclusions: false \}\)/);
+
+  const clrMetrics = section(routes, "function clrMetrics(userId: number, startDate: string, endDate: string)", "return {");
+  assert.match(clrMetrics, /getCreditedTransfers\(userId, \{ startDate, endDate, applyStatsExclusions: false \}\)/);
+
+  const clrProfile = section(routes, 'app.get("/api/clr-profiles/:id", requireAuth', 'app.patch("/api/clr-profiles/:id/start-date"');
+  assert.match(clrProfile, /getTransferCreditDates\(userId, \{ startDate, endDate, applyStatsExclusions: false \}\)/);
+
+  // Team / aggregate paths must still apply the exclusion (no applyStatsExclusions: false).
+  assert.match(routes, /transferCreditExclusionSql\("tc\.date", "tc\.user_id", "tc\.org_id"\)/);
+  const scorecardCredit = routes.match(
+    /WHERE \(\$\{transferCreditExclusionSql\("tc\.date", "tc\.user_id", "tc\.org_id"\)\}\)/g,
+  ) ?? [];
+  assert.ok(scorecardCredit.length >= 3, "team scoreboard/TV/digest SQL still ANDs transferCreditExclusionSql");
 });

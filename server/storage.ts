@@ -2203,7 +2203,12 @@ export class Storage implements IStorage {
     // it is shared, and summing credit here would lose the half belonging to a
     // partner the exclude-from-stats filter above has already dropped.
     const transfers = assistantId != null
-      ? getTransferCreditForUser(Number(assistantId), { startDate, endDate, orgId: oid ?? null })
+      ? getTransferCreditForUser(Number(assistantId), {
+          startDate, endDate, orgId: oid ?? null,
+          // Personal Home KPI: show this CLR's real credit, including Jordon's
+          // post-from-date transfers that team boards still exclude.
+          applyStatsExclusions: false,
+        })
       : outcomes.filter((o: any) => o.outcome_type === "transfer").length;
     const appointments = outcomes.filter((o: any) => o.outcome_type === "appointment").length;
     const fellThrough = outcomes.filter((o: any) => o.outcome_type === "fell_through").length;
@@ -2369,6 +2374,12 @@ export interface TransferCreditFilters {
   orgId?: number | null;
   /** One person only. */
   userId?: number | null;
+  /**
+   * When true (default), apply Jordon from-date + time-off credit exclusions used
+   * by team scoreboards/TV/tournament/digests. Personal surfaces (Home, My Report,
+   * CLR profile) pass false so a CLR still sees their own real transfers.
+   */
+  applyStatsExclusions?: boolean;
 }
 
 function transferCreditQuery(f: TransferCreditFilters, select: string, groupBy: string) {
@@ -2383,7 +2394,10 @@ function transferCreditQuery(f: TransferCreditFilters, select: string, groupBy: 
   // nobody, exactly as the old COUNT ... GROUP BY assistant_id skipped it.
   wheres.push(`tc.user_id IS NOT NULL`);
   // Jordon from-date + approved half/full time off + standing Rosas half days.
-  wheres.push(transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id"));
+  // Personal surfaces opt out via applyStatsExclusions: false.
+  if (f.applyStatsExclusions !== false) {
+    wheres.push(transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id"));
+  }
   const sqlText = `SELECT ${select} FROM (${TRANSFER_CREDIT_SQL}) tc WHERE ${wheres.join(" AND ")}${groupBy}`;
   return sqlite.prepare(sqlText).all(...params) as any[];
 }
@@ -2435,7 +2449,9 @@ export function getCreditedTransfers(
   if (f.endDate) { wheres.push(`tc.date <= ?`); params.push(f.endDate); }
   const oid = f.orgId === undefined ? currentOrgId() : f.orgId;
   if (oid != null) { wheres.push(`tc.org_id = ?`); params.push(Number(oid)); }
-  wheres.push(transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id"));
+  if (f.applyStatsExclusions !== false) {
+    wheres.push(transferCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id"));
+  }
   return sqlite.prepare(
     `SELECT o.*, tc.credit AS credit
        FROM (${TRANSFER_CREDIT_SQL}) tc

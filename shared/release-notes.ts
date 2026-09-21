@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.27",
+    headline: "Your own transfers show again on Home, My Report, and CLR profile.",
+    items: [
+      { text: "If you are Jordon Chang (or anyone on a from-date credit exclusion), Home Transfer KPI, My Report, and your CLR profile now show your real transfers again — team scoreboards, TV, tournament, digests, and Ask C3 still exclude them from 2026-09-16 PT forward.", audience: "everyone" },
+      { text: "Outcomes and Recent Transfers were already unfiltered and are unchanged.", audience: "everyone" },
+    ],
+  },
+
+  {
     version: "4.122.26",
     headline: "Transfers / day worked no longer counts Jordon's excluded days in the denominator.",
     items: [
