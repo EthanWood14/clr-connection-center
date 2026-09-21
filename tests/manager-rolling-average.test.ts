@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import ts from "typescript";
 import Database from "better-sqlite3";
-import { isClrTrendWorkday } from "../client/src/lib/clr-trend-workday";
+import { CLR_TREND_WORKDAY_CUTOFF, isClrTrendWorkday } from "../client/src/lib/clr-trend-workday";
 import { isWeekday } from "../client/src/lib/weekday-date";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,9 +14,9 @@ const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 
 test("a CLR who did not work is excluded from that day's average", () => {
   const block = dash.slice(dash.indexOf("let teamSum = 0"), dash.indexOf("row.__worked"));
-  assert.match(block, /if \(!isClrTrendWorkday\(transfers, activeSeconds\)\) \{ teamAbsent\+\+; continue; \}/);
+  assert.match(block, /if \(!isClrTrendWorkday\(d, transfers, activeSeconds, calls\)\) \{ teamAbsent\+\+; continue; \}/);
   assert.match(block, /s\.callToolsActiveSeconds\?\.\[i\] \?\? 0/);
-  assert.doesNotMatch(block, /const calls =/, "call count no longer decides whether a day qualifies");
+  assert.match(block, /s\.calls\?\.\[i\] \?\? 0/, "historical days retain their per-day call counts");
   // The divisor must be the working count, not the roster size.
   assert.match(dash, /row\.__mean = teamN > 0 \? teamSum \/ teamN : 0;/);
   assert.match(dash, /teamN\+\+;/);
@@ -43,25 +43,44 @@ test("the chart says what the average is over", () => {
   assert.match(dash, /in training excluded/);
   assert.match(dash, /below workday threshold/, "not qualifying for the metric is not proof of absence");
   assert.match(dash, /OR at least 1 hour of CallTools active time/);
+  assert.match(dash, /From July 21, 2026/);
+  assert.match(dash, /Earlier dates retain the calls-or-transfers rule/);
 });
 
 test("a transfer OR a full hour qualifies, including split credit and the exact threshold", () => {
-  assert.equal(isClrTrendWorkday(0, 0), false);
-  assert.equal(isClrTrendWorkday(0, 3599), false);
-  assert.equal(isClrTrendWorkday(0, 3599.99), false);
-  assert.equal(isClrTrendWorkday(0, 3600), true);
-  assert.equal(isClrTrendWorkday(0, 14400), true);
-  assert.equal(isClrTrendWorkday(1, 0), true);
-  assert.equal(isClrTrendWorkday(0.5, 0), true, "a split transfer is real transfer activity");
-  assert.equal(isClrTrendWorkday(1, 3600), true);
+  assert.equal(isClrTrendWorkday("2026-09-21", 0, 0, 500), false);
+  assert.equal(isClrTrendWorkday("2026-09-21", 0, 3599, 500), false);
+  assert.equal(isClrTrendWorkday("2026-09-21", 0, 3599.99, 500), false);
+  assert.equal(isClrTrendWorkday("2026-09-21", 0, 3600, 0), true);
+  assert.equal(isClrTrendWorkday("2026-09-21", 0, 14400, 0), true);
+  assert.equal(isClrTrendWorkday("2026-09-21", 1, 0, 0), true);
+  assert.equal(isClrTrendWorkday("2026-09-21", 0.5, 0, 0), true, "a split transfer is real transfer activity");
+  assert.equal(isClrTrendWorkday("2026-09-21", 1, 3600, 0), true);
 });
 
 test("missing or invalid time cannot invent a worked day", () => {
   for (const value of [undefined, null, NaN, Infinity, -1]) {
-    assert.equal(isClrTrendWorkday(0, value), false);
-    assert.equal(isClrTrendWorkday(value, 0), false);
-    assert.equal(isClrTrendWorkday(1, value), true);
-    assert.equal(isClrTrendWorkday(value, 3600), true);
+    assert.equal(isClrTrendWorkday("2026-09-21", 0, value, 500), false);
+    assert.equal(isClrTrendWorkday("2026-09-21", value, 0, 500), false);
+    assert.equal(isClrTrendWorkday("2026-09-21", 1, value, 0), true);
+    assert.equal(isClrTrendWorkday("2026-09-21", value, 3600, 0), true);
+    assert.equal(isClrTrendWorkday("2026-07-20", 0, 3600, value), false);
+  }
+});
+
+test("the new rule starts inclusively on the fixed July 21 cutoff, preserving earlier calls-or-transfers history", () => {
+  assert.equal(CLR_TREND_WORKDAY_CUTOFF, "2026-07-21");
+  for (const date of ["2025-09-21", "2026-07-20"]) {
+    assert.equal(isClrTrendWorkday(date, 0, 0, 1), true);
+    assert.equal(isClrTrendWorkday(date, 0.5, 0, 0), true);
+    assert.equal(isClrTrendWorkday(date, 0, 3600, 0), false, "time alone did not qualify under the previous rule");
+    assert.equal(isClrTrendWorkday(date, 0, 0, 0), false);
+  }
+  for (const date of ["2026-07-21", "2026-07-22", "2027-01-01"]) {
+    assert.equal(isClrTrendWorkday(date, 0, 3599, 500), false);
+    assert.equal(isClrTrendWorkday(date, 0, 3600, 0), true);
+    assert.equal(isClrTrendWorkday(date, 0.5, 0, 0), true);
+    assert.equal(isClrTrendWorkday(date, 0, 0, 0), false);
   }
 });
 
@@ -76,6 +95,24 @@ function chart(series: any[], dates: string[], metric = "transfers", window = 5)
   };
   return new Function(...Object.keys(scope), js + "\nreturn clrTrendChartData;")(...Object.values(scope));
 }
+
+test("the actual chart uses each day's policy across the cutoff, not today's date or the range start", () => {
+  const dates = ["2026-07-20", "2026-07-21", "2026-07-22"];
+  const series = [
+    { userId: 1, transfers: [4, 4, 4], calls: [0, 0, 0], callToolsActiveSeconds: [0, 0, 0] },
+    { userId: 2, transfers: [0, 0, 0], calls: [10, 10, 10], callToolsActiveSeconds: [3599, 3599, 3599] },
+    { userId: 3, transfers: [0, 0, 0], calls: [0, 0, 0], callToolsActiveSeconds: [0, 0, 3600] },
+  ];
+  const rows = chart(series, dates);
+  assert.deepEqual(rows.map((r: any) => r.__worked), [2, 1, 2]);
+  assert.deepEqual(rows.map((r: any) => r.__mean), [2, 4, 2]);
+  assert.deepEqual(rows.map((r: any) => r.__avg), [2, 3, 2.67]);
+  const oneDay = (i: number) => chart(series.map(s => ({
+    ...s, transfers: [s.transfers[i]], calls: [s.calls[i]], callToolsActiveSeconds: [s.callToolsActiveSeconds[i]],
+  })), [dates[i]])[0];
+  assert.equal(oneDay(0).__mean, rows[0].__mean, "older-only ranges keep their original denominator");
+  assert.equal(oneDay(1).__mean, rows[1].__mean, "starting the range on the cutoff does not change the policy");
+});
 
 test("the actual chart includes qualified zero-transfer days but excludes calls-only days", () => {
   const series = [

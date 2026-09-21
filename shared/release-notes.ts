@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.122.33", headline: "Earlier CLR trend history keeps its original worked-day rule.", items: [
+    { text: "The transfer-or-one-hour CallTools rule now starts on July 21, 2026. Earlier chart dates keep the previous calls-or-transfers rule, including in a range that spans both periods. Attendance and training records are unchanged.", audience: "manager" },
+  ] },
   { version: "4.122.32", headline: "Clearer worked days and a sortable Transfer Scorecard.", items: [
     { text: "The CLR trend average counts a day only when the CLR has transfer credit or at least one hour of CallTools active time. Calls alone no longer qualify. A full hour with zero transfers still counts. The rule applies to past chart dates too; attendance and training records are unchanged.", audience: "manager" },
     { text: "Sort the Transfer Scorecard with the Sort by picker or any table heading, and click again to reverse. Missing scores stay at the bottom; claim time starts fastest first.", audience: "manager" },

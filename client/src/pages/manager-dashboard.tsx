@@ -1149,15 +1149,16 @@ export default function ManagerDashboard() {
     // Benchmark mean = average per CLR across the WHOLE team, not just the shown
     // lines, so the dashed line doesn't move when you toggle individual lines.
     //
-    // Qualify by transfer activity OR at least one hour of daily CallTools
-    // active time. Calls alone do not establish a worked day for this metric.
+    // Preserve calls-or-transfers history before July 21, 2026. From that day,
+    // qualify by transfer activity OR at least one hour of daily CallTools time.
     // A qualifying zero-transfer day still contributes a real zero.
     let teamSum = 0, teamN = 0, teamAbsent = 0, teamTrainingExcluded = 0;
     for (const s of clrTrendSeries) {
       if (s.inTraining) { teamTrainingExcluded++; continue; }
       const transfers = ((s as any).transfers as number[] | undefined)?.[i] ?? 0;
       const activeSeconds = s.callToolsActiveSeconds?.[i] ?? 0;
-      if (!isClrTrendWorkday(transfers, activeSeconds)) { teamAbsent++; continue; }
+      const calls = s.calls?.[i] ?? 0;
+      if (!isClrTrendWorkday(d, transfers, activeSeconds, calls)) { teamAbsent++; continue; }
       const arr = (s as any)[clrTrendMetric] as number[];
       teamSum += arr[i] ?? 0;
       teamN++;
@@ -1796,7 +1797,7 @@ export default function ManagerDashboard() {
             )}
             <p className="text-[11px] text-muted-foreground mt-3">
               Click a CLR pill to toggle its line. Defaults to top 5 by {clrTrendMetricLabel.toLowerCase()} in this range.
-              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per working CLR who has completed training. A worked day requires a transfer (including split credit) OR at least 1 hour of CallTools active time. Calls alone do not qualify. In-training CLRs stay visible but are excluded from that average.` : ""}
+              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per working CLR who has completed training. From July 21, 2026, a worked day requires a transfer (including split credit) OR at least 1 hour of CallTools active time; calls alone do not qualify. Earlier dates retain the calls-or-transfers rule. In-training CLRs stay visible but are excluded from that average.` : ""}
             </p>
           </CardContent>
         </Card>
