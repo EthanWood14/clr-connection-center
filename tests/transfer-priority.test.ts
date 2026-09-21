@@ -1951,8 +1951,9 @@ test("the placement column is SHOWN, and its tooltip is the stat that exists", (
     .split(String.fromCharCode(10))
     .filter((l) => !l.trim().startsWith(String.fromCharCode(47, 47)))
     .join(String.fromCharCode(10));
-  assert.match(live, /key: "placement"/, "the Placed column is rendered");
-  assert.match(live, /label: "Placed"/);
+  assert.match(live, /key: "placement"/, "the Priority column is rendered without changing the API field");
+  assert.match(live, /label: "Priority"/);
+  assert.doesNotMatch(live, /label: "Placed"/);
   assert.match(live, /get: r => r\.placementScore \?\? null/);
   assert.match(live, /cellTitle: placementNote/, "and a dash still says why it is a dash");
   // The write-up column it sits beside is untouched.
@@ -1976,7 +1977,11 @@ test("the tooltip describes the stat the server actually computes", () => {
   // The three the rule is decided on, by name, because a manager cannot check a
   // verdict against a rule the column will not state.
   assert.match(text, /Justin, Mateo or John/);
-  assert.match(text, /100% when the transfer records one of those three and 0% for anything else/);
+  assert.match(text, /matching assistant scores 60–100% by workload/);
+  assert.match(text, /NOT the percentage sent to LOs marked priority at transfer time/);
+  assert.match(text, /priority flags and the active roster come from current settings/);
+  assert.match(text, /not a saved transfer-time snapshot/);
+  assert.match(text, /Changing those settings can change past scores/);
   // ...including the half that stings, which is the half most likely to be
   // quietly dropped from a tooltip.
   assert.match(text, /no assistant recorded at all, scores zero/);
@@ -2002,7 +2007,7 @@ test("HIGH — the routing counters reach the cell, so a 0% can say which kind i
   assert.match(mgr, /const investment = Number\(r\.placementInvestment \?\? 0\);/);
   assert.match(mgr, /Number\(r\.placementBreaches \?\? 0\)/);
   assert.match(mgr, /recorded as Investment\/2nd Home and judged on routing alone/);
-  assert.match(mgr, /recorded Justin, Mateo or John and scored 100%/);
+  assert.match(mgr, /recorded Justin, Mateo or John and scored 60–100% by assistant workload/);
   assert.match(mgr, /did not and scored 0%/);
   // The note used to answer nothing at all whenever there WAS a number, which
   // is exactly the case a sharp 0% falls into.

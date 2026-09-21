@@ -15509,11 +15509,20 @@ ${note}` : daysLine;
         WHERE org_id=? AND activity_date >= ? AND activity_date <= ?${exClause}
         GROUP BY assistant_id, activity_date
       `).all(currentOrgId() ?? 1, startDate, endDate) as any[];
+      // Daily cumulative agent time, not summed per-call durations or repeated
+      // observations. Time-only days must also reach the trend's denominator.
+      const clrCallToolsActiveRows = sqlite.prepare(`
+        SELECT assistant_id, activity_date AS date,
+               COALESCE(SUM(active_seconds), 0) AS active_seconds
+        FROM callsync_agent_activity_daily
+        WHERE org_id=? AND activity_date >= ? AND activity_date <= ?${exClause}
+        GROUP BY assistant_id, activity_date
+      `).all(currentOrgId() ?? 1, startDate, endDate) as any[];
       // Build the date axis the same way as the team trend so they line up exactly.
       const clrTrendDates: string[] = trend.map((t: any) => t.date);
       const clrIndex: Record<string, number> = {};
       clrTrendDates.forEach((d, i) => { clrIndex[d] = i; });
-      const clrTrendMap: Record<number, { transfers: number[]; appointments: number[]; fellThrough: number[]; calls: number[] }> = {};
+      const clrTrendMap: Record<number, { transfers: number[]; appointments: number[]; fellThrough: number[]; calls: number[]; callToolsActiveSeconds: number[] }> = {};
       function ensureClr(uid: number) {
         if (!clrTrendMap[uid]) {
           clrTrendMap[uid] = {
@@ -15521,6 +15530,7 @@ ${note}` : daysLine;
             appointments: new Array(clrTrendDates.length).fill(0),
             fellThrough:  new Array(clrTrendDates.length).fill(0),
             calls:        new Array(clrTrendDates.length).fill(0),
+            callToolsActiveSeconds: new Array(clrTrendDates.length).fill(0),
           };
         }
         return clrTrendMap[uid];
@@ -15546,6 +15556,12 @@ ${note}` : daysLine;
         const bucket = ensureClr(r.assistant_id);
         bucket.calls[idx] += Number(r.calls) || 0;
       }
+      for (const r of clrCallToolsActiveRows) {
+        const idx = clrIndex[r.date];
+        if (idx === undefined) continue;
+        const bucket = ensureClr(r.assistant_id);
+        bucket.callToolsActiveSeconds[idx] += Math.max(0, Number(r.active_seconds) || 0);
+      }
       const clrTrend = {
         dates: clrTrendDates,
         series: historicalClrs.filter((u: any) => u.isActive || clrTrendMap[u.id]).map((u: any) => {
@@ -15558,6 +15574,7 @@ ${note}` : daysLine;
             appointments: b ? b.appointments : new Array(clrTrendDates.length).fill(0),
             fellThrough:  b ? b.fellThrough  : new Array(clrTrendDates.length).fill(0),
             calls:        b ? b.calls        : new Array(clrTrendDates.length).fill(0),
+            callToolsActiveSeconds: b ? b.callToolsActiveSeconds : new Array(clrTrendDates.length).fill(0),
           };
         }),
       };

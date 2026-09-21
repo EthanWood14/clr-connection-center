@@ -28,6 +28,11 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.122.32", headline: "Clearer worked days and a sortable Transfer Scorecard.", items: [
+    { text: "The CLR trend average counts a day only when the CLR has transfer credit or at least one hour of CallTools active time. Calls alone no longer qualify. A full hour with zero transfers still counts. The rule applies to past chart dates too; attendance and training records are unchanged.", audience: "manager" },
+    { text: "Sort the Transfer Scorecard with the Sort by picker or any table heading, and click again to reverse. Missing scores stay at the bottom; claim time starts fastest first.", audience: "manager" },
+    { text: "Placed is now called Priority. Its explanation clarifies that this is a weighted routing score using current priority settings, not a saved record of priorities when the transfer happened. Scores are unchanged.", audience: "manager" },
+  ] },
   {
     version: "4.122.31",
     headline: "Jordon Chang is back on team transfer boards starting today.",

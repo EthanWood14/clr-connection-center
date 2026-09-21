@@ -14,7 +14,7 @@ import {
   CheckCircle2, AlertTriangle, ShieldCheck, Send, RefreshCw, TrendingUp,
   Download, Activity, MapPin, Target, Flame, ArrowDown, ArrowUp,
   Minus, AlertOctagon, Info, BarChart3, PieChart as PieIcon, Award, Users,
-  Clock,
+  Clock, ArrowUpDown,
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -27,6 +27,8 @@ import { dropWeekendRows, isWeekday } from "@/lib/weekday-date";
 import { countNonSundaysInMonth } from "@shared/pace-days";
 import { formatTransferCount } from "@shared/transfer-credit";
 import { formatSlaSeconds } from "@shared/shotgun-sla";
+import { DEFAULT_SCORECARD_SORT, resolveScorecardSort, selectScorecardSort, sortScorecardRows, type ScorecardSort } from "@/lib/scorecard-sort";
+import { isClrTrendWorkday } from "@/lib/clr-trend-workday";
 
 // Theme colors
 const NAVY = "#0F182D";
@@ -155,6 +157,7 @@ type RangeBlock = {
       appointments: number[];
       fellThrough: number[];
       calls: number[];
+      callToolsActiveSeconds: number[];
     }[];
   };
 };
@@ -305,15 +308,8 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
   /** Present only on the month-to-date window. */
   pace?: { daysElapsed: number; daysInMonth: number };
 }) {
-  // Transfers, then appointments, then calls. Appointments break a transfer tie
-  // because they are the same kind of work as a transfer — a booked appointment
-  // is a result, whereas call count only says who dialled more to get there.
-  // Calls stay as the last resort so the order is still deterministic.
-  const list = [...(rows ?? [])].sort((a, b) =>
-    (b.transfers - a.transfers)
-    || (b.appointments - a.appointments)
-    || (b.calls - a.calls));
-  if (list.length === 0) {
+  const [sort, setSort] = useState<ScorecardSort>(DEFAULT_SCORECARD_SORT);
+  if (!rows?.length) {
     return <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">No CLR activity in this {rangeLabel.toLowerCase()} range.</CardContent></Card>;
   }
   /**
@@ -406,7 +402,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     const pieces: string[] = [];
     if (investment > 0) {
       pieces.push(`${investment} recorded as Investment/2nd Home and judged on routing alone`
-        + ` (${followed} recorded Justin, Mateo or John and scored 100%, ${breaches} did not and scored 0%)`);
+        + ` (${followed} recorded Justin, Mateo or John and scored 60–100% by assistant workload, ${breaches} did not and scored 0%)`);
     }
     if (ramped > 0) pieces.push(`${ramped} judged on ordinary placement`);
     if (filled > 0) {
@@ -438,7 +434,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     const routing = investment > 0
       ? `${investment} of the ${scored} that could be read ${investment === 1 ? "was" : "were"} recorded as`
         + ` Investment/2nd Home and judged on routing alone: ${followed} recorded Justin, Mateo or John`
-        + ` and scored 100%, ${breaches} did not and scored 0%.`
+        + ` and scored 60–100% by assistant workload, ${breaches} did not and scored 0%.`
       : "";
     return [why, routing].filter(Boolean).join(" ");
   };
@@ -561,28 +557,62 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
     // with none of them recorded scores zero — the sharpest thing this column
     // does, and the last thing that should be a surprise. See
     // INVESTMENT_PROPERTY_LOAS in server/transfer-priority.ts.
-    { key: "placement",    label: "Placed",    get: r => r.placementScore ?? null, better: true,
+    { key: "placement",    label: "Priority",  get: r => r.placementScore ?? null, better: true,
       fmt: r => r.placementScore == null ? "—" : `${r.placementScore}%`,
-      title: "Where transfers were PUT, not how many. Each one is judged against the floor as it stood on the morning it was made: the lightest few loan officers actually taking work are worth 100%, the busiest is worth 0%, and everyone between them ramps. Transfers the app recorded as Investment/2nd Home are not ramped at all — they had to reach one of Chris's assistants Justin, Mateo or John, so they score 100% when the transfer records one of those three and 0% for anything else, however starved the loan officer was. A flagged transfer with a different assistant, or with no assistant recorded at all, scores zero. Everything else is compared with the WHOLE floor: nothing tells this stat which loan officers were licensed for the borrower's state. On any range longer than a day the floor is counted over a fortnight PLUS the range, so this column and the wall's Starved page can name different people as starved. If the roster cannot resolve those three, the rule stops for everybody and those Investment/2nd Home transfers are scored as ordinary placement instead — the cell notes \"routing rule off\", but the share still shows. The cell itself says when a number came from that routing rule; hover it for the full breakdown of what the share is the mean of.",
+      title: "A weighted routing score, NOT the percentage sent to LOs marked priority at transfer time. Ordinary LO workload is reconstructed for the morning it was made, but priority flags and the active roster come from current settings, not a saved transfer-time snapshot. Changing those settings can change past scores. The lightest few receiving LOs score 100%, the busiest 0%, and the rest fall between. A currently prioritised desk with assistants scores 60–100% by assistant workload; a missing assistant scores 60%. Investment/2nd Home transfers must record Chris's Justin, Mateo or John: a matching assistant scores 60–100% by workload; a different assistant, or no assistant recorded at all, scores zero. Ordinary transfers are compared with the WHOLE floor, not a borrower-state licensing pool. Longer ranges use a fortnight PLUS the range, not a rolling fortnight, so scores can differ by selected range. Unresolved recipients can be counted at the floor average. Fewer than five readable transfers shows a dash. If the roster cannot resolve the investment assistants, those transfers are scored as ordinary placement instead and the cell notes routing rule off. Hover a cell for its breakdown.",
       cellTitle: placementNote, cellNote: placementCellNote },
   ];
+  const project = (r: any) =>
+    pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
+  const sortColumns = [
+    { key: "name", label: "CLR", get: (r: any) => r.name ?? null, better: false },
+    ...cols,
+    ...(pace ? [{ key: "pace", label: "Pace", get: project, better: true }] : []),
+  ];
+  const activeSort = resolveScorecardSort(sort, sortColumns);
+  const list = sortScorecardRows(rows, activeSort, sortColumns);
+  const chooseSort = (key: string) => {
+    const column = sortColumns.find(c => c.key === key);
+    if (column) setSort(selectScorecardSort(activeSort, column));
+  };
+  const sortAria = (key: string): "ascending" | "descending" | "none" =>
+    activeSort.key === key ? activeSort.direction === "asc" ? "ascending" : "descending" : "none";
+  const sortHeader = (key: string, label: string) => {
+    const Icon = activeSort.key !== key ? ArrowUpDown : activeSort.direction === "asc" ? ArrowUp : ArrowDown;
+    return <button type="button" onClick={() => chooseSort(key)}
+      className="inline-flex items-center justify-center gap-1 rounded px-1 py-1 font-medium hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      aria-label={`Sort by ${label}`} data-testid={`scorecard-sort-${key}`}>
+      {label}<Icon className="h-3 w-3 shrink-0" aria-hidden="true" />
+    </button>;
+  };
   // Nulls are excluded, and a column with nothing but nulls has no range at all.
   const ranges = cols.map(c => {
     const v = list.map(c.get).filter((n): n is number => n != null && Number.isFinite(n));
     return v.length ? { min: Math.min(...v), max: Math.max(...v) } : { min: 0, max: 0 };
   });
-  const project = (r: any) =>
-    pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
   return (
     <Card>
+      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
+        <label htmlFor="scorecard-sort-category" className="font-medium">Sort by</label>
+        <select id="scorecard-sort-category" value={activeSort.key}
+          className="rounded-md border bg-background px-2 py-1.5 text-foreground"
+          onChange={event => chooseSort(event.target.value)}>
+          {sortColumns.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => chooseSort(activeSort.key)} aria-label="Reverse scorecard sort direction">
+          {activeSort.direction === "asc" ? <ArrowUp className="h-3 w-3" aria-hidden="true" /> : <ArrowDown className="h-3 w-3" aria-hidden="true" />}
+          {activeSort.key === "name" ? activeSort.direction === "asc" ? "A–Z" : "Z–A" : activeSort.direction === "asc" ? "Lowest first" : "Highest first"}
+        </Button>
+        <span>Or click any column heading. Click again to reverse.</span>
+      </div>
       <CardContent className="p-0 overflow-x-auto overscroll-x-contain">
         <table className="w-full min-w-[640px] text-sm border-collapse">
           <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
             <tr>
-              <th className="text-left px-3 py-2 font-medium w-8">#</th>
-              <th className="text-left px-3 py-2 font-medium">CLR</th>
-              {cols.map(c => <th key={c.key} title={c.title} className="text-center px-3 py-2 font-medium whitespace-nowrap">{c.label}</th>)}
-              {pace && <th className="text-center px-3 py-2 font-medium whitespace-nowrap" title="Projected month-end transfers. Sundays are not counted as worked days.">Pace</th>}
+              <th scope="col" className="text-left px-3 py-2 font-medium w-8" title="Position in the selected sort">#</th>
+              <th scope="col" aria-sort={sortAria("name")} className="text-left px-3 py-2 font-medium">{sortHeader("name", "CLR")}</th>
+              {cols.map(c => <th scope="col" key={c.key} aria-sort={sortAria(c.key)} title={c.title} className="text-center px-3 py-2 font-medium whitespace-nowrap">{sortHeader(c.key, c.label)}</th>)}
+              {pace && <th scope="col" aria-sort={sortAria("pace")} className="text-center px-3 py-2 font-medium whitespace-nowrap" title="Projected month-end transfers. Sundays are not counted as worked days.">{sortHeader("pace", "Pace")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -1119,17 +1149,15 @@ export default function ManagerDashboard() {
     // Benchmark mean = average per CLR across the WHOLE team, not just the shown
     // lines, so the dashed line doesn't move when you toggle individual lines.
     //
-    // Days a CLR did not work are excluded rather than counted as a zero. With
-    // no calls AND no transfers there is nothing to average — they were out, and
-    // folding that in drags the benchmark down until it measures attendance
-    // instead of performance. A real zero (someone in the office who logged
-    // calls but got no transfers) still counts.
+    // Qualify by transfer activity OR at least one hour of daily CallTools
+    // active time. Calls alone do not establish a worked day for this metric.
+    // A qualifying zero-transfer day still contributes a real zero.
     let teamSum = 0, teamN = 0, teamAbsent = 0, teamTrainingExcluded = 0;
     for (const s of clrTrendSeries) {
       if (s.inTraining) { teamTrainingExcluded++; continue; }
-      const calls = ((s as any).calls as number[] | undefined)?.[i] ?? 0;
       const transfers = ((s as any).transfers as number[] | undefined)?.[i] ?? 0;
-      if (calls === 0 && transfers === 0) { teamAbsent++; continue; }
+      const activeSeconds = s.callToolsActiveSeconds?.[i] ?? 0;
+      if (!isClrTrendWorkday(transfers, activeSeconds)) { teamAbsent++; continue; }
       const arr = (s as any)[clrTrendMetric] as number[];
       teamSum += arr[i] ?? 0;
       teamN++;
@@ -1734,7 +1762,7 @@ export default function ManagerDashboard() {
                         const absent = row?.__absent ?? 0;
                         const training = row?.__trainingExcluded ?? 0;
                         if (worked == null) return label;
-                        return `${label} · ${worked} averaged${absent ? `, ${absent} out` : ""}${training ? `, ${training} in training excluded` : ""}`;
+                        return `${label} · ${worked} averaged${absent ? `, ${absent} below workday threshold` : ""}${training ? `, ${training} in training excluded` : ""}`;
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -1768,7 +1796,7 @@ export default function ManagerDashboard() {
             )}
             <p className="text-[11px] text-muted-foreground mt-3">
               Click a CLR pill to toggle its line. Defaults to top 5 by {clrTrendMetricLabel.toLowerCase()} in this range.
-              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per working CLR who has completed training. In-training CLRs stay visible but are excluded from that average.` : ""}
+              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per working CLR who has completed training. A worked day requires a transfer (including split credit) OR at least 1 hour of CallTools active time. Calls alone do not qualify. In-training CLRs stay visible but are excluded from that average.` : ""}
             </p>
           </CardContent>
         </Card>
