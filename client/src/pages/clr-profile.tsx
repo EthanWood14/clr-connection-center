@@ -62,7 +62,7 @@ type Comparison = {
 type Resp = {
   lifetime?: {
     totals: { transfers: number; appointments: number; calls: number; fellThrough: number;
-              activeDays: number; firstDay: string | null; lastDay: string | null };
+              activeDays: number; workedDays: number; firstDay: string | null; lastDay: string | null };
     rates: { transfersPerDay: number; appointmentsPerDay: number; callsPerDay: number;
              transferRate: number; fellThroughRate: number };
     comparisons: Comparison[];
@@ -430,7 +430,7 @@ export default function ClrProfile() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                   <Stat icon={PhoneForwarded} label="Transfers (all time)" value={formatTransferCount(data.lifetime.totals.transfers)}
-                        sub={`${data.lifetime.rates.transfersPerDay} per active day`} />
+                        sub={`${data.lifetime.rates.transfersPerDay} per qualified working day`} />
                   {/* The fair rate: only normal working days count — the first
                       20 training days and any trainer days are excluded from
                       both sides of the division. */}
@@ -442,10 +442,10 @@ export default function ClrProfile() {
                             : "still in training")
                           : "no data"} />
                   <Stat icon={CalendarCheck} label="Appointments" value={data.lifetime.totals.appointments.toLocaleString()}
-                        sub={`${data.lifetime.rates.appointmentsPerDay} per active day`} />
+                        sub={`${data.lifetime.rates.appointmentsPerDay} per qualified working day`} />
                   <Stat icon={PhoneCall} label="Calls" value={data.lifetime.totals.calls.toLocaleString()}
-                        sub={`${data.lifetime.rates.callsPerDay} per active day`} />
-                  <Stat icon={Percent} label="Active days" value={data.lifetime.totals.activeDays}
+                        sub={`${data.lifetime.rates.callsPerDay} per qualified working day`} />
+                  <Stat icon={Percent} label="Qualified workdays" value={data.lifetime.totals.workedDays}
                         sub={data.lifetime.totals.firstDay ? `since ${fmtStartDate(data.lifetime.totals.firstDay)}` : "no activity yet"} />
                 </div>
 
@@ -454,15 +454,15 @@ export default function ClrProfile() {
                     know what it is a rank OF. */}
                 <p className="text-[11px] text-muted-foreground">
                   Compared against the median of {data.lifetime.peerCount} other counted CLR
-                  {data.lifetime.peerCount === 1 ? "" : "s"}, per active day rather than by total — otherwise
+                  {data.lifetime.peerCount === 1 ? "" : "s"}, per qualified working day rather than by total — otherwise
                   whoever has been here longest always wins.
                 </p>
 
                 {data.lifetime.thin && (
                   <p className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300"
                      data-testid="thin-sample-warning">
-                    Only {data.lifetime.totals.activeDays} active day
-                    {data.lifetime.totals.activeDays === 1 ? "" : "s"} logged — under {data.lifetime.minDays} these
+                    Only {data.lifetime.totals.workedDays} qualified working day
+                    {data.lifetime.totals.workedDays === 1 ? "" : "s"} logged — under {data.lifetime.minDays} these
                     rates swing on a single call, so treat the ranking as provisional.
                   </p>
                 )}

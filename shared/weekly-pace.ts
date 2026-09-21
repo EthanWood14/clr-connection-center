@@ -86,6 +86,8 @@ export function weekLabel(iso: string): string {
 export function weeklyPace(input: {
   /** Every day each rostered CLR recorded any work. */
   days: ReadonlyArray<PaceDay>;
+  /** Shared-rule qualified days; `days` remains the tenure/ramp evidence. */
+  qualifiedDays?: ReadonlyArray<PaceDay>;
   /** Transfer credit per CLR per business date (halves for Shotgun). */
   credits: ReadonlyArray<PaceCredit>;
   /** Today in the office's timezone, "YYYY-MM-DD". */
@@ -141,9 +143,13 @@ export function weeklyPace(input: {
     // Days worked, by person, so one person's short week is short rather than
     // dragging a whole five days of denominator behind it.
     const worked = new Map<number, number>();
-    days.forEach((row) => {
+    const seenDays = new Set<string>();
+    const workedKeys = new Set<string>();
+    (input.qualifiedDays ?? days).forEach((row) => {
       if (!inWeek(row.date) || !isWeekday(row.date) || !ramped(row.userId)) return;
       const key = `${row.userId}:${row.date}`;
+      if (seenDays.has(key)) return;
+      seenDays.add(key);
       const halfSet = halfDays.has(key) ? new Set([row.userId]) : new Set<number>();
       const fullOffSet = fullOffDays.has(key) ? new Set([row.userId]) : new Set<number>();
       const weight = paceDayWeight({
@@ -153,9 +159,10 @@ export function weeklyPace(input: {
         halfDayUserIds: halfSet,
         fullOffUserIds: fullOffSet,
         excluded,
-        todayWeight: PACE_TODAY_WEIGHT,
+        todayWeight: input.qualifiedDays ? 1 : PACE_TODAY_WEIGHT,
       });
       if (weight <= 0) return;
+      workedKeys.add(key);
       worked.set(row.userId, (worked.get(row.userId) ?? 0) + weight);
     });
 
@@ -163,6 +170,7 @@ export function weeklyPace(input: {
     const creditByUser = new Map<number, number>();
     credits.forEach((row) => {
       if (!inWeek(row.date) || !worked.has(row.userId)) return;
+      if (input.qualifiedDays && !workedKeys.has(`${row.userId}:${row.date}`)) return;
       if (excluded.some((e) => e.userId === row.userId && e.date === row.date)) return;
       const n = Number(row.credit) || 0;
       if (n === 0) return;
@@ -172,6 +180,8 @@ export function weeklyPace(input: {
     // Quiet week: no credited transfers → out of clrDays, unless from-date
     // keep list (Jordon Mon–Tue at 0 credit by design).
     for (const userId of [...worked.keys()]) {
+      // One hour of CallTools time qualifies even with zero weekly transfers.
+      if (input.qualifiedDays) continue;
       if ((creditByUser.get(userId) ?? 0) > 0) continue;
       if (keepZero.has(userId)) continue;
       worked.delete(userId);

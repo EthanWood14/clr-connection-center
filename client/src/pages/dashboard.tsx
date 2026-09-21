@@ -1016,7 +1016,7 @@ export default function Dashboard() {
   // Managers/admins see the team overview at Home; CLRs (and other roles) see the
   // existing personal dashboard. Hooks must not run conditionally, so each
   // branch renders its own self-contained component below.
-  if (_authUser?.role === "admin" || _authUser?.isManager) {
+  if (_authUser?.role === "admin" || _authUser?.isManager || _authUser?.isDemo) {
     // Lazy so CLRs never pay the ManagerDashboard chunk parse cost on Home.
     return (
       <Suspense fallback={

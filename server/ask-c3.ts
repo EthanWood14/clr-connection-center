@@ -29,7 +29,8 @@ import {
   getCallStatsByRange,
 } from "./storage";
 import { transferCreditByUser, transferCreditFor } from "@shared/transfer-credit";
-import { sumAvailabilityPortions } from "@shared/half-day";
+import { loadPerformanceDays } from "./performance-workdays";
+import { performanceDaysByUser, PERFORMANCE_WORKDAY_DESCRIPTION } from "@shared/performance-workday";
 import { paceHalfDayContext } from "./half-day";
 import { creditExcludedDayKeys, isCreditExcludedPersonDay, isStatsExcluded } from "@shared/stats-exclusions";
 
@@ -394,6 +395,8 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
       }
 
       const availability = paceCtx.availability;
+      const performanceDays = performanceDaysByUser(loadPerformanceDays(getRawSqlite(), user.orgId, start, end), availability);
+      for (const id of performanceDays.keys()) ids.add(id);
       const perClr = [...ids].map((id) => {
         const u = usersById.get(id);
         const stat = statsByClr.get(id);
@@ -402,7 +405,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
         const transfers = stat?.transfers ?? 0;
         const appointments = stat?.appointments ?? 0;
         // Days worked = availability weights (half=0.5, full off=0), not distinct count.
-        const activeDays = sumAvailabilityPortions(id, stat?.days ?? [], availability);
+        const activeDays = performanceDays.get(id) ?? 0;
         return {
           userId: id,
           name: String(u?.name ?? `User #${id}`),
@@ -423,7 +426,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
       // `transfers > 0` earns a place here on its own: a CLR who published a
       // shotgun lead somebody else closed logged no outcome of their own that
       // day, and dropping them would leave half a transfer out of the averages.
-      const active = perClr.filter((row) => row.totalOutcomes > 0 || row.callsMade > 0 || row.transfers > 0);
+      const active = perClr.filter((row) => row.totalOutcomes > 0 || row.callsMade > 0 || row.transfers > 0 || row.activeDays > 0);
       const avg = (values: number[]) => (values.length ? Number((values.reduce((a, b) => a + b, 0) / values.length).toFixed(2)) : 0);
       const median = (values: number[]) => {
         if (!values.length) return 0;
@@ -449,7 +452,7 @@ export async function executeTool(user: AskUser, name: string, input: any): Prom
           avgTransfersPerActiveDay: avg(active.filter((row) => row.activeDays > 0).map((row) => row.transfersPerActiveDay)),
           avgTransfersPer100Calls: avg(rated.map((row) => row.transfersPer100Calls as number)),
         },
-        note: "Team averages include only CLRs with activity in the range; active days are the sum of availability weights (full=1, half=0.5, full day off=0 even if activity leaked) for days with at least one logged outcome.",
+        note: `Team averages include CLRs with activity in the range. Performance days: ${PERFORMANCE_WORKDAY_DESCRIPTION}`,
       });
     }
     case "get_clr_trends": {

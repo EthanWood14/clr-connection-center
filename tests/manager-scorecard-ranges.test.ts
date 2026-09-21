@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildTransferScorecardWindows, priorMonthToDate } from "../server/manager-scorecard";
+import { projectPerformanceTransfers as project } from "../shared/performance-workday";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -72,14 +73,13 @@ test("month-to-date pace projects the month and lands in the right tier", () => 
   assert.equal(tierFor(200), 200, "the boundary counts as reaching it");
   assert.equal(tierFor(199), 150);
   assert.equal(tierFor(74), null, "below the lowest tier gets no badge at all");
-  // The projection itself: rate so far, carried across the whole month.
-  const project = (transfers: number, daysElapsed: number, daysInMonth: number) =>
-    daysElapsed > 0 ? Math.round((transfers / daysElapsed) * daysInMonth) : null;
-  assert.equal(project(30, 9, 30), 100);
-  assert.equal(project(11, 2, 31), 171, "an early hot streak projects high - that is what pace means");
-  assert.equal(project(5, 0, 30), null, "no elapsed days, no projection");
+  // Keep actual credit, then project only remaining available days at the
+  // rate earned on qualifying workdays.
+  assert.equal(project(30, 9, 21), 100);
+  assert.equal(project(11, 2, 29), 171, "an early hot streak projects high - that is what pace means");
+  assert.equal(project(5, 0, 30), null, "no qualifying days, no projection");
   // Only on the MTD window: a rolling 30-day range has no month to project into.
-  assert.match(dash, /pace=\{scorecardRange === "mtd" \?/);
+  assert.match(dash, /pace=\{scorecardRange === "mtd"\}/);
   assert.match(dash, /scorecardRange === "mtd" && \(/, "the legend only shows on MTD");
 });
 

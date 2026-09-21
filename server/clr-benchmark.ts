@@ -37,9 +37,9 @@ export type ClrTotals = {
 export type MetricKey = "transfersPerDay" | "appointmentsPerDay" | "callsPerDay" | "transferRate" | "fellThroughRate";
 
 export const METRIC_LABELS: Record<MetricKey, string> = {
-  transfersPerDay: "Transfers / active day",
-  appointmentsPerDay: "Appointments / active day",
-  callsPerDay: "Calls / active day",
+  transfersPerDay: "Transfers / working day",
+  appointmentsPerDay: "Appointments / working day",
+  callsPerDay: "Calls / working day",
   transferRate: "Transfers per 100 calls",
   fellThroughRate: "Fell-through rate",
 };
@@ -101,14 +101,14 @@ export type Comparison = {
 export const MIN_DAYS_FOR_COMPARISON = 5;
 
 export function comparisonIsThin(t: ClrTotals): boolean {
-  return t.activeDays < MIN_DAYS_FOR_COMPARISON;
+  return (t.workedDays ?? t.activeDays) < MIN_DAYS_FOR_COMPARISON;
 }
 
 export function compare(subject: ClrTotals, peers: ClrTotals[]): Comparison[] {
   const mine = metricsFor(subject);
   // Peers who never worked a day carry no information and would drag every
   // baseline to zero.
-  const active = peers.filter((p) => p.activeDays > 0 && p.userId !== subject.userId);
+  const active = peers.filter((p) => (p.workedDays ?? p.activeDays) > 0 && p.userId !== subject.userId);
   const peerMetrics = active.map(metricsFor);
 
   return (Object.keys(METRIC_LABELS) as MetricKey[]).map((key) => {

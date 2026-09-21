@@ -91,6 +91,9 @@ import { notesToBonzoHtml, transferNoteMarker, appointmentNoteMarker, notePlainT
 import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, comparisonIsThin, MIN_DAYS_FOR_COMPARISON } from "./clr-benchmark";
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
 import { transfersPerWorkingDay, MIN_WORKING_DAYS_FOR_RATE, type ClrWorkdayRate } from "./clr-workday-rate";
+import { loadPerformanceDays } from "./performance-workdays";
+import { loadScorecardDigestContext } from "./scorecard-digest-context";
+import { performanceDaysByUser, performanceDayWeight, remainingPerformancePaceDays, PERFORMANCE_WORKDAY_DESCRIPTION } from "@shared/performance-workday";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
 import { LAP_DEVICE_COOKIE, LAP_DEVICE_MAX_AGE_MS, gateAttemptAllowed, gateAttemptSucceeded, newDeviceId, deviceLabelFrom, deviceAuditName } from "./lap-gate";
 import { businessTodayInTz, businessTodayForRequest, addIsoDays, countWeekdaysInMonth, requiredEodWeekdaysInTz, parseWallClockInTz, BUSINESS_DAY_DEFAULT_TZ, rolloverIfEodSubmitted, tzFromRequest, eodIsOverdue, EOD_DUE_LABEL, wallClockInTz, isValidTimezone, normalizeTimezone } from "./business-day";
@@ -116,6 +119,7 @@ import {
   sharedOverdueAppointmentPatch,
 } from "./appointment-permissions";
 import { buildTransferScorecardWindows, priorMonthToDate } from "./manager-scorecard";
+import { buildDemoManagerDashboard, buildDemoLoTransferSplit } from "./demo-manager-dashboard";
 import { recurringCompDueDate, recurringCompIsDue, repairEarlyRecurringCompRequests } from "./recurring-comp";
 import {
   TASK_COMP_TASK_COLUMNS, TASK_COMP_REQUEST_COLUMNS, TASK_COMP_REQUEST_UNIQUE_INDEX,
@@ -147,7 +151,7 @@ import { PACE_RAMP_DAYS, completedAverage, mondayOf, weeklyPace } from "@shared/
 import {
   availableWeekdayPortions, ensureHalfDaySchema, ensureSeededHalfDays,
   isHalfDayExcusedFromLate, paceHalfDayContext, parseDayPortionBody, parseLeaveKindBody, dayPortionForLeaveKind, normalizeLeaveKind, LEAVE_KIND_LABELS,
-  prorateWeeklyGoal, sumAvailabilityPortions, sumWorkedAvailabilityPortions,
+  prorateWeeklyGoal,
   weeksElapsedFromPortions,
 } from "./half-day";
 import { metaConversion } from "./leadvault-meta-conversion";
@@ -14435,6 +14439,7 @@ ${note}` : daysLine;
       return res.status(403).json({ error: "Organization context required." });
     }
     const orgKey = String(reportOrgId);
+    if (isDemoOrg(reportOrgId)) return res.json(buildDemoManagerDashboard(businessTodayForRequest(req, storageExtra.getRawSqlite())));
     if (!isFast) {
       const hit = dashboardFullCache.get(orgKey);
       if (hit && Date.now() - hit.at < DASHBOARD_FULL_CACHE_TTL_MS) {
@@ -14953,7 +14958,8 @@ ${note}` : daysLine;
         if (!lbByUser[uid]) lbByUser[uid] = { transfers: 0, appointments: 0, fellThrough: 0, total: 0 };
         const c = Number(r.count) || 0;
         lbByUser[uid].total += c;
-        if (r.outcome_type === "transfer") lbByUser[uid].transfers = c;
+        // Transfer credit is populated only by the filtered query below.
+        // Otherwise a fully excluded day falls back to its raw outcome count.
         if (r.outcome_type === "appointment") lbByUser[uid].appointments = c;
         if (r.outcome_type === "fell_through") lbByUser[uid].fellThrough = c;
       }
@@ -15345,43 +15351,15 @@ ${note}` : daysLine;
       }
 
 
-      const workOrg = Number(currentOrgId() ?? 1);
-      // Days each CLR left any trace, for the transfers-per-worked-day column.
-      //
-      // eod_reports has NO org_id column — filtering on it made prepare()
-      // throw on older installations. Scope EOD via its owning user; the
-      // seven tables that carry org_id are filtered directly.
-      //
-      // Wrapped as well: this column is a nicety, and no nicety should be able
-      // to blank the dashboard. If the query ever fails again the page loses
-      // one number instead of everything.
-      // Fast phase skips the multi-table UNION — scorecard still paints; per-
-      // worked-day rates fill in on phase=full.
+      const workOrg = reportOrgId;
+      const endOfMonth = new Date(`${endDate}T12:00:00Z`);
+      endOfMonth.setUTCMonth(endOfMonth.getUTCMonth() + 1, 0);
+      const workdayAvailability = paceHalfDayContext(sqlite, workOrg, startDate, endOfMonth.toISOString().slice(0, 10)).availability;
+      // Performance days are not attendance days. The same qualified daily
+      // evidence drives scorecard denominators and trend weights below.
       let workedDaysByUser = new Map<number, number>();
       if (!isFast) try {
-        // Distinct (assistant, day) pairs — then sum availability weights so
-        // half days = 0.5 and full days off = 0 (even if activity leaked).
-        const workedRows = sqlite.prepare(`
-          SELECT assistant_id, d FROM (
-            SELECT assistant_id, date AS d FROM lead_outcomes WHERE org_id=?
-            UNION SELECT assistant_id, log_date FROM daily_call_logs WHERE org_id=? AND calls_made>0
-            UNION SELECT assistant_id, activity_date FROM callsync_activity_events WHERE org_id=?
-            UNION SELECT user_id, stat_date FROM dialpad_daily_stats WHERE org_id=? AND calls>0
-            UNION SELECT COALESCE(e.user_id,l.user_id), e.message_date FROM dialpad_sms_events e
-              LEFT JOIN dialpad_agent_links l ON l.org_id=e.org_id AND l.agent_key=e.agent_key WHERE e.org_id=?
-            UNION SELECT user_id, date FROM morning_checkins WHERE org_id=?
-            UNION SELECT user_id, date(clock_in) FROM time_clock_entries WHERE org_id=?
-            UNION SELECT assistant_id, report_date FROM eod_reports WHERE
-              assistant_id IN (SELECT id FROM users WHERE org_id=${reportOrgId}) AND
-              (calls_made>0 OR messages_sent>0 OR additional_conversations>0 OR calltools_conversations>0
-               OR calltools_active_seconds>0 OR dialpad_calls>0 OR transfers>0 OR appointments>0)
-          ) WHERE d BETWEEN ? AND ?
-        `).all(...Array(7).fill(workOrg), startDate, endDate) as any[];
-        const halfCtx = paceHalfDayContext(sqlite, workOrg, startDate, endDate);
-        workedDaysByUser = sumWorkedAvailabilityPortions(
-          workedRows.map((r) => ({ userId: Number(r.assistant_id), date: String(r.d) })),
-          halfCtx.availability,
-        );
+        workedDaysByUser = performanceDaysByUser(loadPerformanceDays(sqlite, workOrg, startDate, endDate), workdayAvailability);
       } catch (e: any) {
         console.error("[manager-dashboard] worked-days rollup failed:", e?.message ?? e);
       }
@@ -15406,6 +15384,7 @@ ${note}` : daysLine;
             ...trainingForUser(trainingByUser, u.id),
             transfers: s.transfers,
             workedDays: workedDaysByUser.get(Number(u.id)) ?? 0,
+            remainingPaceDays: remainingPerformancePaceDays(Number(u.id), endDate, workdayAvailability),
             transfersPerWorkedDay: (workedDaysByUser.get(Number(u.id)) ?? 0) > 0
               ? s.transfers / workedDaysByUser.get(Number(u.id))! : null,
             callsPerWorkedDay: (workedDaysByUser.get(Number(u.id)) ?? 0) > 0
@@ -15582,6 +15561,10 @@ ${note}` : daysLine;
             fellThrough:  b ? b.fellThrough  : new Array(clrTrendDates.length).fill(0),
             calls:        b ? b.calls        : new Array(clrTrendDates.length).fill(0),
             callToolsActiveSeconds: b ? b.callToolsActiveSeconds : new Array(clrTrendDates.length).fill(0),
+            workdayWeights: clrTrendDates.map((date, i) => performanceDayWeight({
+              userId: Number(u.id), date, transfers: b?.transfers[i] ?? 0,
+              calls: b?.calls[i] ?? 0, callToolsActiveSeconds: b?.callToolsActiveSeconds[i] ?? 0,
+            }, workdayAvailability)),
           };
         }),
       };
@@ -17643,6 +17626,7 @@ ${note}` : daysLine;
   }
 
   async function sendScorecardDigest(orgId: number, kind: ScorecardDigestKind): Promise<"sent" | "skipped"> {
+    if (isDemoOrg(orgId)) return "skipped";
     // Plain PT calendar date, NOT businessToday — the end-of-day send fires at
     // 19:00, the exact minute the business day rolls forward, and businessToday
     // would report tomorrow and mail an empty scorecard.
@@ -17667,7 +17651,8 @@ ${note}` : daysLine;
     const html = buildEmail({
       subject,
       preheader: `${formatTransferCount(totalTransfers)} transfers · ${rows.reduce((s, r) => s + r.appointments, 0)} appointments`,
-      body: buildScorecardDigestHtml(windowLabel, dateLabel, rows, { helperAssisted, helperName }),
+      body: buildScorecardDigestHtml(windowLabel, dateLabel, rows, { helperAssisted, helperName,
+        context: loadScorecardDigestContext(storageExtra.getRawSqlite(), orgId, w.from, w.to) }),
     });
     await sendEmail({ to: managers, subject, html });
     console.log(`[scorecard-digest] org ${orgId} ${kind}: sent to ${managers.length} manager(s), ${formatTransferCount(totalTransfers)} transfers ${w.from}..${w.to}`);
@@ -20638,14 +20623,15 @@ ${note}` : daysLine;
     const paceCtx = paceHalfDayContext(db, orgId, from, today);
     const availability = paceCtx.availability;
     const creditExcludedKeys = new Set(paceCtx.excludedDays.map((e) => `${e.userId}:${e.date}`));
+    const qualifiedDays = loadPerformanceDays(db, orgId, from, today);
 
     res.json({
       generatedAt: new Date().toISOString(),
       today,
       from,
       helper: { name: helperName, resolved: helperUserId != null, excludedFromTeamFigures: helperUserId != null },
-      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, availability, creditExcludedKeys),
-      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, availability, creditExcludedKeys),
+      byMonth: rollUp(rows, monthStartOf, helperUserId, (p) => p !== thisMonth, availability, creditExcludedKeys, qualifiedDays),
+      byWeek: rollUp(rows, weekStartOf, helperUserId, (p) => p !== thisWeek, availability, creditExcludedKeys, qualifiedDays),
       definitions: definitionsFor(helperName, helperUserId != null),
     });
 
@@ -20662,6 +20648,7 @@ ${note}` : daysLine;
     const orgId = Number(req.session_user?.orgId ?? currentOrgId() ?? 1) || 1;
     const db = storageExtra.getRawSqlite();
     const today = businessTodayForRequest(req, db);
+    if (isDemoOrg(orgId)) return res.json(buildDemoLoTransferSplit(today));
     const week = resolveNamedPeriod("week");
     const month = resolveNamedPeriod("month");
 
@@ -23406,11 +23393,17 @@ ${note}` : daysLine;
       if (d < earliest) earliest = d;
       if (d > latest) latest = d;
     }
+    const performanceRows = loadPerformanceDays(sqlite, orgId);
+    for (const r of performanceRows) {
+      if (r.date < earliest) earliest = r.date;
+      if (r.date > latest) latest = r.date;
+    }
     const availability = (earliest <= latest)
       ? paceHalfDayContext(sqlite, orgId, earliest, latest).availability
       : {};
     const minIso = (a: string | null, b: string | null) => (a && b ? (a < b ? a : b) : a || b);
     const maxIso = (a: string | null, b: string | null) => (a && b ? (a > b ? a : b) : a || b);
+    const performanceWorkedDays = performanceDaysByUser(performanceRows, availability);
 
     return roster.map((u: any): ClrTotals => {
       const id = Number(u.id);
@@ -23426,7 +23419,7 @@ ${note}` : daysLine;
         // Distinct weekdays for the training clock / sample size.
         activeDays: dates.length,
         // Transfers/day denominator: half=0.5, full off=0 (even with activity).
-        workedDays: sumAvailabilityPortions(id, dates, availability),
+        workedDays: performanceWorkedDays.get(id) ?? 0,
         firstDay: minIso(o?.first_day ?? null, c?.first_day ?? null),
         lastDay: maxIso(o?.last_day ?? null, c?.last_day ?? null),
       };
@@ -23518,6 +23511,11 @@ ${note}` : daysLine;
         if (d > latest) latest = d;
       }
     });
+    const qualifyingDays = loadPerformanceDays(sqlite, orgId);
+    for (const r of qualifyingDays) {
+      if (r.date < earliest) earliest = r.date;
+      if (r.date > latest) latest = r.date;
+    }
     const availability = (earliest <= latest)
       ? paceHalfDayContext(sqlite, orgId, earliest, latest).availability
       : {};
@@ -23526,6 +23524,7 @@ ${note}` : daysLine;
       const id = Number(u.id);
       out.set(id, transfersPerWorkingDay({
         activeDates: activeByUser.get(id) ?? [],
+        qualifyingDates: new Set(qualifyingDays.filter((r) => r.userId === id).map((r) => r.date)),
         trainerDates: trainerByUser.get(id) ?? new Set(),
         transferDates: transfersByUser.get(id) ?? [],
         userId: id,
@@ -24189,6 +24188,7 @@ ${note}` : daysLine;
         );
         const weeks = weeklyPace({
           days: days.map((r) => ({ userId: Number(r.user_id), date: String(r.d) })),
+          qualifiedDays: loadPerformanceDays(sqlite, orgId, from, w.today).filter((r) => paceIds.includes(r.userId)),
           credits: credits.map((r) => ({ userId: Number(r.user_id), date: String(r.d), credit: Number(r.credit) || 0 })),
           today: w.today,
           weeks: TV_PACE_WEEKS,
@@ -24201,6 +24201,7 @@ ${note}` : daysLine;
           weeks,
           average: completedAverage(weeks),
           rampDays: PACE_RAMP_DAYS,
+          workdayRule: PERFORMANCE_WORKDAY_DESCRIPTION,
           halfDay: paceCtx.resolved,
           excludedPersonDays: paceCtx.excludedDays,
         };
@@ -25296,7 +25297,7 @@ ${note}` : daysLine;
             totals: mine,
             rates: clrMetricsFor(mine),
             comparisons: compareClr(mine, peers),
-            peerCount: peers.filter((p) => p.activeDays > 0 && p.userId !== userId).length,
+            peerCount: peers.filter((p) => (p.workedDays ?? p.activeDays) > 0 && p.userId !== userId).length,
             thin: comparisonIsThin(mine),
             minDays: MIN_DAYS_FOR_COMPARISON,
             trainingWorkdayThreshold: CLR_TRAINING_WORKDAY_THRESHOLD,

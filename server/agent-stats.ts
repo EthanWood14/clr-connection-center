@@ -38,6 +38,7 @@ export type ClrPeriod = {
 
 import { asAvailabilityContext, sumAvailabilityPortions, type DayAvailabilityContext } from "@shared/half-day";
 import { isCreditExcludedPersonDay } from "@shared/stats-exclusions";
+import { PERFORMANCE_WORKDAY_DESCRIPTION } from "@shared/performance-workday";
 
 export type OutcomeRow = {
   date: string;
@@ -85,6 +86,7 @@ export function rollUp(
   halfDaysOrCtx?: ReadonlySet<string> | DayAvailabilityContext | null,
   /** Person-days (`${userId}:${date}`) whose transfers must not count. */
   creditExcludedKeys?: ReadonlySet<string> | null,
+  qualifiedDays?: ReadonlyArray<{ userId: number; date: string }>,
 ): ClrPeriod[] {
   type Acc = { transfers: number; helper: number; days: Map<number, Set<string>> };
   const byPeriod = new Map<string, Acc>();
@@ -101,11 +103,21 @@ export function rollUp(
       if (isHelper) acc.helper += 1;
       else if (!creditExcluded) acc.transfers += 1;
     }
-    if (!isHelper && !creditExcluded) {
+    if (!qualifiedDays && !isHelper && !creditExcluded) {
       const seen = acc.days.get(Number(r.assistantId)) ?? new Set<string>();
       seen.add(String(r.date));
       acc.days.set(Number(r.assistantId), seen);
     }
+    byPeriod.set(period, acc);
+  }
+  for (const r of qualifiedDays ?? []) {
+    if (r.userId === helperId || creditExcludedKeys?.has(`${r.userId}:${r.date}`)) continue;
+    const period = bucket(r.date);
+    if (!period || sumAvailabilityPortions(r.userId, [r.date], availability) <= 0) continue;
+    const acc = byPeriod.get(period) ?? { transfers: 0, helper: 0, days: new Map<number, Set<string>>() };
+    const dates = acc.days.get(r.userId) ?? new Set<string>();
+    dates.add(r.date);
+    acc.days.set(r.userId, dates);
     byPeriod.set(period, acc);
   }
 
@@ -141,9 +153,9 @@ export function rollUp(
 export function definitionsFor(helperName: string, helperExcluded: boolean) {
   return {
     transfers: "A logged outcome of type 'transfer': the CLR got the borrower onto the phone with a loan officer, or booked a time for one to call them back.",
-    avgPerClr: "transfers / the number of CLRs who logged anything in the period. Moves with headcount, which has grown from 2 to 13 since April — do not read it as productivity.",
+    avgPerClr: "transfers / CLRs with at least one qualified working day in the period. Moves with headcount; prefer avgPerClrDay for productivity.",
     avgPerClrDay:
-      "transfers / CLR-days, where a CLR-day is one CLR logging anything on one day (half days count as 0.5; full days off count as 0 even if activity leaked). THIS IS THE FIGURE TO COMPARE ACROSS PERIODS: it is unaffected by headcount, holidays, part-timers or a period being partly elapsed.",
+      `transfers / qualified CLR-day portions. ${PERFORMANCE_WORKDAY_DESCRIPTION}`,
     complete:
       "False when the period has not finished. An incomplete period's totals are a floor, never a trend. The most common mistake with this data is reading the current partial week as a fall.",
     helperTransfers: helperExcluded

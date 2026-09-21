@@ -545,7 +545,7 @@ function renderScriptText(text: string, searchQuery: string, values: Placeholder
 // ─── Inline Node Editor ───────────────────────────────────────────────────────
 function InlineNodeBlock({
   node, responses, allNodes, depth, scriptId, expanded, onToggle, searchQuery, childNodesByParent, autoEdit,
-  onEditStarted, onChildExpand, expandedIds, canEdit = true,
+  onEditStarted, onChildExpand, expandedIds, canEdit = true, onDirtyChange,
 }: {
   node: any;
   responses: any[];
@@ -561,6 +561,7 @@ function InlineNodeBlock({
   onChildExpand: (id: number) => void;
   expandedIds: Set<number>;
   canEdit?: boolean;
+  onDirtyChange?: (id: number, dirty: boolean) => void;
 }) {
   const { toast } = useToast();
   const placeholders = usePlaceholders();
@@ -568,7 +569,20 @@ function InlineNodeBlock({
   const [text, setText] = useState(node.text);
   const [hint, setHint] = useState(node.hint ?? "");
 
-  useEffect(() => { setText(node.text); setHint(node.hint ?? ""); }, [node.id, node.text, node.hint]);
+  useEffect(() => {
+    if (!editing) { setText(node.text); setHint(node.hint ?? ""); }
+  }, [node.id, node.text, node.hint, editing]);
+  const dirty = editing && (text !== node.text || hint !== (node.hint ?? ""));
+  useEffect(() => {
+    onDirtyChange?.(node.id, dirty);
+    return () => onDirtyChange?.(node.id, false);
+  }, [node.id, dirty, onDirtyChange]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   useEffect(() => {
     if (autoEdit) { setEditing(true); onEditStarted(); }
@@ -581,7 +595,8 @@ function InlineNodeBlock({
 
   const updateNodeMut = useMutation({
     mutationFn: () => apiRequest("PATCH", `/api/script-nodes/${node.id}`, { text, hint }),
-    onSuccess: () => { invalidate(); setEditing(false); toast({ title: "Node updated" }); },
+    onSuccess: () => { invalidate(); setEditing(false); toast({ title: "Script wording saved" }); },
+    onError: (error: Error) => toast({ title: "Couldn't save — your draft is still here", description: error.message, variant: "destructive" }),
   });
 
   const addResponseMut = useMutation({
@@ -649,11 +664,16 @@ function InlineNodeBlock({
                   </p>
                 ) : (
                   <div className="mt-2 space-y-2">
-                    <Textarea value={text} onChange={e => setText(e.target.value)} rows={4} placeholder="What do you say at this step?" />
-                    <Input value={hint} onChange={e => setHint(e.target.value)} placeholder="Coaching hint (optional)" />
+                    <label className="block text-sm font-medium" htmlFor={`script-wording-${node.id}`}>What you say</label>
+                    <Textarea id={`script-wording-${node.id}`} autoFocus value={text} onChange={e => setText(e.target.value)} rows={8}
+                      className="min-h-[180px] resize-y text-base leading-relaxed" placeholder="What do you say at this step?"
+                      onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !updateNodeMut.isPending && text.trim()) { e.preventDefault(); updateNodeMut.mutate(); } }} />
+                    <label className="block text-sm font-medium" htmlFor={`script-hint-${node.id}`}>Coaching hint (optional)</label>
+                    <Input id={`script-hint-${node.id}`} value={hint} onChange={e => setHint(e.target.value)} placeholder="A coaching tip for this step" />
+                    <p className="text-xs text-muted-foreground">Keep placeholders like {"{name}"} in place. Ctrl/⌘ + Enter saves this step.{dirty ? " Unsaved changes." : ""}</p>
                     <div className="flex gap-2">
                       <Button size="sm" onClick={() => updateNodeMut.mutate()} disabled={updateNodeMut.isPending || !text.trim()}>
-                        {updateNodeMut.isPending ? "Saving…" : "Save"}
+                        {updateNodeMut.isPending ? "Saving…" : "Save wording"}
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => { setEditing(false); setText(node.text); setHint(node.hint ?? ""); }}>Cancel</Button>
                     </div>
@@ -665,8 +685,8 @@ function InlineNodeBlock({
               </div>
               {!editing && canEdit && (
                 <div className="flex gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditing(true)} title="Edit">
-                    <Pencil className="w-3.5 h-3.5" />
+                  <Button size="sm" variant="outline" className="h-8 gap-1.5 px-2 text-xs" onClick={() => setEditing(true)} title="Edit this step's wording">
+                    <Pencil className="w-3.5 h-3.5" /> Edit wording
                   </Button>
                   {node.parent_node_id !== null && (
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
@@ -718,6 +738,7 @@ function InlineNodeBlock({
               onChildExpand={onChildExpand}
               expandedIds={expandedIds}
               canEdit={canEdit}
+              onDirtyChange={onDirtyChange}
             />
           ))}
         </div>
@@ -852,6 +873,12 @@ function NodeEditor({ scriptId, onClose, canEdit = true }: { scriptId: number; o
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [rootsInitialized, setRootsInitialized] = useState(false);
   const [autoEditId, setAutoEditId] = useState<number | null>(null);
+  const [layout, setLayout] = useState<"steps" | "outline">("steps");
+  const [dirtyIds, setDirtyIds] = useState<Set<number>>(new Set());
+  const markDirty = useCallback((id: number, dirty: boolean) => setDirtyIds(prev => {
+    if (prev.has(id) === dirty) return prev;
+    const next = new Set(prev); if (dirty) next.add(id); else next.delete(id); return next;
+  }), []);
 
   const toggle = (id: number) => setExpanded(s => {
     const next = new Set(s);
@@ -914,13 +941,13 @@ function NodeEditor({ scriptId, onClose, canEdit = true }: { scriptId: number; o
   };
 
   // When searching, show flat list of matches so nothing is hidden behind a collapsed parent
-  const flatMatches = searchLower ? nodes.filter(searchFilter) : [];
+  const flatMatches = nodes.filter(searchFilter).sort((a, b) => (a.node_order ?? 0) - (b.node_order ?? 0));
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-          Script Nodes
+          Script editor
           {!canEdit && (
             <span className="inline-flex items-center gap-1 text-[11px] font-normal normal-case text-muted-foreground">
               <Lock className="w-3 h-3" /> read-only
@@ -930,33 +957,40 @@ function NodeEditor({ scriptId, onClose, canEdit = true }: { scriptId: number; o
         <div className="flex gap-2">
           {canEdit && (
             <Button size="sm" variant="outline" onClick={() => addNodeMut.mutate()} disabled={addNodeMut.isPending} className="text-xs gap-1">
-              <Plus className="w-3 h-3" /> {addNodeMut.isPending ? "Adding…" : "Add Node"}
+              <Plus className="w-3 h-3" /> {addNodeMut.isPending ? "Adding…" : "Add step"}
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={onClose} className="text-xs gap-1"><ArrowLeft className="w-3 h-3" /> Back</Button>
+          <Button size="sm" variant="ghost" onClick={() => { if (!dirtyIds.size || confirm("Discard unsaved script wording?")) onClose(); }} className="text-xs gap-1"><ArrowLeft className="w-3 h-3" /> Back</Button>
         </div>
       </div>
 
       {/* Search */}
+      <p className="text-sm text-muted-foreground">Find a step, choose <strong>Edit wording</strong>, then save. Responses below each step control where the conversation goes.</p>
+      <div className="flex gap-2 items-center flex-wrap">
+        <Button size="sm" variant={layout === "steps" ? "default" : "outline"} disabled={dirtyIds.size > 0} onClick={() => setLayout("steps")}>All steps</Button>
+        <Button size="sm" variant={layout === "outline" ? "default" : "outline"} disabled={dirtyIds.size > 0} onClick={() => setLayout("outline")}>Branch outline</Button>
+        <span className="text-xs text-muted-foreground">{nodes.length} steps{dirtyIds.size ? " · Save or cancel your draft to search or change views." : ""}</span>
+      </div>
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           value={search}
+          disabled={dirtyIds.size > 0}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search nodes, hints, responses…"
+          placeholder="Find wording, a coaching hint, or a response…"
           className="pl-8 h-9 text-sm"
         />
         {search && (
-          <Button size="sm" variant="ghost" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0" onClick={() => setSearch("")}>
+          <Button size="sm" variant="ghost" disabled={dirtyIds.size > 0} aria-label="Clear script search" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0" onClick={() => setSearch("")}>
             <X className="w-3.5 h-3.5" />
           </Button>
         )}
       </div>
 
-      {searchLower ? (
+      {searchLower || layout === "steps" ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            {flatMatches.length} match{flatMatches.length === 1 ? "" : "es"} for "{search}"
+            {flatMatches.length} step{flatMatches.length === 1 ? "" : "s"}{search ? ` matching “${search}”` : " — all branches shown"}
           </p>
           {flatMatches.map((n: any) => (
             <InlineNodeBlock
@@ -969,12 +1003,13 @@ function NodeEditor({ scriptId, onClose, canEdit = true }: { scriptId: number; o
               expanded={true}
               onToggle={() => toggle(n.id)}
               searchQuery={search}
-              childNodesByParent={childMap}
+              childNodesByParent={new Map()}
               autoEdit={autoEditId === n.id}
               onEditStarted={() => setAutoEditId(null)}
               onChildExpand={expandOne}
               expandedIds={expanded}
               canEdit={canEdit}
+              onDirtyChange={markDirty}
             />
           ))}
         </div>
@@ -1002,6 +1037,7 @@ function NodeEditor({ scriptId, onClose, canEdit = true }: { scriptId: number; o
               onChildExpand={expandOne}
               expandedIds={expanded}
               canEdit={canEdit}
+              onDirtyChange={markDirty}
             />
           ))}
         </div>

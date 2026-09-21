@@ -132,12 +132,14 @@ function sendHarness(rows: ScorecardRow[], instant: string, recipients = ["manag
   }
   const dependencies = {
     Date: SnapshotDate,
+    isDemoOrg: (orgId: number) => orgId === 999,
+    loadScorecardDigestContext: () => ({ attendance: [], eodNotes: [] }),
     BUSINESS_DAY_DEFAULT_TZ: "America/Los_Angeles",
     scorecardWindow, scorecardSnapshotLabel, formatTransferCount, buildScorecardDigestHtml,
     buildScorecardDigestRows: (orgId: number, from: string, to: string) => { windows.push({ orgId, from, to }); return rows; },
     scorecardDigestHelperAssistedCount: (_orgId: number, _from: string, _to: string) => 3,
     scorecardManagerEmails: (orgId: number) => { recipientOrgs.push(orgId); return recipients; },
-    storageExtra: { getEmailSettings: () => ({ helper_name: "Elleine" }) },
+    storageExtra: { getEmailSettings: () => ({ helper_name: "Elleine" }), getRawSqlite: () => null },
     buildEmail: ({ body }: { body: string }) => body,
     sendEmail: async (message: typeof mail[number]) => { mail.push(message); },
     console: { log: () => {} },
@@ -303,7 +305,8 @@ test("buildScorecardDigestRows opts the helper back in despite exclude_from_stat
 test("sendScorecardDigest passes helper-assisted count into the HTML builder", () => {
   const fn = routes.slice(routes.indexOf("async function sendScorecardDigest"), routes.indexOf("function scheduleScorecardDigest"));
   assert.match(fn, /scorecardDigestHelperAssistedCount\(orgId, w\.from, w\.to\)/);
-  assert.match(fn, /buildScorecardDigestHtml\(windowLabel, dateLabel, rows, \{ helperAssisted, helperName \}\)/);
+  assert.match(fn, /buildScorecardDigestHtml\(windowLabel, dateLabel, rows, \{ helperAssisted, helperName,/);
+  assert.match(fn, /context: loadScorecardDigestContext\(storageExtra.getRawSqlite\(\), orgId, w.from, w.to\)/);
   assert.match(routes, /helper_assisted=1/);
 });
 
@@ -311,4 +314,11 @@ test("intraday mail body includes the helper-assisted line from the harness", as
   const harness = sendHarness([row("Elleine Asuncion", 10, 3, 0)], "2026-07-15T15:00:00Z");
   assert.equal(await harness.send(37, "intraday"), "sent");
   assert.match(harness.mail[0].html, /Elleine assisted: 3/);
+});
+
+test("demo scorecards never email fictional data", async () => {
+  const harness = sendHarness([row("Sample CLR", 10, 3, 0)], "2026-07-15T15:00:00Z");
+  assert.equal(await harness.send(999, "intraday"), "skipped");
+  assert.equal(harness.mail.length, 0);
+  assert.equal(harness.windows.length, 0);
 });

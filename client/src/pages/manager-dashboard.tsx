@@ -24,11 +24,11 @@ import { useAuth } from "@/lib/auth";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { businessTodayClient } from "@/lib/business-day";
 import { dropWeekendRows, isWeekday } from "@/lib/weekday-date";
-import { countNonSundaysInMonth } from "@shared/pace-days";
 import { formatTransferCount } from "@shared/transfer-credit";
 import { formatSlaSeconds } from "@shared/shotgun-sla";
 import { DEFAULT_SCORECARD_SORT, resolveScorecardSort, selectScorecardSort, sortScorecardRows, type ScorecardSort } from "@/lib/scorecard-sort";
 import { isClrTrendWorkday } from "@/lib/clr-trend-workday";
+import { PERFORMANCE_WORKDAY_DESCRIPTION, projectPerformanceTransfers } from "@shared/performance-workday";
 import type { ManagerDailyMetrics } from "@shared/manager-daily-metrics";
 
 // Theme colors
@@ -159,10 +159,12 @@ type RangeBlock = {
       fellThrough: number[];
       calls: number[];
       callToolsActiveSeconds: number[];
+      workdayWeights?: number[];
     }[];
   };
 };
 type ManagerData = {
+  demo?: boolean;
   dailyMetrics?: ManagerDailyMetrics;
   generatedAt: string;
   /** "fast" = KPI/scorecard windows only; "full" = every byRange including all-time. */
@@ -308,7 +310,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
   rows: any[];
   rangeLabel: string;
   /** Present only on the month-to-date window. */
-  pace?: { daysElapsed: number; daysInMonth: number };
+  pace?: boolean;
 }) {
   const [sort, setSort] = useState<ScorecardSort>(DEFAULT_SCORECARD_SORT);
   if (!rows?.length) {
@@ -468,7 +470,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
   // colour on the table — the exact verdict the null exists to avoid — and
   // stretches everybody else's spread against a floor nobody stands on.
   const project = (r: any) =>
-    pace && pace.daysElapsed > 0 ? Math.round(((r.transfers ?? 0) / pace.daysElapsed) * pace.daysInMonth) : null;
+    pace ? projectPerformanceTransfers(r.transfers ?? 0, r.workedDays ?? 0, r.remainingPaceDays ?? 0) : null;
   const cols: Array<{
     key: string; label: string; get: (r: any) => number | null; better: boolean;
     fmt: (r: any) => string; title?: string; cellTitle?: (r: any) => string | undefined;
@@ -493,13 +495,13 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
       get: (r: any) => r.transfersPerWorkedDay ?? null,
       fmt: (r: any) => r.transfersPerWorkedDay == null ? "—" : Number(r.transfersPerWorkedDay).toFixed(2),
       title: "Transfers divided by days worked (full=1, half=0.5, full day off=0 even if activity leaked).",
-      cellTitle: (r: any) => `${r.transfers ?? 0} transfers / ${r.workedDays ?? 0} days worked`,
+      cellTitle: (r: any) => `${r.transfers ?? 0} transfers / ${r.workedDays ?? 0} days worked. ${PERFORMANCE_WORKDAY_DESCRIPTION}`,
     },
       { key: "callsPerWorkedDay", label: "Calls / day worked", better: true,
       get: (r: any) => r.callsPerWorkedDay ?? null,
       fmt: (r: any) => r.callsPerWorkedDay == null ? "—" : Number(r.callsPerWorkedDay).toFixed(1),
       title: "Calls divided by days worked (full=1, half=0.5, full day off=0 even if activity leaked).",
-      cellTitle: (r: any) => `${r.calls ?? 0} calls / ${r.workedDays ?? 0} days worked`,
+      cellTitle: (r: any) => `${r.calls ?? 0} calls / ${r.workedDays ?? 0} days worked. ${PERFORMANCE_WORKDAY_DESCRIPTION}`,
     },
     ] : []),
     { key: "appointments", label: "Appts",     get: r => r.appointments ?? 0,      better: true,  fmt: r => String(r.appointments ?? 0) },
@@ -565,7 +567,7 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
       cellTitle: placementNote, cellNote: placementCellNote },
     ...(pace ? [{ key: "pace", label: "Pace", get: project, better: true,
       fmt: (r: any) => project(r) == null ? "—" : String(project(r)),
-      title: "Projected month-end transfers. Sundays are not counted as worked days.",
+      title: "Projected month-end transfers: actual transfers plus Transfers/day worked × remaining available days. Future Sundays, holidays and approved days off are excluded; half days are weighted.",
       render: (r: any) => {
         const projected = project(r);
         const tier = projected == null ? null : paceTier(projected);
@@ -971,7 +973,7 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
     queryKey: [`/api/meta-conversion?days=${metaDays}`],
     queryFn: () => apiRequest("GET", `/api/meta-conversion?days=${metaDays}`),
     refetchInterval: 60_000,
-    enabled: fastQ.isSuccess && !overview,
+    enabled: fastQ.isSuccess && !overview && !user?.isDemo,
   });
 
   /**
@@ -1162,10 +1164,11 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
       const transfers = ((s as any).transfers as number[] | undefined)?.[i] ?? 0;
       const activeSeconds = s.callToolsActiveSeconds?.[i] ?? 0;
       const calls = s.calls?.[i] ?? 0;
-      if (!isClrTrendWorkday(d, transfers, activeSeconds, calls)) { teamAbsent++; continue; }
+      const weight = s.workdayWeights?.[i] ?? (isClrTrendWorkday(d, transfers, activeSeconds, calls) ? 1 : 0);
+      if (weight <= 0) { teamAbsent++; continue; }
       const arr = (s as any)[clrTrendMetric] as number[];
       teamSum += arr[i] ?? 0;
-      teamN++;
+      teamN += weight;
     }
     row.__mean = teamN > 0 ? teamSum / teamN : 0; // avg metric per WORKING CLR
     row.__worked = teamN;
@@ -1225,6 +1228,10 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
   return (
     <div className="p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 min-w-0 max-w-full" data-testid={overview ? "manager-overview" : "advanced-dashboard"}>
       {/* Header */}
+      {data.demo && <div role="status" className="rounded-xl border border-sky-400/40 bg-sky-50 p-4 text-sm text-sky-950 dark:bg-sky-950/40 dark:text-sky-100" data-testid="manager-demo-banner">
+        <strong>Manager demo · Sample data</strong>
+        <p>Explore the scorecard, change date ranges and sort columns. All names and numbers here are fictional; this preview is read-only and cannot change live team records.</p>
+      </div>}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -1347,7 +1354,7 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
         </SectionTitle>
         {scorecardRange === "mtd" && (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>Pace projects the whole month from what has happened so far, Sundays not counted:</span>
+            <span>Pace uses each CLR's qualified days worked and remaining availability:</span>
             {[...PACE_TIERS].reverse().map(t => (
               <span key={t.at} className="rounded px-1.5 py-0.5 font-bold" style={{ backgroundColor: t.color, color: t.text }}>
                 {t.label}+
@@ -1358,20 +1365,7 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
         {!byRange[scorecardRange] ? <div className="rounded-lg border p-6 text-sm text-muted-foreground" role="status">
           {fullQ.isError ? "Scorecard unavailable for this range. Use Refresh to try again." : "Loading this scorecard range…"}
         </div> : <TransferScorecard
-          pace={scorecardRange === "mtd" ? (() => {
-            const w = byRange.mtd?.window;
-            if (!w?.endDate) return undefined;
-            const [y, m, d] = w.endDate.split("-").map(Number);
-            // Sundays are not working days, so BOTH halves of the ratio count only
-            // non-Sundays: divide by the ones already worked, multiply by the ones
-            // the month will have. Feeding one half non-Sundays and the other raw
-            // calendar days would inflate every projection by about a seventh.
-            // (Deliberately not the comp estimate's rule — see shared/pace-days.ts.)
-            return {
-              daysElapsed: countNonSundaysInMonth(y, m, d),
-              daysInMonth: countNonSundaysInMonth(y, m),
-            };
-          })() : undefined}
+          pace={scorecardRange === "mtd"}
           rows={byRange[scorecardRange]?.leaderboard ?? []}
           rangeLabel={byRange[scorecardRange]?.window?.label ?? SCORECARD_OPTIONS.find(option => option.key === scorecardRange)?.label ?? "selected"}
         />}
@@ -1796,7 +1790,7 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
                         const absent = row?.__absent ?? 0;
                         const training = row?.__trainingExcluded ?? 0;
                         if (worked == null) return label;
-                        return `${label} · ${worked} averaged${absent ? `, ${absent} below workday threshold` : ""}${training ? `, ${training} in training excluded` : ""}`;
+                        return `${label} · ${worked} working-day portions averaged${absent ? `, ${absent} off / below threshold` : ""}${training ? `, ${training} in training excluded` : ""}`;
                       }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -1830,7 +1824,7 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
             )}
             <p className="text-[11px] text-muted-foreground mt-3">
               Click a CLR pill to toggle its line. Defaults to top 5 by {clrTrendMetricLabel.toLowerCase()} in this range.
-              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per working CLR who has completed training. From July 21, 2026, a worked day requires a transfer (including split credit) OR at least 1 hour of CallTools active time; calls alone do not qualify. Earlier dates retain the calls-or-transfers rule. In-training CLRs stay visible but are excluded from that average.` : ""}
+              {clrTrendShowAvg ? ` Dashed line = ${clrTrendWindow}-business-day rolling average of ${clrTrendMetricLabel.toLowerCase()} per working CLR who has completed training. ${PERFORMANCE_WORKDAY_DESCRIPTION} Split transfer credit qualifies. In-training CLRs stay visible but are excluded from that average.` : ""}
             </p>
           </CardContent>
         </Card>

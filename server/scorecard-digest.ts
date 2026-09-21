@@ -7,6 +7,7 @@
 // on-screen board must never disagree about who is on top.
 import { addIsoDays } from "./business-day";
 import { formatTransferCount } from "@shared/transfer-credit";
+import type { ScorecardDigestContext } from "./scorecard-digest-context";
 
 export type ScorecardDigestKind = "intraday" | "midday" | "eod" | "midweek" | "eow";
 
@@ -99,7 +100,7 @@ export function buildScorecardDigestHtml(
   windowLabel: string,
   dateLabel: string,
   rows: ScorecardRow[],
-  extras?: { helperAssisted?: ScorecardDigestHelperAssisted; helperName?: string },
+  extras?: { helperAssisted?: ScorecardDigestHelperAssisted; helperName?: string; context?: ScorecardDigestContext },
 ): string {
   const helperName = extras?.helperName ?? extras?.helperAssisted?.name;
   const isHelper = (r: ScorecardRow) => isScorecardDigestHelperException(r.name, { helperName });
@@ -152,6 +153,14 @@ export function buildScorecardDigestHtml(
     <p style="margin:12px 0 0;font-size:12px;color:#64748b">${esc(assisted.name)} assisted: ${Number(assisted.count) || 0}</p>`
     : "";
 
+  const context = extras?.context;
+  const contextHtml = context ? `
+    <h3 style="margin:22px 0 8px;color:#1A2B4A;font-size:15px">Time off / sick</h3>
+    ${context.attendance.length ? context.attendance.map(r => `<p style="font-size:13px;margin:6px 0"><strong>${esc(r.name)}</strong> · ${esc(r.label)} · ${esc(r.from)}${r.from !== r.to ? ` → ${esc(r.to)}` : ""}</p>`).join("") : '<p style="font-size:12px;color:#64748b">No approved time off or excused absences in this window.</p>'}
+    <h3 style="margin:22px 0 8px;color:#1A2B4A;font-size:15px">EOD notes</h3>
+    ${context.eodNotes.length ? context.eodNotes.map(r => `<div style="padding:10px 12px;margin:8px 0;background:#f8fafc;border:1px solid #e2e8f0"><strong style="font-size:13px">${esc(r.name)} · ${esc(r.date)}</strong><p style="white-space:pre-wrap;font-size:13px;margin:6px 0 0">${esc(r.notes)}</p></div>`).join("") : '<p style="font-size:12px;color:#64748b">No EOD notes submitted for this window yet.</p>'}
+  ` : "";
+
   return `
     <p style="margin:0 0 4px;font-size:15px;font-weight:600;color:#1A2B4A">Transfer Scorecard — ${esc(windowLabel)}</p>
     <p style="margin:0 0 14px;font-size:12px;color:#64748b">${esc(dateLabel)} · ranked by transfers, appointments break ties</p>
@@ -175,5 +184,5 @@ export function buildScorecardDigestHtml(
         <td style="padding:8px 12px;font-size:13px;text-align:center">${tot("fellThrough")}</td>
         <td style="padding:8px 12px;font-size:13px;text-align:center">${pct({ transfers: tot("transfers"), calls: tot("calls") })}</td>
       </tr></tfoot>
-    </table>${helperSection}${assistedLine}`;
+    </table>${helperSection}${assistedLine}${contextHtml}`;
 }

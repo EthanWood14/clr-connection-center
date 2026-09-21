@@ -7,6 +7,7 @@ import ts from "typescript";
 import Database from "better-sqlite3";
 import { CLR_TREND_WORKDAY_CUTOFF, isClrTrendWorkday } from "../client/src/lib/clr-trend-workday";
 import { isWeekday } from "../client/src/lib/weekday-date";
+import { performanceDayWeight, PERFORMANCE_WORKDAY_DESCRIPTION } from "../shared/performance-workday";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dash = readFileSync(join(root, "client/src/pages/manager-dashboard.tsx"), "utf8");
@@ -14,12 +15,13 @@ const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 
 test("a CLR who did not work is excluded from that day's average", () => {
   const block = dash.slice(dash.indexOf("let teamSum = 0"), dash.indexOf("row.__worked"));
-  assert.match(block, /if \(!isClrTrendWorkday\(d, transfers, activeSeconds, calls\)\) \{ teamAbsent\+\+; continue; \}/);
+  assert.match(block, /if \(weight <= 0\) \{ teamAbsent\+\+; continue; \}/);
+  assert.match(block, /s.workdayWeights\?\.\[i\]/);
   assert.match(block, /s\.callToolsActiveSeconds\?\.\[i\] \?\? 0/);
   assert.match(block, /s\.calls\?\.\[i\] \?\? 0/, "historical days retain their per-day call counts");
   // The divisor must be the working count, not the roster size.
   assert.match(dash, /row\.__mean = teamN > 0 \? teamSum \/ teamN : 0;/);
-  assert.match(dash, /teamN\+\+;/);
+  assert.match(dash, /teamN \+= weight;/);
 });
 
 test("the metric averaged is still the selected one", () => {
@@ -39,12 +41,11 @@ test("a day nobody worked does not drag the rolling window", () => {
 test("the chart says what the average is over", () => {
   assert.match(dash, /Avg per non-training working CLR/, "the legend must identify the eligible working group");
   assert.match(dash, /labelFormatter=/, "the tooltip must show how many were working");
-  assert.match(dash, /\$\{worked\} averaged/);
+  assert.match(dash, /\$\{worked\} working-day portions averaged/);
   assert.match(dash, /in training excluded/);
-  assert.match(dash, /below workday threshold/, "not qualifying for the metric is not proof of absence");
-  assert.match(dash, /OR at least 1 hour of CallTools active time/);
-  assert.match(dash, /From July 21, 2026/);
-  assert.match(dash, /Earlier dates retain the calls-or-transfers rule/);
+  assert.match(dash, /off \/ below threshold/);
+  assert.match(PERFORMANCE_WORKDAY_DESCRIPTION, /at least 1 hour of CallTools active time/);
+  assert.match(PERFORMANCE_WORKDAY_DESCRIPTION, /before July 21, 2026, calls or a transfer/);
 });
 
 test("a transfer OR a full hour qualifies, including split credit and the exact threshold", () => {
@@ -170,6 +171,7 @@ test("the actual server series keeps time-only historical CLRs and aligns daily 
     clrCallToolsActiveRows: [{ assistant_id: 1, date: "2026-09-15", active_seconds: 3600 }],
     historicalClrs: [{ id: 1, name: "Former CLR", isActive: false }, { id: 2, name: "Active CLR", isActive: true }],
     trainingByUser: new Map(), trainingForUser: () => ({ activeWorkdays: 30, inTraining: false }),
+    performanceDayWeight, workdayAvailability: {},
   };
   const result = new Function(...Object.keys(scope), js + "\nreturn clrTrend;")(...Object.values(scope));
   assert.equal(result.series.length, 2);

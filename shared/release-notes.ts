@@ -28,6 +28,13 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.122.37", headline: "Consistent workday averages, clearer scripts and a populated demo.", items: [
+    { text: "Performance per-day rates, scorecards, charts and TV pace now share the same rule: transfer credit or at least one hour of CallTools activity from July 21 onward, with earlier calls-or-transfers history preserved. Approved full days off are excluded; half days count as 0.5. Attendance, payroll and training tenure are unchanged.", audience: "manager" },
+    { text: "MTD transfer pace uses each CLR's qualifying workdays and remaining available days, so days off no longer drag down their daily rate.", audience: "manager" },
+    { text: "The call script opens as searchable steps with clear Edit wording buttons, larger writing fields and unsaved-draft protection.", audience: "everyone" },
+    { text: "Manager scorecard emails now include approved time off/sick status and EOD notes for the report period. Private leave reasons remain private; delivery times and manager recipients are unchanged.", audience: "manager" },
+    { text: "Open Manager Demo now shows clearly labeled fictional KPIs, scorecards, trends and LO/LOA transfer tables without exposing real team data or enabling writes.", audience: "everyone" },
+  ] },
   { version: "4.122.36", headline: "Half-day CLRs (Rosas) keep their transfers on team boards.", items: [
     { text: "Standing half days (Matthew Rosas every weekday) and approved half leave no longer wipe transfer credit on TV boards, the Transfer Scorecard, weekly pace, Ask C3, or digests. Those days still count as 0.5 in transfers/day and goal proration.", audience: "everyone" },
     { text: "Approved full PTO / full sick days still drop that day's credit on team boards, same as before.", audience: "manager" },

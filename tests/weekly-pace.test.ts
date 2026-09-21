@@ -115,7 +115,7 @@ test("the wall gets the pace page, fed by its own section on the TV endpoint", (
   const pages = read("client/src/components/tv/pages.tsx");
   assert.match(pages, /data-testid="tv-page-weekly-pace"/);
   assert.match(pages, /data-testid="tv-pace-columns"/);
-  assert.match(pages, /Days actually worked, not headcount\. Today counts as half a day\./);
+  assert.match(pages, /Transfer or 1h CallTools time\. Full days off excluded; half days weighted\./);
   // A line on a ZERO baseline with a labelled scale. Ten bars sized against
   // the tallest week all came out the same height — every week sits between
   // 2.9 and 4.9 — so the first version said nothing from across the room.

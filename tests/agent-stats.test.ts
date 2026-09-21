@@ -152,7 +152,7 @@ test("the payload explains the traps a reader would otherwise fall into", () => 
   // Every one of these is here because it has already been got wrong reading
   // this data — including by me.
   const d = definitionsFor("Elleine", true);
-  assert.match(d.avgPerClrDay, /THIS IS THE FIGURE TO COMPARE ACROSS PERIODS/);
+  assert.match(d.avgPerClrDay, /qualified CLR-day portions/);
   assert.match(d.avgPerClrDay, /half days count as 0.5/);
   assert.match(d.complete, /never a trend/);
   assert.match(d.nestedWindows, /collapsing when it is not/);

@@ -56,7 +56,7 @@ export default function Login() {
     try {
       await apiRequest("POST", "/api/auth/login", { email: "demo@clrconnection.com", password: "Demo2026!" });
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
-      window.location.hash = "#/";
+      window.location.hash = "#/team-summary";
       window.location.reload();
     } catch (err: any) {
       setError(err.message ?? "Demo login failed");
@@ -203,7 +203,7 @@ export default function Login() {
               <div className="flex items-center justify-between mb-2">
                 <div>
                   <div className="text-xs font-semibold text-[#1A2B4A]">Try the Demo</div>
-                  <div className="text-[11px] text-slate-500">Explore a sandboxed read-only org</div>
+                  <div className="text-[11px] text-slate-500">Manager dashboard with fictional sample data · read-only</div>
                 </div>
                 <button
                   type="button"
@@ -211,7 +211,7 @@ export default function Login() {
                   disabled={loading}
                   className="text-xs font-semibold px-3 py-1.5 rounded-md bg-[#1A2B4A] text-white hover:bg-[#243a63] disabled:opacity-60 transition-colors"
                 >
-                  Login as Demo
+                  Open Manager Demo
                 </button>
               </div>
               <div className="text-[11px] text-slate-500 font-mono">

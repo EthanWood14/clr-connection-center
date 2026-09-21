@@ -48,6 +48,8 @@ export type ClrWorkdayRate = {
 export function transfersPerWorkingDay(input: {
   /** Distinct active WEEKDAY dates (YYYY-MM-DD), any order. */
   activeDates: readonly string[];
+  /** Qualified performance days; deliberately separate from tenure above. */
+  qualifyingDates?: ReadonlySet<string>;
   /** Dates claimed on live/paid training comp requests. */
   trainerDates: ReadonlySet<string>;
   /**
@@ -71,9 +73,16 @@ export function transfersPerWorkingDay(input: {
   const minDays = input.minDays ?? MIN_WORKING_DAYS_FOR_RATE;
   const active = [...new Set(input.activeDates)].sort();
   const trainingDays = Math.min(active.length, threshold);
-  const postTraining = active.slice(trainingDays);
-  const workingSet = new Set(postTraining.filter((date) => !input.trainerDates.has(date)));
-  const trainerDays = postTraining.length - workingSet.size;
+  const trainingEnd = trainingDays > 0 ? active[trainingDays - 1] : "";
+  const postTraining = input.qualifyingDates && active.length >= threshold
+    ? Array.from(new Set([...active.slice(trainingDays), ...Array.from(input.qualifyingDates)
+      .filter(date => date > trainingEnd && ![0, 6].includes(new Date(`${date}T12:00:00Z`).getUTCDay()))])).sort()
+    : active.slice(trainingDays);
+  const trainerDays = postTraining.filter((date) => input.trainerDates.has(date)).length;
+  const availability = input.availability ?? asAvailabilityContext(input.halfDays, input.fullOffDays);
+  const workingSet = new Set(postTraining.filter((date) => !input.trainerDates.has(date)
+    && (!input.qualifyingDates || input.qualifyingDates.has(date))
+    && dayAvailabilityWeight(Number(input.userId), date, availability) > 0));
   // Sum of credit, not a row count — and rounded back to the nearest half so a
   // long month of 0.5s cannot drift on floating-point addition.
   const transfers = Math.round(input.transferDates.reduce((sum, entry) => {
@@ -88,8 +97,6 @@ export function transfersPerWorkingDay(input: {
   // still advance tenure when they appear in the activity union — that clock
   // is deliberately separate from rate denominators.
   const userId = Number(input.userId);
-  const availability = input.availability
-    ?? asAvailabilityContext(input.halfDays, input.fullOffDays);
   const hasAvailability = !!(availability.halfDays || availability.fullOffDays || availability.excludedDays);
   let workingDays = 0;
   for (const date of workingSet) {

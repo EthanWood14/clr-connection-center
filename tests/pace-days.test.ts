@@ -69,7 +69,7 @@ test("nonsense inputs return 0 rather than a plausible-looking wrong number", ()
   assert.equal(countNonSundaysInMonth(NaN, 9), 0);
   // 0 is the safe answer downstream: the dashboard only projects when
   // daysElapsed > 0, so a broken window renders a dash instead of a number.
-  assert.match(dash, /pace\.daysElapsed > 0/, "the projection still guards on a positive divisor");
+  assert.match(dash, /projectPerformanceTransfers/, "the shared projection guards on a positive qualified-day divisor");
 });
 
 test("every month of a year adds up, and only Sundays are ever dropped", () => {
@@ -93,23 +93,11 @@ test("every month of a year adds up, and only Sundays are ever dropped", () => {
 // The dashboard has to use it on BOTH sides of the ratio
 // ---------------------------------------------------------------------------
 
-test("the MTD pace divides AND multiplies by non-Sundays", () => {
+test("the MTD pace now uses each person's qualified workdays, not elapsed calendar days", () => {
   const start = dash.indexOf('pace={scorecardRange === "mtd"');
   assert.ok(start > 0, "the MTD pace block still exists");
-  const block = dash.slice(start, dash.indexOf("})() : undefined}", start));
-
-  assert.match(dash, /import \{ countNonSundaysInMonth \} from "@shared\/pace-days";/,
-    "the dashboard imports the shared counter");
-  assert.match(block, /daysElapsed:\s*countNonSundaysInMonth\(\s*y\s*,\s*m\s*,\s*d\s*\)/,
-    "the DIVISOR counts non-Sundays elapsed so far");
-  assert.match(block, /daysInMonth:\s*countNonSundaysInMonth\(\s*y\s*,\s*m\s*\)/,
-    "the MULTIPLIER counts non-Sundays in the whole month");
-
-  // The old raw-calendar arithmetic must be gone from BOTH halves. Half-doing
-  // this is the real hazard: dividing by non-Sundays while still multiplying by
-  // calendar days inflates every CLR by about a seventh.
-  assert.ok(!/getUTCDate\(\)/.test(block), "no raw calendar day-count left in the pace block");
-  assert.ok(!/w\.days/.test(block), "the raw elapsed-calendar-days field is no longer used");
+  assert.match(dash, /projectPerformanceTransfers\(r.transfers \?\? 0, r.workedDays \?\? 0, r.remainingPaceDays \?\? 0\)/);
+  assert.doesNotMatch(dash, /pace.daysElapsed|countNonSundaysInMonth/);
 });
 
 test("mixing the two rules would inflate every projection by about a seventh", () => {
@@ -124,13 +112,13 @@ test("mixing the two rules would inflate every projection by about a seventh", (
   assert.ok(mixed / correct > 1.1, "the mixed version is materially higher, not a rounding wobble");
 });
 
-test("the screen says Sundays are not counted", () => {
+test("the screen distinguishes qualified past days and future availability", () => {
   const legendStart = dash.indexOf('{scorecardRange === "mtd" && (');
   assert.ok(legendStart > 0, "the MTD tier legend still exists");
   const legend = dash.slice(legendStart, legendStart + 900);
-  assert.match(legend, /Sundays not counted/i, "the tier legend spells the rule out");
+  assert.match(legend, /qualified days worked and remaining availability/i);
   // And the Pace column header carries it too, at zero cost in table density.
-  assert.match(dash, /title: "Projected month-end transfers\. Sundays are not counted as worked days\."/);
+  assert.match(dash, /Future Sundays, holidays and approved days off are excluded; half days are weighted/);
 });
 
 // ---------------------------------------------------------------------------

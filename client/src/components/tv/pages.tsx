@@ -530,7 +530,7 @@ export function WeeklyPacePage({ weeks, average, reduced }: {
         className="mt-6 flex shrink-0 items-center justify-between gap-10 rounded-3xl border border-sky-300/25 bg-sky-400/[0.07] px-10 py-5"
       >
         <p className="text-[clamp(1rem,1.5vw,1.6rem)] leading-snug text-white/55">
-          Days actually worked, not headcount. Today counts as half a day.
+          Transfer or 1h CallTools time. Full days off excluded; half days weighted.
         </p>
         {best && (
           <p className="shrink-0 text-[clamp(1.1rem,1.7vw,1.9rem)] text-white/75">

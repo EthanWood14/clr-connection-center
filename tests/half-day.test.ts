@@ -258,14 +258,14 @@ test("manager dashboard, agent stats, and Ask C3 wire availability weights", () 
   const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
   const ask = readFileSync(join(root, "server/ask-c3.ts"), "utf8");
   const dash = readFileSync(join(root, "client/src/pages/manager-dashboard.tsx"), "utf8");
-  assert.match(routes, /sumWorkedAvailabilityPortions\(/, "scorecard days worked");
+  assert.match(routes, /performanceDaysByUser\(loadPerformanceDays/, "scorecard qualified days worked");
   assert.match(routes, /availableWeekdayPortions\(/, "per-CLR goal proration");
   assert.match(routes, /prorateWeeklyGoal\(/, "goal = weekly × portions/5");
   assert.match(routes, /callsPerWorkedDay/, "calls per worked day on scorecard payload");
-  assert.match(routes, /rollUp\([\s\S]*?availability\)/, "agent stats feed");
-  assert.match(routes, /workedDays: sumAvailabilityPortions\(/, "CLR lifetime rates");
+  assert.match(routes, /rollUp\([\s\S]*?availability, creditExcludedKeys, qualifiedDays\)/, "agent stats feed");
+  assert.match(routes, /workedDays: performanceWorkedDays.get\(/, "CLR lifetime rates");
   assert.match(routes, /fullOffDays: paceCtx\.fullOffDays/, "TV weekly pace full offs");
-  assert.match(ask, /sumAvailabilityPortions\(id, stat\?\.days/, "Ask C3 team metrics");
+  assert.match(ask, /performanceDaysByUser\(loadPerformanceDays/, "Ask C3 team metrics");
   assert.match(dash, /callsPerWorkedDay/, "Calls / day worked column");
   assert.match(dash, /half days & days off|available weekdays/i, "goal UI names the rule");
   const halfServer = readFileSync(join(root, "server/half-day.ts"), "utf8");

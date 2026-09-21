@@ -9,6 +9,7 @@ import * as dates from "date-fns";
 import { managerDailyMetrics } from "../shared/manager-daily-metrics";
 import { dropWeekendRows, isWeekday } from "../client/src/lib/weekday-date";
 import { isClrTrendWorkday } from "../client/src/lib/clr-trend-workday";
+import * as performanceWorkday from "../shared/performance-workday";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(root, rel), "utf8");
@@ -153,6 +154,7 @@ function harness(options: { fast?: any; full?: any; fastError?: boolean; fullErr
     "@/hooks/use-toast": { useToast: () => ({ toast: () => {} }) },
     "@/lib/weekday-date": { dropWeekendRows, isWeekday },
     "@/lib/clr-trend-workday": { isClrTrendWorkday },
+    "@shared/performance-workday": performanceWorkday,
     "@shared/transfer-credit": { formatTransferCount: String },
     "date-fns": dates,
   };

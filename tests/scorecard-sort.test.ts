@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { DEFAULT_SCORECARD_SORT, resolveScorecardSort, selectScorecardSort, sortScorecardRows } from "../client/src/lib/scorecard-sort";
+import { projectPerformanceTransfers, PERFORMANCE_WORKDAY_DESCRIPTION } from "../shared/performance-workday";
 
 const dash = readFileSync(new URL("../client/src/pages/manager-dashboard.tsx", import.meta.url), "utf8");
 const columns = [
@@ -60,12 +61,13 @@ function componentHarness() {
   const exports: any = {};
   const scope: Record<string, any> = { React, exports, useState: () => [sort, (next: typeof sort) => { sort = next; }],
     DEFAULT_SCORECARD_SORT, resolveScorecardSort, selectScorecardSort, sortScorecardRows,
+    projectPerformanceTransfers, PERFORMANCE_WORKDAY_DESCRIPTION,
     Card: "Card", CardContent: "CardContent", Button: "Button", ClrTrainingBadge: "ClrTrainingBadge",
     ArrowUpDown: "ArrowUpDown", ArrowUp: "ArrowUp", ArrowDown: "ArrowDown",
     heatColor: () => "", formatTransferCount: String, formatSlaSeconds: String, paceTier: () => null,
   };
   new Function(...Object.keys(scope), js)(...Object.values(scope));
-  return { render: (rows: any[], pace?: object) => exports.render({ rows, rangeLabel: "Today", pace }) };
+  return { render: (rows: any[], pace?: boolean) => exports.render({ rows, rangeLabel: "Today", pace }) };
 }
 function all(node: any): any[] { return node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(all)] : []; }
 function find(node: any, predicate: (n: any) => boolean) { const result = all(node).find(predicate); assert.ok(result, "rendered element exists"); return result; }
@@ -75,13 +77,13 @@ test("actual header buttons and picker sort every category and expose accessible
   const h = componentHarness();
   const rows = [
     { ...row("Low", 1, 1, 1), userId: 1, messages: 1, dialpadTexts: 1, callToolsContacts: 1, callToolsConversations: 1, callToolsActiveSeconds: 59,
-      transfersPerWorkedDay: 0.5, callsPerWorkedDay: 1, writeUpPct: 9, placementScore: 9,
+      workedDays: 2, remainingPaceDays: 18, transfersPerWorkedDay: 0.5, callsPerWorkedDay: 1, writeUpPct: 9, placementScore: 9,
       bonzoCalls: 1, bonzoContacts: 1, bonzoConversations: 1, slaClaimed: 1, slaUnclaimed: 9, slaClaimedPct: 10, slaMedianClaimSeconds: 9, slaAverageClaimSeconds: 9 },
     { ...row("High", 10, 10, 10), userId: 2, messages: 10, dialpadTexts: 10, callToolsContacts: 10, callToolsConversations: 10, callToolsActiveSeconds: 3600,
-      transfersPerWorkedDay: 5, callsPerWorkedDay: 10, writeUpPct: 90, placementScore: 90,
+      workedDays: 2, remainingPaceDays: 18, transfersPerWorkedDay: 5, callsPerWorkedDay: 10, writeUpPct: 90, placementScore: 90,
       bonzoCalls: 10, bonzoContacts: 10, bonzoConversations: 10, slaClaimed: 9, slaUnclaimed: 1, slaClaimedPct: 90, slaMedianClaimSeconds: 90, slaAverageClaimSeconds: 90 },
   ];
-  const pace = { daysElapsed: 2, daysInMonth: 20 };
+  const pace = true;
   let view = h.render(rows, pace);
   const picker = find(view, n => n.type === "select" && n.props.id === "scorecard-sort-category");
   const keys = picker.children.map((n: any) => n.props.value);
@@ -105,7 +107,7 @@ test("actual header buttons and picker sort every category and expose accessible
 test("actual component handles empty rows and range changes without a hidden MTD sort", () => {
   const h = componentHarness();
   const rows = [{ ...row("A", 1), userId: 1 }, { ...row("B", 10), userId: 2 }];
-  let view = h.render(rows, { daysElapsed: 2, daysInMonth: 20 });
+  let view = h.render(rows, true);
   find(view, n => n.props["data-testid"] === "scorecard-sort-pace").props.onClick();
   view = h.render(rows);
   assert.equal(find(view, n => n.type === "select").props.value, "transfers");
@@ -116,7 +118,7 @@ test("actual component handles empty rows and range changes without a hidden MTD
 });
 
 test("Bonzo columns are last in both standard and MTD headers, cells and sort picker", () => {
-  for (const pace of [undefined, { daysElapsed: 2, daysInMonth: 20 }]) {
+  for (const pace of [undefined, true]) {
     const view = componentHarness().render([{ ...row("A", 1), userId: 1, bonzoCalls: 31, bonzoContacts: 32, bonzoConversations: 33 }], pace);
     const picker = find(view, n => n.type === "select");
     assert.deepEqual(picker.children.slice(-3).map((n: any) => n.props.value), ["bonzoCalls", "bonzoContacts", "bonzoConversations"]);
