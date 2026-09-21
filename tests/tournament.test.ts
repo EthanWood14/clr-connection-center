@@ -102,7 +102,7 @@ test("the server pulls the day either side and the board is a Dashboard tab and 
   const app = read("client/src/App.tsx");
   assert.match(app, /<Route path="\/tournament" component=\{Tournament\} \/>/);
   const page = read("client/src/pages/tournament.tsx");
-  assert.match(page, /refetchInterval: date \? false : 10_000,\s*\n\s*refetchIntervalInBackground: true/);
+  assert.match(page, /refetchInterval: date \? false : 10_000,\s*\n\s*refetchIntervalInBackground: false/);
   assert.match(page, /serverTime - dataUpdatedAt/, "the countdown runs on the server clock");
 });
 

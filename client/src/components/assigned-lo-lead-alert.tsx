@@ -45,13 +45,8 @@ export function AssignedLoLeadAlert() {
     // every five seconds with ONE upstream call, so this poll is cheap and a
     // lead is on screen within ten seconds of landing rather than forty.
     refetchInterval: 5_000,
-    // A CLR lives in Bonzo and Dialpad, not in C3. Without this the poll
-    // PAUSES the moment C3 is not the front tab — which is nearly always — and
-    // the first test on the floor (Skyler, 14 Sep 2026) showed exactly that:
-    // heartbeats arriving, zero feed polls. The browser still throttles a
-    // hidden tab, so the push notification the server sends is the real
-    // guarantee; this keeps the on-screen card as current as the tab allows.
-    refetchIntervalInBackground: true,
+    // Hidden / background tabs must not keep polling — push covers the miss.
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     staleTime: 0,
     retry: 1,

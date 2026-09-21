@@ -92,13 +92,13 @@ export type Moment =
   | { type: "milestone"; key: string; milestone: Milestone }
   | { type: "overtake"; key: string; overtake: Overtake; fieldRace?: RankRow[]; raceBefore?: RankRow[] | null };
 
-export const POLL_MS = 10_000;
+export const POLL_MS = 60_000;
 /**
  * The board pages come from their own endpoint, polled far less often than the
  * moment feed. Two reasons: this payload is much heavier, and a query that
  * throws in here must never be able to stop a transfer from being celebrated.
  */
-export const PAGES_POLL_MS = 30_000;
+export const PAGES_POLL_MS = 60_000;
 /**
  * The office's clock, for the hourly race. The screen on the wall runs in the
  * building, but a display opened from anywhere else must still deal the race

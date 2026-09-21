@@ -44,7 +44,7 @@ export function TournamentBoard({ fullscreen = false, date }: { fullscreen?: boo
     queryKey: [date ? `/api/tournament?date=${date}` : "/api/tournament"],
     // A past board is final; only a live one polls.
     refetchInterval: date ? false : 10_000,
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
     staleTime: 0,
   });
   // Server clock, so a wrong wall-PC clock cannot start or end the tournament early.

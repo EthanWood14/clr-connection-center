@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import compression from "compression";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { registerRoutes, flushPendingEmails } from "./routes";
@@ -22,6 +23,8 @@ if (process.env.NODE_ENV === "production") {
 const app = express();
 const httpServer = createServer(app);
 app.set("trust proxy", 1);
+
+app.use(compression());
 
 app.use("/api/webhooks/dialpad-sms", express.text({ type: ["text/plain", "application/jwt", "application/octet-stream", "application/json"], limit: "256kb" }));
 
@@ -61,7 +64,7 @@ const generalApiLimiter = rateLimit({
   skip: (req) => /\/api\/tv(?:\/|$)/.test(req.originalUrl || req.url || ""),
 });
 
-// TV signage polls the feed ~every 10s and pages ~every 30s. Separate budget
+// TV signage polls the feed ~every 60s and pages ~every 60s. Separate budget
 // so a busy floor NAT does not freeze the wall.
 const tvApiLimiter = rateLimit({
   windowMs: 60 * 1000,

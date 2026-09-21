@@ -29,6 +29,18 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.122.28",
+    headline: "TV and desk tabs use less bandwidth when nobody is watching.",
+    items: [
+      { text: "The office TV board refreshes about once a minute (was every 10–30 seconds), and a hidden or idle browser tab stops asking the board for updates until someone looks again.", audience: "everyone" },
+      { text: "Car-wrap pictures on the race board stay in the browser cache between reloads (versioned URL), so the wall does not re-download ~1MB wraps every refresh.", audience: "everyone" },
+      { text: "Shotgun prompts, assigned-LO lead alerts, chat, and the tournament board no longer keep polling while the tab is in the background — push still covers Shotgun when C3 is not in front.", audience: "everyone" },
+      { text: "API responses are gzip-compressed where the browser supports it, which shrinks JSON the floor pulls all day.", audience: "everyone" },
+      { text: "Larger videos (intro clip and summons alarm) are still served from the app for now; a CDN host for those is a follow-up, not in this release.", audience: "manager" },
+    ],
+  },
+
+  {
     version: "4.122.27",
     headline: "Your own transfers show again on Home, My Report, and CLR profile.",
     items: [

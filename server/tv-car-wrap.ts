@@ -138,10 +138,14 @@ export function sendTvCarWrap(db: any, res: Response, orgId: number, userId: num
       AND (u.portal IS NULL OR u.portal='c3')`)
     .get(orgId, userId, version);
   if (!row?.data || !isTvCarParticipant(row)) { res.status(404).json({ error: "Wrap not found." }); return; }
+  // Version is in the URL (?v=…), so browsers can keep the ~1MB PNG across
+  // reloads instead of re-downloading it every time the board refreshes.
   res.set({
     "Content-Type": "image/png", "Content-Disposition": 'inline; filename="tv-car-wrap.png"',
     "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin",
-    "Cache-Control": "private, no-store", "Content-Security-Policy": "default-src 'none'; sandbox",
+    "Cache-Control": "public, max-age=31536000, immutable",
+    "Surrogate-Control": "max-age=31536000",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
   });
   res.send(row.data);
 }

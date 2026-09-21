@@ -23,7 +23,7 @@ export function ShotgunReclaimPrompt() {
     queryKey: ["/api/shotgun"],
     enabled: eligible && shellReady,
     refetchInterval: (query) => ((query.state.data as ShotgunPayload | undefined)?.reclaimable?.length ? 3_000 : 15_000),
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
     staleTime: 0,
   });
   const target = useMemo(() => data?.reclaimable?.[0] ?? null, [data?.reclaimable]);

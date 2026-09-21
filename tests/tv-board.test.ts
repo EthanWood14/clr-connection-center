@@ -14,6 +14,7 @@ import { appointmentDatetimeFor, ownsAppointmentDatetime, timeColumnsPatch } fro
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const routes = readFileSync(join(root, "server/routes.ts"), "utf8");
 const page = readFileSync(join(root, "client/src/pages/tv.tsx"), "utf8");
+const kit = readFileSync(join(root, "client/src/pages/tv-board-kit.tsx"), "utf8");
 const app = readFileSync(join(root, "client/src/App.tsx"), "utf8");
 const sidebar = readFileSync(join(root, "client/src/components/app-sidebar.tsx"), "utf8");
 const serverIndex = readFileSync(join(root, "server/index.ts"), "utf8");
@@ -731,6 +732,11 @@ test("TV payloads stay out of the request log", () => {
   assert.ok(serverIndex.includes('^\\/api\\/tv(?:\\/|$)'), "TV responses are marked sensitive for request logging");
 });
 
+test("API responses are gzip-compressed", () => {
+  assert.match(serverIndex, /import compression from "compression"/);
+  assert.match(serverIndex, /app\.use\(compression\(\)\)/);
+});
+
 test("the screen queues moments, plays a milestone once, and reloads on deploy", () => {
   assert.match(page, /const \[queue, setQueue\] = useState<Moment\[\]>/);
   assert.match(page, /if \(current \|\| !queue\.length\) return;/, "one moment at a time");
@@ -798,8 +804,12 @@ test("the EOD board and the assignment list take turns by the clock", () => {
 test("the board pages come from their own endpoint, on their own clock", () => {
   // A query that throws in the heavy payload must never be able to stop a
   // transfer being celebrated, so it does not ride the moment feed.
-  assert.match(page, /const PAGES_POLL_MS = 30_000;/);
+  assert.match(kit, /const PAGES_POLL_MS = 60_000;/);
+  assert.match(kit, /const POLL_MS = 60_000;/);
   assert.match(page, /queryKey: \[apiRoot, "pages"\]/);
+  assert.match(page, /refetchInterval: tabVisible \? POLL_MS : false/);
+  assert.match(page, /refetchInterval: tabVisible \? PAGES_POLL_MS : false/);
+  assert.match(page, /visibilitychange/);
   assert.match(routes, /app\.get\("\/api\/tv\/:token\/pages"/);
 });
 const hype = readFileSync(join(root, "client/src/components/tv/hype.tsx"), "utf8");
@@ -1203,7 +1213,7 @@ test("the new-lead strip never touches the deck timer or the moment queue", () =
     assert.doesNotMatch(strip, forbidden, `the strip must not reach into the moment pipeline: ${forbidden}`);
   }
   // It is not a Moment, so nothing can enqueue one by accident.
-  const union = page.slice(page.indexOf("type Moment ="), page.indexOf("const POLL_MS"));
+  const union = kit.slice(kit.indexOf("type Moment ="), kit.indexOf("const POLL_MS"));
   assert.doesNotMatch(union, /NewLead/i);
   // The deck's pause is still only about `current`, and gained no second reason.
   const deck = page.slice(page.indexOf("const [slot, setSlot]"), page.indexOf("const page = (deck[slot]"));
@@ -1211,7 +1221,7 @@ test("the new-lead strip never touches the deck timer or the moment queue", () =
   assert.doesNotMatch(deck, /lead/i);
   // Its own hold, and no timer of its own to leak or cancel at the wrong
   // moment: whether the strip is up is read off the clock the header runs.
-  assert.match(page, /const NEW_LEAD_HOLD_MS = 8_000;/);
+  assert.match(kit, /const NEW_LEAD_HOLD_MS = 8_000;/);
   assert.match(strip, /const leadUp = !!leadNotice && now\.getTime\(\) < leadNotice\.until;/);
   assert.doesNotMatch(strip, /setTimeout|setInterval/);
   // Newest wins and the rest are a count, so five at once is one notice.
