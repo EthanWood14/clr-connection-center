@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.122.36", headline: "Half-day CLRs (Rosas) keep their transfers on team boards.", items: [
+    { text: "Standing half days (Matthew Rosas every weekday) and approved half leave no longer wipe transfer credit on TV boards, the Transfer Scorecard, weekly pace, Ask C3, or digests. Those days still count as 0.5 in transfers/day and goal proration.", audience: "everyone" },
+    { text: "Approved full PTO / full sick days still drop that day's credit on team boards, same as before.", audience: "manager" },
+  ] },
   { version: "4.122.35", headline: "A focused manager dashboard for the day.", items: [
     { text: "Managers' Home and the former How we're doing page now show today's CallTools calls, transfers, appointments, CT conversations, Dialpad calls and sent messages, followed by the Transfer Scorecard, CLR trend, Top LOs and separate LO/LOA transfer tables. The original page remains in Advanced Dashboard.", audience: "manager" },
     { text: "Find Bonzo activity at the far right of the Transfer Scorecard, including MTD. Sorting, claim-time scoring and existing trend calculations are unchanged.", audience: "manager" },

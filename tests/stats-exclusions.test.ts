@@ -14,6 +14,7 @@ import {
 } from "../shared/stats-exclusions";
 import { TOURNAMENT_EXCLUDED_FROM, isTournamentExcluded } from "../shared/tournament";
 import { isDayRaceExcluded } from "../shared/tv-day-race";
+import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,13 +55,14 @@ test("day-race excludes Jordon in from–to window; Elleine always", () => {
   assert.equal(isDayRaceExcluded("Ana", "2026-09-16"), false);
 });
 
-test("credit rollup drops Jordon only in from–to window and half/full-off person-days", () => {
+test("credit rollup drops Jordon from–to and full-off; half days keep credit", () => {
   const users = [
     { id: 1, name: "Ana" },
     { id: 2, name: "Jordon Chang" },
-    { id: 3, name: "Rosas Stand-in" },
+    { id: 3, name: "Away CLR" },
+    { id: 4, name: "Matthew Rosas" },
   ];
-  const halfDays = new Set(["1:2026-09-17"]); // Ana half day
+  const halfDays = new Set(["1:2026-09-17", "4:2026-09-17"]); // Ana + Rosas half
   const fullOffDays = new Set(["3:2026-09-17"]);
   const days = buildCreditExcludedPersonDays({
     users,
@@ -76,9 +78,10 @@ test("credit rollup drops Jordon only in from–to window and half/full-off pers
   assert.ok(keys.has("2:2026-09-20"));
   assert.equal(keys.has("2:2026-09-15"), false);
   assert.equal(keys.has("2:2026-09-21"), false);
-  // Ana half + person 3 full off
-  assert.ok(keys.has("1:2026-09-17"));
+  // Full off excluded; half days (Ana + Rosas) NOT credit-excluded
   assert.ok(keys.has("3:2026-09-17"));
+  assert.equal(keys.has("1:2026-09-17"), false, "approved half keeps credit");
+  assert.equal(keys.has("4:2026-09-17"), false, "standing half (Rosas) keeps credit");
 
   const rows = [
     { userId: 2, date: "2026-09-15", credit: 1 },
@@ -86,6 +89,7 @@ test("credit rollup drops Jordon only in from–to window and half/full-off pers
     { userId: 2, date: "2026-09-21", credit: 1 },
     { userId: 1, date: "2026-09-17", credit: 1 },
     { userId: 1, date: "2026-09-18", credit: 1 },
+    { userId: 4, date: "2026-09-17", credit: 3 },
   ];
   const kept = filterCreditRows(rows, {
     nameByUserId: new Map(users.map((u) => [u.id, u.name])),
@@ -93,11 +97,11 @@ test("credit rollup drops Jordon only in from–to window and half/full-off pers
   });
   assert.deepEqual(
     kept.map((r) => [r.userId, r.date]),
-    [[2, "2026-09-15"], [2, "2026-09-21"], [1, "2026-09-18"]],
+    [[2, "2026-09-15"], [2, "2026-09-21"], [1, "2026-09-17"], [1, "2026-09-18"], [4, "2026-09-17"]],
   );
 });
 
-test("SQL fragments mention Jordon from–to window and time_off / Rosas", () => {
+test("SQL fragments: Jordon window + full time_off only; no Rosas standing wipe", () => {
   const j = jordonCreditExclusionSql();
   assert.match(j, /2026-09-16/);
   assert.match(j, /2026-09-20/);
@@ -105,10 +109,13 @@ test("SQL fragments mention Jordon from–to window and time_off / Rosas", () =>
   assert.match(j, /jordanchang/);
   const t = timeOffCreditExclusionSql();
   assert.match(t, /time_off_requests/);
-  assert.match(t, /rosas/);
+  assert.match(t, /day_portion/);
+  assert.match(t, /!= 'half'/);
+  assert.doesNotMatch(t, /rosas/);
   const both = transferCreditExclusionSql();
   assert.match(both, /jordon/);
   assert.match(both, /time_off_requests/);
+  assert.doesNotMatch(both, /rosas/);
 });
 
 test("storage credit helpers default to exclusion and allow personal opt-out", () => {
@@ -119,4 +126,34 @@ test("storage credit helpers default to exclusion and allow personal opt-out", (
   assert.match(storage, /if \(f\.applyStatsExclusions !== false\)[\s\S]*?transferCreditExclusionSql/);
   // Default path still pushes the exclusion (team aggregates unchanged).
   assert.match(storage, /wheres\.push\(transferCreditExclusionSql\("tc\.date", "tc\.user_id", "tc\.org_id"\)\)/);
+});
+
+
+test("Rosas weekday credit survives timeOffCreditExclusionSql; full PTO still drops", () => {
+  const db = new Database(":memory:");
+  db.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+    CREATE TABLE time_off_requests (
+      id INTEGER PRIMARY KEY, org_id INTEGER, user_id INTEGER,
+      start_date TEXT, end_date TEXT, status TEXT, day_portion TEXT
+    );
+    CREATE TABLE tc (org_id INTEGER, user_id INTEGER, date TEXT, credit REAL);
+  `);
+  db.exec(`
+    INSERT INTO users(id,name) VALUES (434,'Matthew Rosas'),(6,'Away CLR'),(1,'Ana Half');
+    INSERT INTO time_off_requests(org_id,user_id,start_date,end_date,status,day_portion)
+      VALUES (1,1,'2026-09-17','2026-09-17','approved','half'),
+             (1,6,'2026-09-17','2026-09-17','approved','full');
+    INSERT INTO tc(org_id,user_id,date,credit) VALUES
+      (1,434,'2026-09-17',3),
+      (1,1,'2026-09-17',2),
+      (1,6,'2026-09-17',5);
+  `);
+  const where = timeOffCreditExclusionSql("tc.date", "tc.user_id", "tc.org_id");
+  const rows = db.prepare(`SELECT user_id, credit FROM tc WHERE (${where}) ORDER BY user_id`).all() as Array<{user_id:number; credit:number}>;
+  assert.deepEqual(
+    rows.map((r) => [r.user_id, r.credit]),
+    [[1, 2], [434, 3]],
+    "approved half + Rosas standing keep credit; full PTO still excluded",
+  );
 });
