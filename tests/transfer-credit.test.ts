@@ -430,7 +430,7 @@ test("the transfers-per-working-day rate is fed credit, not rows", () => {
 });
 
 test("Ask C3 quotes credit for a person and a count for the team", () => {
-  // Date-scoped credit exclusions (Jordon / half / full off) re-sum per person
+  // Date-scoped credit exclusions (Jordon / full off) re-sum per person
   // instead of a bare transferCreditByUser.forEach — still shotgun halves.
   assert.match(askC3, /isCreditExcludedPersonDay/);
   assert.match(askC3, /creditExcludedDayKeys\(paceCtx\.excludedDays\)/);
