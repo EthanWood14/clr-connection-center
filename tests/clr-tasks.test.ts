@@ -40,7 +40,8 @@ test("task storage preserves independent occurrences, completion history, and re
 test("managers assign tasks while CLRs can only complete their own", () => {
   const create = routes.slice(routes.indexOf('app.post("/api/clr-tasks"'), routes.indexOf('app.patch("/api/clr-tasks/:id"'));
   assert.match(create, /requireManagerOrAdmin/);
-  assert.match(create, /Choose an active CLR in this organization/);
+  assert.match(create, /Choose an eligible active person in this organization/);
+  assert.match(create, /portalTaskAssignees\(storage.getUsers\(\), orgId, actor\)/);
   const complete = routes.slice(routes.indexOf('app.post("/api/clr-tasks/:id/complete"'), routes.indexOf('async function alertOverdueClrTasks'));
   assert.match(complete, /Number\(task\.assigned_user_id\) !== userId/);
   assert.match(complete, /nextTaskOccurrenceForRow/);

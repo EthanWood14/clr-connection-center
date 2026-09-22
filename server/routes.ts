@@ -19,7 +19,7 @@ import {
 } from "@shared/clr-training-test";
 import { deriveSop } from "@shared/clr-sop";
 import { isTaskPriority, isTaskRecurrence, normalizeTaskScheduleDays } from "@shared/clr-tasks";
-import { portalTaskLockGuard, registerPortalTaskLockRoutes } from "./portal-task-lock";
+import { portalTaskLockGuard, registerPortalTaskLockRoutes, portalTaskAssignees } from "./portal-task-lock";
 import { registerOtherWorkRoutes } from "./other-work";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { isUntouchedLoaNote, parseLoaNote } from "@shared/lap-note-template";
@@ -7910,7 +7910,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const visibleActive = tasks.filter((task) => task.status === "active");
     res.json({
       tasks, canManage,
-      assignees: taskClrs(orgId).map((user: any) => ({ id: Number(user.id), name: String(user.name ?? "") })),
+      assignees: portalTaskAssignees(storage.getUsers(), orgId, me).map((user: any) => ({ id: Number(user.id), name: String(user.name ?? "") })),
       // The pay rules the editor states BEFORE anyone types an amount. They come
       // from task-comp.ts rather than being written out again in the client, so
       // the cap a manager is shown cannot drift from the cap that is enforced.
@@ -7949,8 +7949,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isTaskPriority(priority) || !isTaskRecurrence(recurrence)) return res.status(400).json({ error: "Choose a valid priority and repeat schedule." });
     if (recurrence === "custom_weekly" && !scheduleDays.length) return res.status(400).json({ error: "Choose at least one weekday for the custom repeat." });
     if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
-    const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
-    if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
+    const assignee = portalTaskAssignees(storage.getUsers(), orgId, actor).find((user: any) => Number(user.id) === assignedUserId);
+    if (!assignee) return res.status(400).json({ error: "Choose an eligible active person in this organization." });
     const now = new Date().toISOString();
     // Task pay, decided by server/task-comp.ts on EVERY create — not only the
     // ones carrying a comp field. The authority handed in is the one this file
@@ -8025,8 +8025,8 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     if (!isTaskPriority(priority) || !isTaskRecurrence(recurrence) || !["active", "completed", "archived"].includes(status)) return res.status(400).json({ error: "Invalid task settings." });
     if (recurrence === "custom_weekly" && !scheduleDays.length) return res.status(400).json({ error: "Choose at least one weekday for the custom repeat." });
     if (!Number.isFinite(due.getTime())) return res.status(400).json({ error: "Choose a valid deadline." });
-    const assignee = taskClrs(orgId).find((user: any) => Number(user.id) === assignedUserId);
-    if (!assignee) return res.status(400).json({ error: "Choose an active CLR in this organization." });
+    const assignee = portalTaskAssignees(storage.getUsers(), orgId, storage.getUserById(actorId)).find((user: any) => Number(user.id) === assignedUserId);
+    if (!assignee) return res.status(400).json({ error: "Choose an eligible active person in this organization." });
     // EVERY patch is judged, including the ones that touch no comp field: a
     // request that merely hands an already-paid task to the person making it
     // moves money, and this is where that is refused. The whole body goes in —

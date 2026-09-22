@@ -12,6 +12,15 @@ export function migratePortalTaskLocks(db: any) {
 const internal = (u: any) => u && (u.portal == null || u.portal === "c3");
 const manager = (u: any) => internal(u) && u.is_active === 1 && !u.archived_at
   && (u.role === "admin" || !!u.is_manager || !!u.super_admin);
+export const isPortalLockAdmin = (u: any) => !!u && (u.role === "admin" || !!(u.superAdmin ?? u.super_admin));
+
+/** Admins need non-CLR administrators available in the task assignment picker. */
+export function portalTaskAssignees(users: any[], orgId: number, actor: any): any[] {
+  return users.filter(u => internal(u) && (u.isActive ?? u.is_active) && !(u.archivedAt ?? u.archived_at)
+    && Number(u.orgId ?? u.org_id ?? 1) === orgId
+    && ((u.isClr ?? u.is_clr ?? (u.role === "assistant"))
+      || (isPortalLockAdmin(actor) && (isPortalLockAdmin(u) || (u.isManager ?? u.is_manager)))));
+}
 const activeSql = `SELECT l.id, l.user_id AS userId, l.task_id AS taskId,
   l.created_at AS createdAt, t.title, t.description, t.due_at AS dueAt,
   t.comp_amount_cents AS compAmountCents, u.name AS userName, m.name AS managerName
@@ -65,9 +74,10 @@ export function registerPortalTaskLockRoutes(app: Express, deps: {
     const task = db.prepare("SELECT * FROM clr_tasks WHERE id=? AND org_id=?").get(id, me.org_id);
     if (!task || task.status !== "active") return res.status(404).json({ error: "Active task not found." });
     const target = db.prepare("SELECT * FROM users WHERE id=? AND org_id=?").get(task.assigned_user_id, me.org_id);
-    if (!internal(target) || target.is_active !== 1 || target.archived_at || target.id === me.id || manager(target)) {
-      return res.status(400).json({ error: "Choose an active C3 employee who is not a manager or admin." });
+    if (!internal(target) || target.is_active !== 1 || target.archived_at || target.id === me.id) {
+      return res.status(400).json({ error: "Choose another active C3 account in your organization. You cannot lock yourself." });
     }
+    if (manager(target) && !isPortalLockAdmin(me)) return res.status(403).json({ error: "Only admins can lock a manager or admin's portal." });
     const result = db.transaction(() => {
       const existing = activePortalTaskLock(db, me.org_id, target.id);
       if (existing) return { existing };

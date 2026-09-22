@@ -2,7 +2,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import express from "express";
-import { migratePortalTaskLocks, portalTaskLockGuard, registerPortalTaskLockRoutes } from "../server/portal-task-lock";
+import { migratePortalTaskLocks, portalTaskLockGuard, registerPortalTaskLockRoutes, portalTaskAssignees } from "../server/portal-task-lock";
 import { migrateOtherWork, registerOtherWorkRoutes, otherWorkDays } from "../server/other-work";
 import { loadScorecardSchedules } from "../server/scorecard-schedule";
 import { paceHalfDayContext, approvedFullDayTimeOffUserIds } from "../server/half-day";
@@ -59,13 +59,46 @@ test('manager pauses the portal; only its assigned completion unlocks it, includ
   assert.equal(audits[0][0],'portal_task_lock');
 });
 
-test('lock creation rejects employee, foreign organization, external, inactive and privileged targets',async t=>{
+test('lock creation rejects employee, foreign organization, external, inactive and self targets',async t=>{
   const {request}=await fixture(t);
   assert.equal((await request('/api/portal-task-locks','POST',{taskId:10})).status,403);
   assert.equal((await request('/api/portal-task-locks','POST',{taskId:12},1)).status,404);
   for(const taskId of [13,14,15]) assert.equal((await request('/api/portal-task-locks','POST',{taskId},1)).status,400);
   assert.equal((await request('/api/portal-task-locks','POST',{taskId:'10'},1)).status,400);
   assert.equal((await request('/api/portal-task-locks/me','GET',undefined,999)).status,401);
+});
+
+test('admins can lock another admin and the locked admin can complete their task to resume',async t=>{
+  const {db,request}=await fixture(t);
+  db.prepare("UPDATE users SET role='admin',is_manager=1 WHERE id=2").run();
+  const locked=await request('/api/portal-task-locks','POST',{taskId:10},1);
+  assert.equal(locked.status,201);
+  assert.equal((await request('/api/work')).status,423);
+  assert.equal((await request('/api/portal-task-locks/me')).body.lock.taskId,10);
+  assert.equal((await request('/api/clr-tasks/10/complete','POST',{note:'Completed the assigned admin task'})).status,200);
+  assert.equal((await request('/api/work')).status,200);
+});
+
+test('non-admin managers cannot lock a privileged account, while another admin can release it',async t=>{
+  const {db,request}=await fixture(t);
+  db.prepare("UPDATE users SET role='admin',is_manager=1 WHERE id=2").run();
+  db.prepare("UPDATE users SET is_manager=1,is_active=1 WHERE id=5").run();
+  assert.equal((await request('/api/portal-task-locks','POST',{taskId:10},5)).status,403);
+  const locked=await request('/api/portal-task-locks','POST',{taskId:10},1);
+  assert.equal((await request(`/api/portal-task-locks/${locked.body.lock.id}`,'DELETE',undefined,1)).status,200);
+  assert.equal((await request('/api/work')).status,200);
+});
+
+test('admin task picker includes non-CLR admins but never external, inactive or foreign accounts',()=>{
+  const users=[
+    {id:1,orgId:1,isActive:true,isClr:false,role:'admin'},
+    {id:2,orgId:1,isActive:true,isClr:true,role:'assistant'},
+    {id:3,orgId:2,isActive:true,isClr:false,role:'admin'},
+    {id:4,orgId:1,isActive:true,isClr:false,role:'admin',portal:'lap'},
+    {id:5,orgId:1,isActive:false,isClr:false,role:'admin'},
+  ];
+  assert.deepEqual(portalTaskAssignees(users,1,{role:'admin'}).map(u=>u.id),[1,2]);
+  assert.deepEqual(portalTaskAssignees(users,1,{role:'assistant',isManager:true}).map(u=>u.id),[2]);
 });
 
 test('manager release does not complete the task; duplicate locks and cross-org release are refused',async t=>{

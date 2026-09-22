@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.124.1", headline: "Admins can task-lock other admins.", items: [
+    { text: "Admins can assign a task to another admin or manager and lock their portal until it is completed. Self-locking stays blocked, and non-admin managers cannot lock admin or manager accounts.", audience: "manager" },
+  ] },
   { version: "4.124.0", headline: "Task locks and clearer day status.", items: [
     { text: "Managers can lock an employee's portal for a task from the Task Center. Completing the task with a note reopens C3. The open page is kept in place and typed work is backed up in that browser tab; managers can also unlock it early.", audience: "manager" },
     { text: "Approved PTO now refreshes the scorecard status promptly and is labeled Day off. A new Working on other things option on CLR profiles keeps attendance unchanged while excluding the selected dates from call and transfer goal days.", audience: "manager" },
