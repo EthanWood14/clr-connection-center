@@ -7,8 +7,49 @@ import Database from "better-sqlite3";
 import { registerTvCarRoutes } from "../server/tv-car-routes";
 import { GARAGE_PLUS_5_ITEM_ID, GARAGE_PLUS_5_SECONDS, shopItemById } from "../shared/tv-car-shop";
 import { TV_CAR_DAILY_SECONDS } from "../shared/tv-car-budget";
+import { readShopUpgradesForOrg } from "../server/tv-car-shop";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+test("owned parts can be equipped, swapped and removed without charging again; TV reads the same loadout", async t => {
+  const {db,request}=await harness(t);
+  await request('/api/me/tv-car/shop/buy','POST',{itemId:'chrome-rims'});
+  await request('/api/me/tv-car/shop/buy','POST',{itemId:'pulse-rims'});
+  const receipts = db.prepare('SELECT * FROM tv_car_shop_purchases ORDER BY item_id').all();
+  const latest = await request('/api/me/tv-car');
+  assert.deepEqual(latest.body.appearance.upgrades,['pulse-rims']);
+  const swap = await request('/api/me/tv-car/shop/equip','POST',{itemId:'chrome-rims',equipped:true,userId:8,orgId:2});
+  assert.equal(swap.status,200);
+  assert.deepEqual(swap.body.appearance.upgrades,['chrome-rims']);
+  assert.equal(swap.body.shop.catalog.find((i:any)=>i.id==='chrome-rims').equipped,true);
+  assert.equal(swap.body.shop.catalog.find((i:any)=>i.id==='pulse-rims').equipped,false);
+  assert.equal(swap.body.shop.catalog.find((i:any)=>i.id==='pulse-rims').owned,true);
+  assert.deepEqual(readShopUpgradesForOrg(db,1).get(7),['chrome-rims']);
+  assert.equal(readShopUpgradesForOrg(db,2).size,0);
+  const remove = await request('/api/me/tv-car/shop/equip','POST',{itemId:'chrome-rims',equipped:false});
+  assert.equal(remove.status,200);
+  assert.deepEqual(remove.body.appearance.upgrades??[],[]);
+  assert.deepEqual((await request('/api/me/tv-car')).body.appearance.upgrades??[],[]);
+  assert.deepEqual(readShopUpgradesForOrg(db,1).get(7),[]);
+  // Exhausting paint time must not prevent using a part already paid for.
+  const day = new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  db.prepare('INSERT INTO tv_car_garage_time (org_id,user_id,day,seconds,last_tick_at) VALUES (1,7,?,900,?)').run(day,new Date().toISOString());
+  const again=await request('/api/me/tv-car/shop/equip','POST',{itemId:'pulse-rims',equipped:true});
+  assert.equal(again.status,200);
+  assert.deepEqual(again.body.appearance.upgrades,['pulse-rims']);
+  assert.deepEqual(db.prepare('SELECT * FROM tv_car_shop_purchases ORDER BY item_id').all(),receipts);
+  assert.equal(again.body.shop.balances.dialpad_calls,1800);
+});
+
+test("equipment rejects unowned parts, other owners' receipts, consumables and malformed requests", async t => {
+  const {db,request}=await harness(t);
+  db.exec(`INSERT INTO tv_car_shop_purchases VALUES (2,7,'prism-rims','dialpad_calls',6000,'old'),(1,8,'prism-rims','dialpad_calls',6000,'old')`);
+  for(const body of [{itemId:'prism-rims',equipped:true},{itemId:'garage-plus-5',equipped:true},{itemId:'chrome-rims',equipped:'true'},{itemId:'nope',equipped:true}]) {
+    const res=await request('/api/me/tv-car/shop/equip','POST',body);
+    assert.equal(res.status,400);
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tv_car_shop_loadouts').get().n,0);
+});
 
 async function harness(t: TestContext, transferCredit = 500) {
   const db = new Database(":memory:");

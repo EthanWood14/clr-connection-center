@@ -218,9 +218,9 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       halo.name = "focus-halo"; halo.rotation.x = -Math.PI / 2; halo.position.y = .1; root.add(halo);
     }
     if (upgrades.has("neon-underglow") || upgrades.has("plasma-underglow")) {
-      const neon = keep(new THREE.MeshBasicMaterial({ color: upgrades.has("plasma-underglow") ? "#b67bff" : "#5cf0ff", transparent: true, opacity: .55, depthWrite: false }));
+      const neon = keep(new THREE.MeshBasicMaterial({ color: upgrades.has("plasma-underglow") ? "#b67bff" : "#5cf0ff", transparent: true, opacity: .75, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
       const under = new THREE.Mesh(keep(new THREE.RingGeometry(1.15, 1.55, 40)), neon);
-      under.name = "neon-underglow"; under.rotation.x = -Math.PI / 2; under.position.y = .08; root.add(under);
+      under.name = "neon-underglow"; under.rotation.x = -Math.PI / 2; under.scale.y = 1.85; under.position.y = .08; root.add(under);
     }
     if (upgrades.has("solar-fin")) {
       for (const z of [-1.8, -1.4, -1]) box(root, .1, .22, .12, 0, 1.55, z, keep(new THREE.MeshBasicMaterial({color:"#ffdc73"}))).name = "solar-crown";
@@ -229,8 +229,8 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       for (const x of [-.3, .3]) box(root, .045, .045, .65, x, 1.08, .2, keep(new THREE.MeshBasicMaterial({color:"#a78bfa"}))).name = "ion-cabin";
     }
     if (upgrades.has("holo-wing")) {
-      box(root, 2.25, .055, .38, 0, 1.18, -2.35, keep(new THREE.MeshBasicMaterial({color:"#51edff",transparent:true,opacity:.75}))).name = "holo-wing";
-      for (const x of [-1.1, 1.1]) box(root, .05, .3, .45, x, 1.23, -2.35, keep(new THREE.MeshBasicMaterial({color:"#ff58c8"})));
+      box(root, 2.35, .07, .48, 0, 1.46, -2.12, keep(new THREE.MeshBasicMaterial({color:"#51edff",transparent:true,opacity:.85,toneMapped:false}))).name = "holo-wing";
+      for (const x of [-1.17, 1.17]) box(root, .05, .38, .7, x, 1.3, -2.12, keep(new THREE.MeshBasicMaterial({color:"#ff58c8",toneMapped:false})));
     }
     if (upgrades.has("reactor-exhaust")) {
       for (const x of [-.28, .28]) {
@@ -254,6 +254,9 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     root.add(chassis);
     const updateSkin = (next: TvCarAppearance): boolean => {
       if (disposed || !appearance.skin || !next.skin) return false;
+      // Equipment changes geometry. Repainting an existing skin cannot add/remove parts.
+      if (Array.from(upgrades).sort().join("|") !== [...(next.upgrades ?? [])].sort().join("|")
+        || appearance.livery !== next.livery || appearance.wrapUrl !== next.wrapUrl) return false;
       // Painting changes pixels, not geometry. Reuse the GPU allocations for
       // pointer strokes, undo/redo and palette changes in the garage.
       paint.color.set(next.bodyColor); accent.color.set(next.accentColor);

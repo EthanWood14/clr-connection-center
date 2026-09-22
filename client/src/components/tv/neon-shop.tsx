@@ -4,7 +4,7 @@ import { SHOP_TIERS, formatShopBalance, shopCurrencyLabel, type ShopBalances, ty
 import "./neon-shop.css";
 
 export type ShopResponse = {
-  catalog: Array<ShopItem & { owned: boolean; affordable: boolean; priceLabel: string; timesPurchased?: number }>;
+  catalog: Array<ShopItem & { owned: boolean; equipped: boolean; affordable: boolean; priceLabel: string; timesPurchased?: number }>;
   balances: ShopBalances; earned: ShopBalances; spent: ShopBalances; owned: string[]; garageDailySeconds?: number;
 };
 const currencies: ShopCurrency[] = ["dialpad_calls", "texts", "calltools_seconds", "transfers"];
@@ -48,9 +48,9 @@ export function NeonItemArt({ item }: { item: ShopItem }) {
   </svg>;
 }
 
-export function NeonShop({ data, loading, error, purchaseError, notice, pendingId, onBuy, onRetry }: {
+export function NeonShop({ data, loading, error, purchaseError, notice, pendingId, onBuy, onEquip, onRetry }: {
   data?: ShopResponse; loading: boolean; error?: string; purchaseError?: string; notice: string | null;
-  pendingId?: string; onBuy: (id: string) => void; onRetry: () => void;
+  pendingId?: string; onBuy: (id: string) => void; onEquip: (id: string, equipped: boolean) => void; onRetry: () => void;
 }) {
   const [tier, setTier] = useState<ShopTier | "All">("All");
   const [currency, setCurrency] = useState<ShopCurrency | "all">("all");
@@ -76,13 +76,13 @@ export function NeonShop({ data, loading, error, purchaseError, notice, pendingI
         return <article key={item.id} className="neon-item" style={{"--tier":colors[item.tier]} as React.CSSProperties} data-testid={`tv-car-shop-item-${item.id}`}>
           <div className="neon-item-top"><span>{item.tier}</span><span>{owned?<><Check size={12}/> Owned</>:item.consumable?'REBUYABLE':'PERMANENT'}</span></div>
           <NeonItemArt item={item}/><div className="neon-item-copy"><h4>{item.name}</h4><p>{item.description}</p></div>
-          <div className="neon-item-bottom"><strong>{item.priceLabel}</strong><div className="neon-progress" aria-label={`${Math.round(progress)}% of price available`}><i style={{width:`${owned?100:progress}%`}}/></div><small>{owned?'Installed on your race car':need>0?`${formatShopBalance(item.currency,need)} to go`:`After purchase: ${formatShopBalance(item.currency,balance-item.price)}`}</small>
-          <button type="button" disabled={owned||!item.affordable||!!pendingId||!!error} onClick={()=>onBuy(item.id)} data-testid={`buy-tv-car-shop-${item.id}`}>
-            {pendingId===item.id?<><Loader2 size={15} className="animate-spin"/>Purchasing…</>:owned?<><Check size={15}/> In your collection</>:item.affordable?<>{item.consumable?'Buy +5 min boost':'Unlock upgrade'}<ArrowUpRight size={15}/></>:'Keep earning'}
+          <div className="neon-item-bottom"><strong>{item.priceLabel}</strong><div className="neon-progress" aria-label={`${Math.round(progress)}% of price available`}><i style={{width:`${owned?100:progress}%`}}/></div><small>{owned?(item.equipped?'Equipped on your race car':'Owned · ready to equip'):need>0?`${formatShopBalance(item.currency,need)} to go`:`After purchase: ${formatShopBalance(item.currency,balance-item.price)}`}</small>
+          <button type="button" disabled={(!owned&&!item.affordable)||!!pendingId||!!error} onClick={()=>owned?onEquip(item.id,!item.equipped):onBuy(item.id)} data-testid={`${owned?"equip":"buy"}-tv-car-shop-${item.id}`} aria-pressed={owned?item.equipped:undefined}>
+            {pendingId===item.id?<><Loader2 size={15} className="animate-spin"/>Saving…</>:owned?<><Check size={15}/> {item.equipped?"Unequip":"Equip on car"}</>:item.affordable?<>{item.consumable?'Buy +5 min boost':'Unlock upgrade'}<ArrowUpRight size={15}/></>:'Keep earning'}
           </button></div>
         </article>})}</div>}
       {!loading&&!error&&items.length===0&&<p className="neon-loading">No upgrades match. Try another tier or filter.</p>}
-      <footer>All-time earnings minus shop spending. Purchases never reduce your performance stats. Higher-tier variants take visual priority; every purchase stays in your collection. Garage boosts add 5 minutes for today only.{data?.garageDailySeconds ? ` Today's garage allowance: ${Math.round(data.garageDailySeconds/60)} minutes.`:''}</footer>
+      <footer>All-time earnings minus shop spending. Purchases never reduce your performance stats. Equip owned parts to choose your look. Equipping a variant replaces the current part in that slot. Unequipped parts stay in your collection. Garage boosts add 5 minutes for today only.{data?.garageDailySeconds ? ` Today's garage allowance: ${Math.round(data.garageDailySeconds/60)} minutes.`:''}</footer>
     </div>
   </section>;
 }

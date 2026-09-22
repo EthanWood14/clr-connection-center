@@ -6,7 +6,7 @@ import { validateTvCarSkin, type TvCarSkin } from "../shared/tv-car-skin";
 import { formatTvCarRemaining, TV_CAR_DAILY_SECONDS, tvCarBudget, tvCarBudgetDay, tvCarTickSeconds, type TvCarBudget } from "../shared/tv-car-budget";
 import { formatShopPrice, formatShopBalance, shopCurrencyLabel } from "../shared/tv-car-shop";
 import {
-  buildShopSnapshot, purchaseShopItem, readGarageDayBonusSeconds, shopUpgradesForOwner,
+  buildShopSnapshot, purchaseShopItem, readGarageDayBonusSeconds, shopUpgradesForOwner, setShopItemEquipped,
 } from "./tv-car-shop";
 
 type CarSession = { userId?: unknown; orgId?: unknown; portal?: unknown };
@@ -320,6 +320,23 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
    * boosts charge every time and add minutes to today only. Buying never
    * spends garage edit time.
    */
+  app.post("/api/me/tv-car/shop/equip", deps.requireAuth, (req: any, res: Response) => {
+    try {
+      const owner = ownerFor(req, res);
+      if (!owner) return;
+      const db = deps.db();
+      const before = readAppearance(db, owner);
+      const changed = db.transaction(() => setShopItemEquipped(db, owner, req.body?.itemId, req.body?.equipped)).immediate();
+      if (!changed) return res.status(400).json({ error: "Choose a cosmetic you own and whether to equip it." });
+      const appearance = readAppearance(db, owner);
+      deps.audit({ owner, before, after: appearance });
+      return res.json({ appearance, shop: shopFor(owner), message: req.body.equipped ? "Part equipped on your car." : "Part removed. It stays in your collection." });
+    } catch (error: any) {
+      console.error("[tv-car] equip failed:", error?.message ?? error);
+      return res.status(500).json({ error: "Could not update your equipped parts." });
+    }
+  });
+
   app.post("/api/me/tv-car/shop/buy", deps.requireAuth, (req: any, res: Response) => {
     try {
       const owner = ownerFor(req, res);

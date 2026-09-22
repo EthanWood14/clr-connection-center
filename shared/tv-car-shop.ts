@@ -232,6 +232,30 @@ export function isConsumableShopItem(item: ShopItem): boolean {
   return item.consumable === true || item.kind === "garage";
 }
 
+/** Variants occupy one slot; unrelated accessories can be combined. */
+export function shopItemSlot(id: string): string {
+  const slots: Record<string, string> = {
+    "chrome-rims": "wheels", "pulse-rims": "wheels", "prism-rims": "wheels",
+    "neon-underglow": "underglow", "plasma-underglow": "underglow",
+    "ice-headlights": "headlights", "laser-headlights": "headlights",
+    "cabin-leds": "cockpit", "ion-cabin": "cockpit",
+    "trophy-fin": "fin", "solar-fin": "fin",
+    "spark-exhaust": "exhaust", "reactor-exhaust": "exhaust",
+    "victory-plume": "trail", "hyperdrive-trail": "trail",
+  };
+  return slots[id] ?? id;
+}
+
+/** Only owned cosmetics may be equipped, at most one per slot. */
+export function resolveShopEquipment(owned: string[], selected?: unknown): string[] {
+  const candidates = Array.isArray(selected) ? selected : TV_CAR_SHOP_CATALOG.filter(i => owned.includes(i.id)).map(i => i.id);
+  const slots = new Map<string, string>();
+  for (const id of normalizeShopUpgrades(candidates)) {
+    if (owned.includes(id)) slots.set(shopItemSlot(id), id);
+  }
+  return Array.from(slots.values());
+}
+
 /** Known cosmetic upgrade ids only — never trust a free-form string from storage. */
 export function normalizeShopUpgrades(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];

@@ -149,7 +149,7 @@ function Garage({ user }: { user: AuthUser }) {
   useEffect(() => () => { pictureRequest.current += 1; }, []);
   const saved = normalizeTvCarAppearance(car.data?.appearance, user.id);
   const appearance = draft ?? saved;
-  const preview = normalizeTvCarAppearance(appearance, user.id);
+  const preview = normalizeTvCarAppearance({ ...appearance, upgrades: saved.upgrades ?? [] }, user.id);
   const dirty = draft !== null && !sameAppearance(draft, saved);
   const valid = validateTvCarAppearance({ bodyColor: appearance.bodyColor, accentColor: appearance.accentColor, livery: appearance.livery }) !== null;
   const takeBudget = (result: CarResponse | undefined) => { if (result?.budget) setBudget(result.budget); };
@@ -223,6 +223,19 @@ function Garage({ user }: { user: AuthUser }) {
       setShopNotice(data?.message ?? "Purchased.");
       void shop.refetch();
       void car.refetch();
+    },
+  });
+  const equip = useMutation<any, Error, { itemId: string; equipped: boolean }>({
+    mutationFn: input => apiRequest("POST", "/api/me/tv-car/shop/equip", input),
+    onMutate: async () => {
+      setShopNotice(null);
+      await Promise.all([queryClient.cancelQueries({ queryKey: shopQueryKey, exact: true }), queryClient.cancelQueries({ queryKey, exact: true })]);
+    },
+    onSuccess: data => {
+      queryClient.setQueryData(shopQueryKey, data.shop);
+      queryClient.setQueryData(queryKey, (current: CarResponse | undefined) => ({ ...current, appearance: data.appearance }));
+      setDraft(current => current ? { ...current, upgrades: data.appearance.upgrades ?? [] } : null);
+      setShopNotice(data.message);
     },
   });
   const liveBudget = budget ?? car.data?.budget ?? null;
@@ -356,7 +369,7 @@ function Garage({ user }: { user: AuthUser }) {
           </div>
           <div className="relative px-4 py-10" style={{ backgroundImage: "radial-gradient(ellipse at center, #33445e 0%, #142132 55%, #101b2b 100%)" }}>
             <div className="absolute inset-x-7 top-1/2 border-t border-dashed border-white/10" aria-hidden="true" />
-            <div className="relative"><CarPreview appearance={preview} name={user.name} picturePreview={preparedWrap?.previewUrl} /></div>
+            <div className="relative">{preparedWrap ? <CarPreview appearance={preview} name={user.name} picturePreview={preparedWrap?.previewUrl} /> : <Suspense fallback={<Skeleton className="h-64 w-full" />}><CarSkinPreview appearance={preview} name={user.name} /></Suspense>}</div>
           </div>
           <div className="flex items-center gap-3 border-t border-white/10 px-5 py-5">
             <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: preview.bodyColor }} />
@@ -425,11 +438,15 @@ function Garage({ user }: { user: AuthUser }) {
           </div>
         </form>
       </div>}
-      {garageMode === "shop" && <NeonShop
+      {garageMode === "shop" && <div className="space-y-4">
+        <Card><CardHeader><CardTitle>Your equipped car</CardTitle><CardDescription>Use Equip on car or Unequip below. Parts save immediately, with no extra charge.</CardDescription></CardHeader>
+          <CardContent><Suspense fallback={<Skeleton className="h-64 w-full" />}><CarSkinPreview appearance={saved} name={user.name} /></Suspense></CardContent>
+        </Card>
+        <NeonShop
         data={shop.data} loading={shop.isLoading} error={shop.isError ? shop.error.message : undefined}
-        purchaseError={buy.isError ? buy.error.message : undefined} notice={shopNotice}
-        pendingId={buy.isPending ? buy.variables : undefined} onBuy={id => buy.mutate(id)} onRetry={() => { void shop.refetch(); }}
-      />}
+        purchaseError={equip.isError ? equip.error.message : buy.isError ? buy.error.message : undefined} notice={shopNotice}
+        pendingId={equip.isPending ? equip.variables.itemId : buy.isPending ? buy.variables : undefined} onEquip={(itemId, equipped) => equip.mutate({ itemId, equipped })} onBuy={id => buy.mutate(id)} onRetry={() => { void shop.refetch(); }}
+      /></div>}
       <p className="flex items-start gap-2 rounded-xl border bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground"><Flag className="mt-0.5 h-4 w-4 shrink-0" /> This is a cosmetic change only. Your transfers, race position, speed, and ranking stay exactly the same. Resetting colors also needs Save my car.</p>
     </div>
   );

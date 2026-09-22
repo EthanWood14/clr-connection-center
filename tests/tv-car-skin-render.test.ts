@@ -29,6 +29,18 @@ test("neon shop upgrades create visible geometry and higher variants take priori
   } finally {car.dispose();}
 });
 
+test("pixel repaint optimization cannot swallow equipped geometry changes", () => {
+  const appearance={...defaultTvCarAppearance(7),skin:skin(),upgrades:['chrome-rims']};
+  const car=createTvCarModel({appearance});
+  try {
+    assert.equal(car.updateSkin({...appearance,skin:skin()}),true);
+    assert.equal(car.updateSkin({...appearance,upgrades:['neon-underglow']}),false);
+    assert.equal(car.updateSkin({...appearance,upgrades:[]}),false);
+    const replacement=createTvCarModel({appearance:{...appearance,upgrades:['neon-underglow']}});
+    try {assert.ok(replacement.root.getObjectByName('neon-underglow'));} finally {replacement.dispose();}
+  } finally {car.dispose();}
+});
+
 test("authored panels map to the physical roof, front, sides and back with upright UVs", () => {
   assert.deepEqual(CAR_FACE_PANELS, ["right", "left", "top", null, "nose", "rear"]);
   const size = { width: 2, height: 1, depth: 4 };

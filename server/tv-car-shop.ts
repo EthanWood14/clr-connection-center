@@ -17,6 +17,9 @@ import {
   GARAGE_PLUS_5_SECONDS,
   isConsumableShopItem,
   normalizeShopUpgrades,
+  resolveShopEquipment,
+  shopItemSlot,
+  shopItemById,
   TV_CAR_SHOP_CATALOG,
   type ShopBalances,
   type ShopItem,
@@ -29,6 +32,7 @@ export type ShopOwner = { id: number; org_id: number };
 export type ShopSnapshot = {
   catalog: Array<ShopItem & {
     owned: boolean;
+    equipped: boolean;
     affordable: boolean;
     priceLabel: string;
     timesPurchased: number;
@@ -37,6 +41,7 @@ export type ShopSnapshot = {
   earned: ShopBalances;
   spent: ShopBalances;
   owned: string[];
+  equipped: string[];
   /** Base daily garage seconds (15 min). Boosts are per-day, not permanent. */
   garageDailySeconds: number;
 };
@@ -186,6 +191,7 @@ export function buildShopSnapshot(
 ): ShopSnapshot {
   const owned = readOwnedShopItems(db, owner);
   const ownedSet = new Set(owned);
+  const equipped = shopUpgradesForOwner(db, owner);
   const earned = readEarnedShopBalances(db, owner, transferCredit);
   const spent = readSpentShopBalances(db, owner);
   const balances = availableShopBalances(earned, spent);
@@ -198,6 +204,7 @@ export function buildShopSnapshot(
       return {
         ...item,
         owned: permanentlyOwned,
+        equipped: equipped.includes(item.id),
         affordable: !permanentlyOwned && balances[item.currency] >= item.price,
         priceLabel: formatPrice(item),
         timesPurchased: consumable ? (consumableCounts.get(item.id) ?? 0) : (permanentlyOwned ? 1 : 0),
@@ -207,6 +214,7 @@ export function buildShopSnapshot(
     earned,
     spent,
     owned,
+    equipped,
     garageDailySeconds: TV_CAR_DAILY_SECONDS + dayBonus,
   };
 }
@@ -257,6 +265,7 @@ export function purchaseShopItem(
       if (!inserted) {
         evaluation = { status: "already_owned", item: evaluation.item, balance: available[evaluation.item.currency] };
       }
+      if (inserted) setShopItemEquipped(db, owner, evaluation.item.id, true);
     }
   }
   return {
@@ -268,7 +277,26 @@ export function purchaseShopItem(
 
 /** Owned cosmetic ids for TV / garage appearance payloads. */
 export function shopUpgradesForOwner(db: any, owner: ShopOwner): string[] {
-  return readOwnedShopItems(db, owner);
+  const owned = readOwnedShopItems(db, owner);
+  let selected: unknown;
+  try {
+    const row = db.prepare("SELECT upgrades_json FROM tv_car_shop_loadouts WHERE org_id=? AND user_id=?").get(owner.org_id, owner.id);
+    if (row) selected = JSON.parse(row.upgrades_json);
+  } catch { /* Older installations use the existing automatic selection. */ }
+  return resolveShopEquipment(owned, selected);
+}
+
+export function setShopItemEquipped(db: any, owner: ShopOwner, itemId: unknown, equipped: unknown): boolean {
+  const item = shopItemById(itemId);
+  if (!item || item.kind !== "cosmetic" || typeof equipped !== "boolean") return false;
+  if (!readOwnedShopItems(db, owner).includes(item.id)) return false;
+  const current = shopUpgradesForOwner(db, owner);
+  const selected = current.filter(id => equipped ? shopItemSlot(id) !== shopItemSlot(item.id) : id !== item.id);
+  if (equipped) selected.push(item.id);
+  db.prepare(`INSERT INTO tv_car_shop_loadouts (org_id,user_id,upgrades_json) VALUES (?,?,?)
+    ON CONFLICT(org_id,user_id) DO UPDATE SET upgrades_json=excluded.upgrades_json`)
+    .run(owner.org_id, owner.id, JSON.stringify(selected));
+  return true;
 }
 
 /** Map of userId → owned upgrade ids for a whole org (TV feed). */
@@ -284,7 +312,13 @@ export function readShopUpgradesForOrg(db: any, orgId: number): Map<number, stri
       list.push(String(row.item_id));
       out.set(uid, list);
     }
-    for (const [uid, list] of out) out.set(uid, normalizeShopUpgrades(list));
+    const selections = new Map<number, unknown>();
+    try {
+      for (const row of db.prepare("SELECT user_id,upgrades_json FROM tv_car_shop_loadouts WHERE org_id=?").all(orgId)) {
+        try { selections.set(Number(row.user_id), JSON.parse(row.upgrades_json)); } catch { /* default */ }
+      }
+    } catch { /* older installations */ }
+    for (const [uid, list] of out) out.set(uid, resolveShopEquipment(normalizeShopUpgrades(list), selections.get(uid)));
   } catch { /* optional table */ }
   return out;
 }

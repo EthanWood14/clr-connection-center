@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.123.1", headline: "Put your purchased parts on your car.", items: [
+    { text: "Owned garage items now have Equip on car and Unequip buttons. Pick the wheel, glow, lights and other parts you want, with your choices saved for the TV race. Equipping is free and does not require remaining garage edit time.", audience: "everyone" },
+    { text: "See your equipped car right above the shop. The 3D preview now rebuilds when parts change, including cars with a pixel skin, so newly equipped parts appear immediately.", audience: "everyone" },
+  ] },
   { version: "4.123.0", headline: "C3 Customs: a neon item shop powered by your all-time work.", items: [
     { text: "The garage shop is now a neon showroom with Street, Rare, Epic and Legendary tiers, illustrated upgrades, search, currency filters, and your owned collection.", audience: "everyone" },
     { text: "Spend all-time calls, texts, CallTools time and transfer credit. Your wallet separates total earned, spent and available, keeps historical activity under C3's reporting rules, and preserves half-transfer credit.", audience: "everyone" },
