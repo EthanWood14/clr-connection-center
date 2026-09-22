@@ -28,6 +28,16 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "4.122.38",
+    headline: "Shotgun calms down: a lead stops asking after 30 minutes, and only people actually at C3 get offers.",
+    items: [
+      { text: "Shotgun leads now retire. A lead that goes round the whole floor for 30 minutes with nobody free stops being offered and parks on the board as NO TAKERS — it keeps everything it collected, and a manager can send it round again with Requeue. Leads used to cycle for ever: 58 were still going, the oldest for over four days.", audience: "everyone" },
+      { text: "Offers only go to someone actually sitting at C3. A machine left on at an empty desk used to stay in the rotation all night and soak up the offers, so whoever sat down in the morning arrived to a screen that had been chiming at an empty chair since they left. C3 now stops reporting you as available after 15 minutes with no clicks or typing, and picks you back up the moment you touch it.", audience: "everyone" },
+      { text: "Why this mattered: over the last ten days Shotgun made 40,816 offers and 255 of them were accepted. Between midnight and 5am it was making about 2,600 offers an hour and getting none. The busiest hours were the ones nobody was working.", audience: "manager" },
+      { text: "Whoever published a lead now gets told when it gets no takers, instead of it just going quiet.", audience: "everyone" },
+    ],
+  },
   { version: "4.122.37", headline: "Consistent workday averages, clearer scripts and a populated demo.", items: [
     { text: "Performance per-day rates, scorecards, charts and TV pace now share the same rule: transfer credit or at least one hour of CallTools activity from July 21 onward, with earlier calls-or-transfers history preserved. Approved full days off are excluded; half days count as 0.5. Attendance, payroll and training tenure are unchanged.", audience: "manager" },
     { text: "MTD transfer pace uses each CLR's qualifying workdays and remaining available days, so days off no longer drag down their daily rate.", audience: "manager" },

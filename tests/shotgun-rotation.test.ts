@@ -67,7 +67,13 @@ function sqlFrom(head: string, searchFrom = 0): string {
 }
 
 const candidateSql = () => {
-  const start = routes.indexOf("SELECT u.id, u.name FROM users u");
+  // Found through the opt-out clause, which only the Ready rotation has. The
+  // preferred-assignee head start opens with the very same SELECT line and
+  // carries a ${placeholders} interpolation, so searching for the SELECT
+  // finds that one instead and hands SQLite a literal dollar sign.
+  const optOut = routes.indexOf("AND COALESCE(u.shotgun_opted_out,0)=0");
+  assert.notEqual(optOut, -1, "the rotation's candidate query must still exist");
+  const start = routes.lastIndexOf("SELECT u.id, u.name FROM users u", optOut);
   assert.notEqual(start, -1, "the rotation's candidate query must still exist");
   const end = routes.indexOf("LIMIT 1", start);
   return routes.slice(start, end + "LIMIT 1".length);

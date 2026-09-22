@@ -171,6 +171,7 @@ import {
   leadHasTransferOrAppointment,
   pacificCalendarDate as shotgunBouncebackPacificDate,
 } from "./shotgun-bounceback";
+import { SHOTGUN_NO_TAKERS_MS, SHOTGUN_NO_TAKERS_STATUS } from "@shared/shotgun-attention";
 
 /**
  * Is this person on the CLR roster — the group transfer comp is paid to?
@@ -8420,6 +8421,9 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // lead expires and re-offers to them inside the same tick, leaving the
   // full-screen offer modal permanently open and the rest of C3 unusable.
   const SHOTGUN_RELAP_COOLDOWN_MS = 5 * 60_000;
+  // A lead that nobody takes stops asking after half an hour, and an open tab
+  // on an empty desk is not a person. Both rules and the reasoning behind them
+  // live in shared/shotgun-attention.ts.
   // How far back a granted (non-manager) publisher can see the whole board.
   const SHOTGUN_PUBLISHER_VIEW_MS = 10 * 60_000;
   const SHOTGUN_READY_TTL_MS = 35_000;
@@ -8660,6 +8664,29 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
           message: `${w.leadName} was returned to the queue — you didn't confirm you were still on it within the window after claiming. If you are on the phone with them, open Shotgun and Grab back.`, isRead: false } as any);
       } catch {}
       sendPushToUser(w.userId, { title: "Shotgun lead returned", body: `${w.leadName} went back — Grab back on Shotgun if you are still on the phone with them.`, url: "/#/shotgun" });
+    }
+    // Half an hour of asking is enough. Parked, not cancelled: the lead stays
+    // on the board, keeps everything it collected, and a manager can put it
+    // back in the rotation with the requeue button it already has.
+    const giveUpCutoff = new Date(Date.now() - SHOTGUN_NO_TAKERS_MS).toISOString();
+    const retired = db.prepare(`SELECT id,org_id,lead_name,created_by_user_id FROM shotgun_leads
+      WHERE status='queued' AND created_at<=? ORDER BY created_at LIMIT 100`).all(giveUpCutoff) as any[];
+    for (const row of retired) {
+      const changed = db.prepare(`UPDATE shotgun_leads SET status=?,current_assignee_id=NULL,offer_expires_at=NULL,updated_at=?
+        WHERE id=? AND status='queued'`).run(SHOTGUN_NO_TAKERS_STATUS, nowIso, row.id);
+      if (!changed.changes) continue;
+      db.prepare(`UPDATE shotgun_offers SET response='expired',responded_at=?
+        WHERE lead_id=? AND response='pending'`).run(nowIso, row.id);
+      // The person who published it is told, so a lead going quiet is a thing
+      // somebody knows about rather than a lead that simply stopped.
+      try {
+        if (Number(row.created_by_user_id) > 0) {
+          storage.createNotification({ userId: Number(row.created_by_user_id), type: "shotgun_no_takers",
+            title: "Shotgun lead got no takers",
+            message: `${row.lead_name} went round the floor for ${Math.round(SHOTGUN_NO_TAKERS_MS / 60_000)} minutes with nobody free to take it. It is parked on the Shotgun board — requeue it when someone can work it.`,
+            isRead: false } as any);
+        }
+      } catch {}
     }
     const queued = db.prepare(`SELECT id FROM shotgun_leads WHERE status='queued' ORDER BY created_at,id LIMIT 100`).all() as any[];
     const assignments: any[] = [];
@@ -9808,7 +9835,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
     const changed = shotgunDb().transaction(() => {
       const result = shotgunDb().prepare(`UPDATE shotgun_leads SET status='queued',current_assignee_id=NULL,offer_expires_at=NULL,claimed_at=NULL,
           called=0,texted=0,result_notes='',transfer_outcome_id=NULL,done_at=NULL,updated_at=?
-        WHERE id=? AND org_id=? AND status IN ('offered','claimed')`).run(now, leadId, orgId);
+        WHERE id=? AND org_id=? AND status IN ('offered','claimed',?)`).run(now, leadId, orgId, SHOTGUN_NO_TAKERS_STATUS);
       if (result.changes) {
         shotgunDb().prepare(`UPDATE shotgun_offers SET response='requeued',responded_at=?
           WHERE lead_id=? AND org_id=? AND response='pending'`).run(now, leadId, orgId);
@@ -9817,7 +9844,7 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
       }
       return result.changes;
     })();
-    if (!changed) return res.status(409).json({ error: "Only an offered or claimed lead can be requeued." });
+    if (!changed) return res.status(409).json({ error: "Only an offered, claimed or parked lead can be requeued." });
     audit({ userId, userName: me?.name ?? "Manager", action: "update", entityType: "shotgun_lead",
       entityId: leadId, entityLabel: String(previous?.lead_name ?? "Shotgun lead"),
       details: JSON.stringify({ action: "requeue", previousStatus: previous?.status ?? null,

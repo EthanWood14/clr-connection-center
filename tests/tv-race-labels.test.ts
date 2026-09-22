@@ -176,7 +176,7 @@ test("the scene speeds up travel and wheels while preserving a static reduced-mo
   // The camera walks cameraTime: that IS elapsed for a transfer's moment, and
   // elapsed stretched over two minutes for the wall's corner race. The cars
   // keep lapping at `lead` either way, so the pass is never lost.
-  assert.match(scene, /const cameraTime=options\.reduced\?12:Math\.min\(12,elapsed\*12\/flightFor\)/);
+  assert.match(scene, /const cameraTime=options\.reduced\?12:options\.stableCamera\?0:Math\.min\(12,elapsed\*12\/flightFor\)/);
   // The corner cuts between its own thirty shots; the transfer race keeps
   // the single flight, and that is the branch this pins.
   assert.match(scene, /const shot=options\.spotlight&&focusPose/);

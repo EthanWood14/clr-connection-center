@@ -112,6 +112,14 @@ test("TV-only guest roster is active, internal, same-org, deduplicated and does 
 
 test("race events expose actual daily credited movement, including halves, with date and org boundaries", t => {
   const db = new Database(":memory:"); t.after(() => db.close());
+  // Transfer credit now excludes approved full-day time off and one named
+  // account, so the query reads both of these even when the fixture has
+  // neither. Without them it fails with SQLITE_ERROR rather than a wrong
+  // number, which is a much less obvious thing to debug.
+  db.exec(`CREATE TABLE time_off_requests (id INTEGER PRIMARY KEY, org_id INTEGER, user_id INTEGER,
+    status TEXT, day_portion TEXT, start_date TEXT, end_date TEXT);`);
+  db.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, name TEXT);
+    INSERT INTO users VALUES (1,1,'Ethan Wood'),(7,1,'Taylor'),(8,1,'Sam');`);
   db.exec(`CREATE TABLE lead_outcomes (id INTEGER PRIMARY KEY, org_id INTEGER, date TEXT,
     assistant_id INTEGER, shotgun_sender_id INTEGER, outcome_type TEXT, lo_id INTEGER, loa_id INTEGER);
     INSERT INTO lead_outcomes VALUES

@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { shotgunPersonPresent } from "@shared/shotgun-attention";
 
 /**
  * A pleasant two-note chime (E5 → A5, soft sine with a fast decay) so an offer
@@ -87,8 +88,29 @@ export function ShotgunOfferAlert() {
     }
     // No invalidate on each beat — the poll above already refetches, and the
     // extra fetch per heartbeat doubled the request rate for no new data.
-    const beat = () => apiRequest("POST", "/api/shotgun/readiness", { heartbeat: true }).catch(() => {});
-    void beat(); const timer = setInterval(beat, 10_000); return () => clearInterval(timer);
+    // A HEARTBEAT MEANS A PERSON, not a loaded page. Measured on prod 22 Sep
+    // 2026: the rotation was dealing ~2,600 offers an hour through the night
+    // and confirming none of them, because machines left on at empty desks
+    // kept beating and kept absorbing the offers — so whoever sat down in the
+    // morning arrived to a screen that had been chiming at an empty chair for
+    // eight hours (owner: "only if someone is actively signed into C3 tho").
+    // Stopping the beat is all it takes: the server drops anyone whose last
+    // heartbeat is older than its own short readiness window.
+    let lastInteraction = Date.now();
+    const noticed = () => { lastInteraction = Date.now(); };
+    const events = ["pointerdown", "keydown", "wheel", "touchstart", "focus"] as const;
+    for (const name of events) window.addEventListener(name, noticed, { passive: true });
+    document.addEventListener("visibilitychange", noticed);
+    const beat = () => {
+      if (!shotgunPersonPresent(lastInteraction, Date.now(), document.visibilityState === "visible")) return;
+      void apiRequest("POST", "/api/shotgun/readiness", { heartbeat: true }).catch(() => {});
+    };
+    beat(); const timer = setInterval(beat, 10_000);
+    return () => {
+      clearInterval(timer);
+      for (const name of events) window.removeEventListener(name, noticed);
+      document.removeEventListener("visibilitychange", noticed);
+    };
   }, [blocked, eligible, shellReady, user?.id]);
   const confirm = useMutation({ mutationFn: (id: number) => apiRequest("POST", `/api/shotgun/${id}/confirm`, {}), onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }) });
   const deny = useMutation({ mutationFn: (id: number) => apiRequest("POST", `/api/shotgun/${id}/deny`, {}), onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/shotgun"] }) });

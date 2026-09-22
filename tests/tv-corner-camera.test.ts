@@ -105,7 +105,7 @@ test("the corner keeps the circuit standing: no lens prop, no scenery clipping",
   // 1. The seat backs and rail are a prop on the LENS for the transfer race's
   // opening grandstand POV; they fade out two seconds in, which on a
   // three-minute broadcast looked like the stand dissolving.
-  assert.match(scene, /const fanOpacity=options\.reduced\|\|options\.spotlight\?0:/);
+  assert.match(scene, /const fanOpacity=options\.reduced\|\|options\.spotlight\|\|options\.stableCamera\?0:/);
   // 2. Scenery clipping cuts everything nearer than the farthest car, so a
   // fixed camera kept slicing the stands away and popping them back.
   assert.match(scene, /const sceneryClip=options\.spotlight/);

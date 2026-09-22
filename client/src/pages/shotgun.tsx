@@ -20,6 +20,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { SHOTGUN_NO_TAKERS_MS } from "@shared/shotgun-attention";
 
 export type ShotgunLead = {
   id: number;
@@ -29,7 +30,7 @@ export type ShotgunLead = {
   stateCode: string;
   source: string;
   managerNotes: string;
-  status: "queued" | "offered" | "claimed" | "done" | "cancelled";
+  status: "queued" | "offered" | "claimed" | "done" | "cancelled" | "no_takers";
   createdByName: string;
   currentAssigneeId: number | null;
   currentAssigneeName: string | null;
@@ -98,12 +99,20 @@ function statusStyle(status: ShotgunLead["status"]) {
   if (status === "claimed") return "bg-blue-600";
   if (status === "offered") return "bg-amber-500";
   if (status === "cancelled") return "bg-red-700";
+  // Parked, not failed: it asked the whole floor for half an hour and nobody
+  // was free. It is still here and a manager can send it round again.
+  if (status === "no_takers") return "bg-stone-600";
   return "bg-slate-500";
 }
 
+/** "NO TAKERS" reads better on a badge than the status name. */
+function statusLabel(status: ShotgunLead["status"]) {
+  return status === "no_takers" ? "NO TAKERS" : status.toUpperCase();
+}
+
 function ManagerLeadActions({ lead, requeue, cancel }: { lead: ShotgunLead; requeue: (id: number) => void; cancel: (id: number) => void }) {
-  const canRequeue = lead.status === "offered" || lead.status === "claimed";
-  const canCancel = lead.status === "queued" || lead.status === "offered" || lead.status === "claimed";
+  const canRequeue = lead.status === "offered" || lead.status === "claimed" || lead.status === "no_takers";
+  const canCancel = lead.status === "queued" || lead.status === "offered" || lead.status === "claimed" || lead.status === "no_takers";
   if (!canRequeue && !canCancel) return null;
   return (
     <div className="flex flex-wrap justify-end gap-2">
@@ -135,7 +144,7 @@ function LeadHeader({ lead, dialpad }: { lead: ShotgunLead; dialpad?: boolean })
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-lg font-black">{lead.leadName}</h3>
-          <Badge className={statusStyle(lead.status)}>{lead.status.toUpperCase()}</Badge>
+          <Badge className={statusStyle(lead.status)}>{statusLabel(lead.status)}</Badge>
           {lead.stateCode && <Badge variant="secondary">{lead.stateCode}</Badge>}
           {lead.source && <Badge variant="outline">{lead.source}</Badge>}
         </div>
@@ -150,6 +159,7 @@ function LeadHeader({ lead, dialpad }: { lead: ShotgunLead; dialpad?: boolean })
       <div className="shrink-0 text-right text-xs text-muted-foreground">
         {lead.currentAssigneeName && <p><strong className="text-foreground">{lead.currentAssigneeName}</strong></p>}
         {lead.status === "offered" && <p className="mt-1 flex items-center justify-end gap-1 text-amber-600"><Clock3 className="h-3.5 w-3.5" /> Awaiting confirmation</p>}
+        {lead.status === "no_takers" && <p className="mt-1 flex items-center justify-end gap-1 text-stone-600 dark:text-stone-400"><Clock3 className="h-3.5 w-3.5" /> Went round the floor for {Math.round(SHOTGUN_NO_TAKERS_MS / 60_000)} minutes with nobody free</p>}
       </div>
     </div>
   );
