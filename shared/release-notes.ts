@@ -29,6 +29,15 @@ export type ReleaseNote = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "4.126.0",
+    headline: "Six new copilots and four hats for the shop.",
+    items: [
+      { text: "New riders in the car shop: a clown, a panda, a cat with one paw up, a shark, a robot with an antenna, and a tiny dinosaur. They join the duck, the goose, the alien and the helmet buddy — one rides at a time.", audience: "everyone" },
+      { text: "Hats are new, and they are their own slot, so you can put a top hat on your panda. A top hat, a cowboy hat, a party hat and a gold crown. With nobody in the passenger seat, the hat goes on you instead.", audience: "everyone" },
+      { text: "The shop has a Hats category in the filter, and every new character has its own illustrated card rather than a plain blob.", audience: "everyone" },
+    ],
+  },
+  {
     version: "4.125.1",
     headline: "From tomorrow, the garage is 3 minutes a day instead of 15.",
     items: [

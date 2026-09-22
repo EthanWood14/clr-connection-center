@@ -31,7 +31,7 @@ export type ShopPreviewMotif =
   | "cabin"
   | "number"
   | "headlights"
-  | "wing" | "passenger" | "body";
+  | "wing" | "passenger" | "body" | "hat";
 
 export type ShopItemPreview = {
   from: string;
@@ -67,6 +67,93 @@ export type PurchaseEvaluation =
   | { status: "already_owned"; item: ShopItem; balance: number }
   | { status: "unknown_item"; itemId: string }
   | { status: "insufficient"; item: ShopItem; balance: number; need: number };
+
+/**
+ * Who can ride along, and what they look like.
+ *
+ * The renderer used to be a chain of `passenger === "goose-copilot"` checks,
+ * which is fine for four characters and unreadable at a dozen (owner, 22 Sep
+ * 2026: "add more characters that you can add, like a clown, hat, panda,
+ * etc."). Everything that distinguishes one rider from another lives here as
+ * data, so a new one is a row in this table plus a catalog entry — and the
+ * slot list, the sunroof cut-out and the model all read the same source
+ * instead of each keeping their own copy of the ids.
+ */
+export type ShopPassengerLook = {
+  id: string;
+  /** Body colour. */
+  body: string;
+  /** Head colour, when the face is not the same as the body. */
+  head?: string;
+  /** A long upright neck. */
+  neck?: boolean;
+  /** Beak colour. A beak implies no separate nose. */
+  beak?: string;
+  /** How the eyes read at a distance. */
+  eyes: "dot" | "big" | "visor" | "patch";
+  /** Round ears on top of the head, in this colour. */
+  ears?: string;
+  /** Makes those ears pointed instead of round. */
+  pointedEars?: boolean;
+  /** Dark patches around the eyes, panda-style. */
+  patches?: string;
+  /** A round nose, clown-style. */
+  nose?: string;
+  /** Puffs of hair either side of the head. */
+  hair?: string;
+  /** A dorsal fin or row of back spikes. */
+  fin?: string;
+  /** A single antenna with a bulb on top. */
+  antenna?: string;
+  /** A raised, waving arm. */
+  wave?: boolean;
+};
+
+export const SHOP_PASSENGERS: readonly ShopPassengerLook[] = [
+  { id: "rubber-duck", body: "#ffe34d", beak: "#ff8e32", eyes: "dot" },
+  { id: "goose-copilot", body: "#fff8e6", neck: true, beak: "#ff8e32", eyes: "dot" },
+  { id: "alien-copilot", body: "#93fa71", eyes: "big", antenna: "#c6ffb0" },
+  { id: "helmet-buddy", body: "#ff66b6", eyes: "visor", wave: true },
+  { id: "clown-copilot", body: "#ff5566", head: "#fdf6ef", nose: "#ff2d3f", hair: "#ff8a3d", eyes: "dot" },
+  { id: "panda-copilot", body: "#f5f3ee", ears: "#1d2129", patches: "#1d2129", eyes: "dot" },
+  { id: "cat-copilot", body: "#ff9f4a", ears: "#ffc389", pointedEars: true, eyes: "dot", wave: true },
+  { id: "shark-copilot", body: "#8fa6bd", fin: "#6c8199", eyes: "dot" },
+  { id: "robot-copilot", body: "#b9c4cf", eyes: "visor", antenna: "#ff5a5a" },
+  { id: "dino-copilot", body: "#5fc98a", fin: "#2f8f5c", eyes: "dot" },
+] as const;
+
+export const SHOP_PASSENGER_IDS: readonly string[] = SHOP_PASSENGERS.map((p) => p.id);
+
+/**
+ * Headwear. Its own slot, so a panda in a top hat is a thing you can own.
+ *
+ * A hat with no passenger sits on the driver's own helmet, which is why it is
+ * worth being a separate purchase rather than baked into a character.
+ */
+export type ShopHatLook = {
+  id: string;
+  crown: string;
+  band?: string;
+  /** How it is built: a stovepipe, a cone, a wide brim, or a ring of points. */
+  shape: "stovepipe" | "cone" | "wide" | "points";
+};
+
+export const SHOP_HATS: readonly ShopHatLook[] = [
+  { id: "top-hat", crown: "#16181d", band: "#c8102e", shape: "stovepipe" },
+  { id: "cowboy-hat", crown: "#b07a42", band: "#5c3b1e", shape: "wide" },
+  { id: "party-hat", crown: "#ff5fa2", band: "#ffe066", shape: "cone" },
+  { id: "gold-crown", crown: "#ffd34d", band: "#ff8e32", shape: "points" },
+] as const;
+
+export const SHOP_HAT_IDS: readonly string[] = SHOP_HATS.map((h) => h.id);
+
+export function shopPassengerLook(id: string | undefined): ShopPassengerLook | null {
+  return SHOP_PASSENGERS.find((p) => p.id === id) ?? null;
+}
+
+export function shopHatLook(id: string | undefined): ShopHatLook | null {
+  return SHOP_HATS.find((h) => h.id === id) ?? null;
+}
 
 /** One-time +5 minutes of garage edit time for the Pacific day of purchase. */
 export const GARAGE_PLUS_5_ITEM_ID = "garage-plus-5";
@@ -231,6 +318,16 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   {"id": "body-f1-90s", "name": "1990s Grand Prix", "description": "A raised narrow nose, squared sidepods and a tall rear wing.", "currency": "texts", "price": 3200, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ffbd65", "motif": "body"}},
   {"id": "body-f1-modern", "name": "Modern Grand Prix", "description": "Sculpted sidepods, a wide layered front wing and a protective cockpit halo.", "currency": "transfers", "price": 400, "tier": "Legendary", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#64e8ff", "motif": "body"}},
   {"id": "body-stock-80s", "name": "1980s Stock Car", "description": "A long square hood, upright cabin and slab-sided NASCAR-inspired body.", "currency": "dialpad_calls", "price": 2800, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ff826e", "motif": "body"}},
+  {"id": "clown-copilot", "name": "Clown copilot", "description": "Red nose, orange hair, and the unshakeable confidence of someone who has never checked a mirror.", "currency": "texts", "price": 1600, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ff5566", "motif": "passenger"}},
+  {"id": "panda-copilot", "name": "Panda copilot", "description": "Round, calm, and entirely unbothered by the racing line.", "currency": "dialpad_calls", "price": 2200, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#f5f3ee", "motif": "passenger"}},
+  {"id": "cat-copilot", "name": "Copilot cat", "description": "Pointed ears, one paw raised. Waving, or asking to be let out.", "currency": "texts", "price": 1200, "tier": "Street", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ff9f4a", "motif": "passenger"}},
+  {"id": "shark-copilot", "name": "Shark copilot", "description": "Grey, finned, and technically a long way from water.", "currency": "calltools_seconds", "price": 32400, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#8fa6bd", "motif": "passenger"}},
+  {"id": "robot-copilot", "name": "Robot copilot", "description": "A visor, a red antenna, and opinions about your braking points.", "currency": "dialpad_calls", "price": 2600, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#b9c4cf", "motif": "passenger"}},
+  {"id": "dino-copilot", "name": "Tiny dinosaur", "description": "Green, spiked down the back, and 66 million years late for the grid.", "currency": "transfers", "price": 250, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#5fc98a", "motif": "passenger"}},
+  {"id": "top-hat", "name": "Top hat", "description": "A stovepipe with a red band, worn by your passenger — or by you, if the seat is empty.", "currency": "texts", "price": 1500, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#c8102e", "motif": "hat"}},
+  {"id": "cowboy-hat", "name": "Cowboy hat", "description": "Wide brim, tan felt. Suits absolutely everyone in the cockpit.", "currency": "dialpad_calls", "price": 1400, "tier": "Street", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#b07a42", "motif": "hat"}},
+  {"id": "party-hat", "name": "Party hat", "description": "A pink cone with a gold pom. Every transfer is an occasion.", "currency": "texts", "price": 800, "tier": "Street", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ff5fa2", "motif": "hat"}},
+  {"id": "gold-crown", "name": "Gold crown", "description": "For whoever is leading. Nobody checks.", "currency": "transfers", "price": 300, "tier": "Legendary", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ffd34d", "motif": "hat"}},
   {"id": "body-stock-modern", "name": "Modern Stock Car", "description": "A wide closed-wheel coupe, low roof, splitter and rear spoiler. NASCAR-inspired.", "currency": "calltools_seconds", "price": 43200, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#b08aff", "motif": "body"}},
 ] as const;
 
@@ -258,7 +355,8 @@ export function shopItemSlot(id: string): string {
   };
   if (id.startsWith("body-")) return "body";
   if (["holo-wing", "ducktail-spoiler", "double-decker-wing", "angel-wing"].includes(id)) return "rear-aero";
-  if (["rubber-duck", "goose-copilot", "alien-copilot", "helmet-buddy"].includes(id)) return "passenger";
+  if (SHOP_PASSENGER_IDS.includes(id)) return "passenger";
+  if (SHOP_HAT_IDS.includes(id)) return "hat";
   return slots[id] ?? id;
 }
 

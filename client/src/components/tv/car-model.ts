@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { isSafeTvCarWrapUrl, type TvCarAppearance } from "@shared/tv-car";
+import { SHOP_HAT_IDS, SHOP_PASSENGER_IDS, shopHatLook, shopPassengerLook } from "@shared/tv-car-shop";
 import { CAR_SKIN_PANELS, PANEL_HEIGHT, PANEL_WIDTH, skinPanelRgba, type CarSkinPanel } from "@shared/tv-car-skin";
 
 type Point = { x: number; y: number; z: number };
@@ -132,7 +133,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       const stockGlass = upgrades.has("ion-cabin") || upgrades.has("cabin-leds") ? keep(new THREE.MeshStandardMaterial({color:upgrades.has("ion-cabin")?"#8a5cec":"#38b8ad",emissive:upgrades.has("ion-cabin")?"#5326a9":"#125e57",emissiveIntensity:.5,roughness:.25})) : glass;
       rounded("stock-cabin", 1.8, retro ? .6 : .48, retro ? 1.75 : 1.95, 0, retro ? 1.17 : 1.12, -.12, stockGlass, retro ? .06 : .25);
       rounded("stock-roof", retro ? 1.78 : 1.6, .12, retro ? 1.35 : 1.12, 0, retro ? 1.51 : 1.42, -.23, bodyPaint, .07, true);
-      if (["rubber-duck","goose-copilot","alien-copilot","helmet-buddy"].some(id=>upgrades.has(id))) box(root,.65,.02,.7,.38,1.58,-.18,black).name="passenger-sunroof";
+      if (SHOP_PASSENGER_IDS.some(id=>upgrades.has(id))) box(root,.65,.02,.7,.38,1.58,-.18,black).name="passenger-sunroof";
       for (const x of [-.92,.92]) {
         box(root,.1,.58,.1,x,1.22,.53,accent).rotation.x=-.25;
         box(root,.1,.56,.1,x,1.22,-.85,accent).rotation.x=.3;
@@ -283,24 +284,82 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
         feather.rotation.z=side*.25;feather.rotation.y=side*(.25+i*.09);
       }
     }
-    const passenger = ["rubber-duck","goose-copilot","alien-copilot","helmet-buddy"].find(id=>upgrades.has(id));
-    if(passenger) {
-      const buddy=new THREE.Group();buddy.name=passenger;buddy.position.set(.38,stock?1.5:1.13,-.18);root.add(buddy);
-      const color=passenger==="rubber-duck"?"#ffe34d":passenger==="goose-copilot"?"#fff8e6":passenger==="alien-copilot"?"#93fa71":"#ff66b6";
-      const skin=material(color,.45), orange=material("#ff8e32");
+    // Who is riding along, and what is on their head. Both are read from the
+    // look tables in shared/tv-car-shop.ts rather than a chain of id checks,
+    // so a new character is a row of data and no new geometry code (owner, 22
+    // Sep 2026: "add more characters that you can add, like a clown, hat,
+    // panda, etc.").
+    const rider = shopPassengerLook(SHOP_PASSENGER_IDS.find(id=>upgrades.has(id)));
+    const hat = shopHatLook(SHOP_HAT_IDS.find(id=>upgrades.has(id)));
+    if(rider || hat) {
+      const buddy=new THREE.Group();
+      buddy.name=rider?.id ?? hat!.id;
+      // With a passenger the group is the passenger seat. With only a hat it
+      // sits on the driver's own helmet, which is the point of the hat being
+      // its own slot rather than part of a character.
+      buddy.position.set(rider?.38:0, rider?(stock?1.5:1.13):(stock?1.53:1.16), rider?-.18:-.13);
+      root.add(buddy);
       const orb=(r:number,x:number,y:number,z:number,mat:THREE.Material,sx=1,sy=1,sz=1)=>{
         const m=new THREE.Mesh(keep(new THREE.SphereGeometry(r,16,12)),mat);m.position.set(x,y,z);m.scale.set(sx,sy,sz);m.castShadow=true;buddy.add(m);return m;
       };
-      orb(.27,0,.12,0,skin,1,.8,1.2);
-      const goose=passenger==="goose-copilot", headY=goose ? .74 : .43;
-      if(goose) box(buddy,.12,.48,.12,0,.44,.06,skin);
-      orb(.23,0,headY,.11,skin,1,passenger==="alien-copilot"?1.25:1,1);
-      if(passenger==="rubber-duck"||goose) box(buddy,.24,.09,.24,0,headY-.05,.34,orange);
-      if(passenger==="helmet-buddy") {
-        box(buddy,.33,.13,.05,0,headY,.32,black);
-        const arm=box(buddy,.12,.43,.12,.31,.39,0,skin);arm.rotation.z=-.4;
-        orb(.09,.4,.61,0,material("#ffd0aa"));
-      } else for(const x of [-.095,.095]) orb(passenger==="alien-copilot"?.085:.035,x,headY+.025,.303,black,1,passenger==="alien-copilot"?1.35:1,.4);
+      const cone=(r:number,h:number,x:number,y:number,z:number,mat:THREE.Material)=>{
+        const m=new THREE.Mesh(keep(new THREE.ConeGeometry(r,h,12)),mat);m.position.set(x,y,z);m.castShadow=true;buddy.add(m);return m;
+      };
+      let headY = 0, headR = .24;
+      if(rider) {
+        const skin=material(rider.body,.45), face=material(rider.head ?? rider.body,.45);
+        headY = rider.neck ? .74 : .43; headR = .23;
+        orb(.27,0,.12,0,skin,1,.8,1.2);
+        if(rider.neck) box(buddy,.12,.48,.12,0,.44,.06,skin);
+        orb(headR,0,headY,.11,face,1,rider.eyes==="big"?1.25:1,1);
+        if(rider.beak) box(buddy,.24,.09,.24,0,headY-.05,.34,material(rider.beak));
+        if(rider.nose) orb(.08,0,headY-.02,.33,material(rider.nose));
+        if(rider.hair) for(const x of [-.22,.22]) orb(.12,x,headY+.04,.01,material(rider.hair));
+        if(rider.ears) {
+          const ear=material(rider.ears);
+          for(const x of [-.16,.16]) rider.pointedEars ? cone(.09,.22,x,headY+.24,.03,ear) : orb(.09,x,headY+.19,.02,ear);
+        }
+        if(rider.patches) for(const x of [-.105,.105]) orb(.1,x,headY+.02,.16,material(rider.patches),1,1.15,.55);
+        if(rider.fin) {
+          const spine=material(rider.fin);
+          for(let i=0;i<3;i++) cone(.07-i*.014,.2-i*.03,0,.3+i*.12,-.16-i*.04,spine);
+        }
+        if(rider.antenna) {
+          box(buddy,.035,.2,.035,0,headY+.3,.02,material("#8d97a3"));
+          orb(.06,0,headY+.42,.02,material(rider.antenna));
+        }
+        if(rider.eyes==="visor") box(buddy,.33,.13,.05,0,headY,.32,black);
+        else for(const x of [-.095,.095]) orb(rider.eyes==="big"?.085:.035,x,headY+.025,.303,black,1,rider.eyes==="big"?1.35:1,.4);
+        if(rider.wave) {
+          const arm=box(buddy,.12,.43,.12,.31,.39,0,skin);arm.rotation.z=-.4;
+          orb(.09,.4,.61,0,material("#ffd0aa"));
+        }
+      }
+      if(hat) {
+        const crown=material(hat.crown,.5), band=material(hat.band ?? hat.crown,.5);
+        // Clear of the ears and the hair, and of the helmet when nobody is riding.
+        const brimY=headY+(rider?headR*.82:.2);
+        if(hat.shape==="stovepipe") {
+          box(buddy,.52,.03,.52,0,brimY,.02,crown).name="hat-brim";
+          box(buddy,.34,.36,.34,0,brimY+.2,.02,crown).name="hat-crown";
+          box(buddy,.35,.07,.35,0,brimY+.09,.02,band).name="hat-band";
+        } else if(hat.shape==="cone") {
+          cone(.19,.46,0,brimY+.23,.02,crown).name="hat-crown";
+          orb(.07,0,brimY+.48,.02,band).name="hat-pom";
+        } else if(hat.shape==="wide") {
+          const brim=new THREE.Mesh(keep(new THREE.CylinderGeometry(.42,.42,.03,16)),crown);
+          brim.position.set(0,brimY,.02);brim.castShadow=true;brim.name="hat-brim";buddy.add(brim);
+          orb(.2,0,brimY+.09,.02,crown,1,.85,1).name="hat-crown";
+          box(buddy,.36,.05,.36,0,brimY+.07,.02,band).name="hat-band";
+        } else {
+          const ring=new THREE.Mesh(keep(new THREE.CylinderGeometry(.24,.24,.12,14)),crown);
+          ring.position.set(0,brimY+.06,.02);ring.castShadow=true;ring.name="hat-crown";buddy.add(ring);
+          for(let i=0;i<5;i++) {
+            const a=i*Math.PI*2/5;
+            cone(.05,.14,Math.cos(a)*.2,brimY+.18,.02+Math.sin(a)*.2,band).name="hat-point";
+          }
+        }
+      }
     }
     if (upgrades.has("reactor-exhaust")) {
       for (const x of [-.28, .28]) {

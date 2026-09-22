@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { ArrowUpRight, Check, Clock3, Loader2, MessageSquare, Phone, Radio, Search, Sparkles, Trophy } from "lucide-react";
-import { SHOP_TIERS, formatShopBalance, shopCurrencyLabel, type ShopBalances, type ShopCurrency, type ShopItem, type ShopTier } from "@shared/tv-car-shop";
+import { SHOP_TIERS, formatShopBalance, shopCurrencyLabel, shopHatLook, shopPassengerLook, type ShopBalances, type ShopCurrency, type ShopItem, type ShopTier } from "@shared/tv-car-shop";
 import "./neon-shop.css";
 
 export type ShopResponse = {
@@ -28,13 +28,54 @@ export function NeonItemArt({ item }: { item: ShopItem }) {
       <ellipse rx="29" ry="35" fill="none" stroke={c} strokeWidth="3"/>
       {[0,60,120,180,240,300].map(r=><path key={r} d="M0 0L9 -28L0 -33Z" fill={`url(#${id}metal)`} stroke={c} strokeWidth=".7" transform={`rotate(${r})`}/>)}
       <circle r="8" fill={c}/></g>)}</g>
-    : motif === "passenger" ? <g>
-      <ellipse cx="138" cy="112" rx="42" ry="26" fill={c}/>
-      {item.id==="goose-copilot"&&<path d="M136 109V61" stroke={c} strokeWidth="17"/>}
-      <circle cx="142" cy={item.id==="goose-copilot"?49:75} r="28" fill={c}/>
-      {item.id==="rubber-duck"||item.id==="goose-copilot"?<path d={item.id==="goose-copilot"?"M160 48L193 59L160 65Z":"M160 74L197 87L161 94Z"} fill="#ff932e"/>:null}
-      {item.id==="helmet-buddy"?<><rect x="119" y="65" width="49" height="15" rx="6" fill="#111a30"/><path d="M171 112L192 78" stroke={c} strokeWidth="13" strokeLinecap="round"/></>:<g fill="#101827"><ellipse cx="137" cy={item.id==="goose-copilot"?44:70} rx={item.id==="alien-copilot"?10:4} ry={item.id==="alien-copilot"?14:4}/>{item.id==="alien-copilot"&&<ellipse cx="157" cy="70" rx="10" ry="14"/>}</g>}
-    </g>
+    : motif === "passenger" ? (() => {
+      // Drawn from the same look table the 3D model reads, so a new character
+      // is a row of data rather than another branch in this chain.
+      const look = shopPassengerLook(item.id);
+      if (!look) return <g><ellipse cx="138" cy="112" rx="42" ry="26" fill={c}/><circle cx="142" cy="75" r="28" fill={c}/></g>;
+      const headY = look.neck ? 49 : 75;
+      const face = look.head ?? look.body;
+      return <g>
+        <ellipse cx="138" cy="112" rx="42" ry="26" fill={look.body}/>
+        {look.neck && <path d={`M136 109V${headY + 12}`} stroke={look.body} strokeWidth="17"/>}
+        {look.fin && <path d="M112 96L96 62L126 84Z" fill={look.fin}/>}
+        {look.ears && (look.pointedEars
+          ? <g fill={look.ears}><path d={`M124 ${headY - 24}L118 ${headY - 52}L142 ${headY - 30}Z`}/><path d={`M160 ${headY - 24}L172 ${headY - 50}L176 ${headY - 22}Z`}/></g>
+          : <g fill={look.ears}><circle cx="122" cy={headY - 24} r="11"/><circle cx="163" cy={headY - 24} r="11"/></g>)}
+        {look.hair && <g fill={look.hair}><circle cx="113" cy={headY - 4} r="14"/><circle cx="172" cy={headY - 4} r="14"/></g>}
+        <circle cx="142" cy={headY} r="28" fill={face}/>
+        {look.patches && <g fill={look.patches}><ellipse cx="132" cy={headY - 5} rx="9" ry="11"/><ellipse cx="154" cy={headY - 5} rx="9" ry="11"/></g>}
+        {look.beak && <path d={look.neck ? "M160 48L193 59L160 65Z" : "M160 74L197 87L161 94Z"} fill={look.beak}/>}
+        {look.antenna && <g stroke="#8d97a3" strokeWidth="4"><path d={`M142 ${headY - 28}V${headY - 46}`}/><circle cx="142" cy={headY - 52} r="7" fill={look.antenna} stroke="none"/></g>}
+        {look.eyes === "visor"
+          ? <rect x="119" y={headY - 10} width="49" height="15" rx="6" fill="#111a30"/>
+          : <g fill="#101827"><ellipse cx="134" cy={headY - 5} rx={look.eyes === "big" ? 10 : 4} ry={look.eyes === "big" ? 14 : 4}/><ellipse cx="154" cy={headY - 5} rx={look.eyes === "big" ? 10 : 4} ry={look.eyes === "big" ? 14 : 4}/></g>}
+        {look.nose && <circle cx="144" cy={headY + 12} r="8" fill={look.nose}/>}
+        {look.wave && <path d="M171 112L192 78" stroke={look.body} strokeWidth="13" strokeLinecap="round"/>}
+      </g>;
+    })()
+    : motif === "hat" ? (() => {
+      const look = shopHatLook(item.id);
+      const crown = look?.crown ?? c, band = look?.band ?? c;
+      return <g>
+        {/* A head to wear it on, so the shape reads at tile size. */}
+        <circle cx="140" cy="108" r="30" fill="#2a3448"/>
+        {look?.shape === "cone" ? <>
+          <path d="M140 18L168 80H112Z" fill={crown}/><circle cx="140" cy="16" r="9" fill={band}/>
+        </> : look?.shape === "wide" ? <>
+          <ellipse cx="140" cy="78" rx="64" ry="12" fill={crown}/>
+          <path d="M116 78Q118 36 140 34Q162 36 164 78Z" fill={crown}/>
+          <rect x="116" y="64" width="48" height="10" fill={band}/>
+        </> : look?.shape === "points" ? <>
+          <rect x="112" y="58" width="56" height="20" rx="4" fill={crown}/>
+          <g fill={band}>{[0, 1, 2, 3].map(n => <path key={n} d={`M${114 + n * 17} 58L${122 + n * 17} 34L${130 + n * 17} 58Z`}/>)}</g>
+        </> : <>
+          <ellipse cx="140" cy="78" rx="52" ry="10" fill={crown}/>
+          <rect x="116" y="22" width="48" height="56" fill={crown}/>
+          <rect x="116" y="62" width="48" height="12" fill={band}/>
+        </>}
+      </g>;
+    })()
     : motif === "wing" ? <g fill={`url(#${id}metal)`} stroke={c} strokeWidth="3">
       {item.id==="angel-wing"?<>{[-1,1].map(side=><g key={side} transform={`translate(140 110) scale(${side} 1)`}>{[0,1,2,3,4].map(n=><path key={n} d={`M0 0Q${30+n*14} ${-80+n*8} ${53+n*13} ${-61+n*12}L${24+n*7} 8Z`} fill={c}/>)}</g>)}</>:<><path d="M96 120V83M185 120V75"/><path d={item.id==="ducktail-spoiler"?"M59 101L214 87L225 107L72 122Z":"M48 66L216 46L237 66L67 89Z"}/>{item.id==="double-decker-wing"&&<path d="M48 97L216 77L237 97L67 120Z"/>}</>}
     </g>
@@ -82,7 +123,7 @@ export function NeonShop({ data, loading, error, purchaseError, notice, pendingI
     <div className="neon-shop-body">
       <div className="neon-section-heading"><div><p className="neon-eyebrow">THE UPGRADE COLLECTION</p><h3>Pick your next flex.</h3></div><span>{items.length} items</span></div>
       <div className="neon-tier-tabs" role="group" aria-label="Item tier">{(["All",...SHOP_TIERS] as const).map(t=><button key={t} type="button" aria-pressed={tier===t} onClick={()=>setTier(t)} style={{"--tier":t==='All'?'#eff7ff':colors[t]} as React.CSSProperties}>{t==='All'?'All tiers':t}<span>{t==='All'?'✦':t==='Street'?'I':t==='Rare'?'II':t==='Epic'?'III':'IV'}</span></button>)}</div>
-      <div className="neon-filters"><label className="neon-search"><Search size={16}/><input aria-label="Search upgrades" placeholder="Find your upgrade…" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Part category" value={category} onChange={e=>setCategory(e.target.value)}><option value="all">All parts</option><option value="body">Car bodies</option><option value="wing">Wings & spoilers</option><option value="passenger">Passengers</option></select><select aria-label="Currency" value={currency} onChange={e=>setCurrency(e.target.value as typeof currency)}><option value="all">All currencies</option>{currencies.map(c=><option key={c} value={c}>{shopCurrencyLabel(c)}</option>)}</select><select aria-label="Collection" value={collection} onChange={e=>setCollection(e.target.value)}><option value="all">All items</option><option value="affordable">Ready to buy</option><option value="owned">My collection</option></select></div>
+      <div className="neon-filters"><label className="neon-search"><Search size={16}/><input aria-label="Search upgrades" placeholder="Find your upgrade…" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Part category" value={category} onChange={e=>setCategory(e.target.value)}><option value="all">All parts</option><option value="body">Car bodies</option><option value="wing">Wings & spoilers</option><option value="passenger">Passengers</option><option value="hat">Hats</option></select><select aria-label="Currency" value={currency} onChange={e=>setCurrency(e.target.value as typeof currency)}><option value="all">All currencies</option>{currencies.map(c=><option key={c} value={c}>{shopCurrencyLabel(c)}</option>)}</select><select aria-label="Collection" value={collection} onChange={e=>setCollection(e.target.value)}><option value="all">All items</option><option value="affordable">Ready to buy</option><option value="owned">My collection</option></select></div>
       {error && <div role="alert" className="neon-error">Shop could not load. {error} <button type="button" onClick={onRetry}>Try again</button></div>}
       {purchaseError && <p role="alert" className="neon-error">Shop update failed: {purchaseError}</p>}
       {notice && <p role="status" className="neon-notice">{notice}</p>}
