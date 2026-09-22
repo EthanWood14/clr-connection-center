@@ -14,7 +14,7 @@ import {
   shopBalance,
   shopItemById,
 } from "../shared/tv-car-shop";
-import { TV_CAR_DAILY_SECONDS, tvCarBudget } from "../shared/tv-car-budget";
+import { tvCarBudget, tvCarDailySeconds } from "../shared/tv-car-budget";
 import { normalizeTvCarAppearance, validateTvCarAppearance } from "../shared/tv-car";
 
 test("catalog uses only existing CLR metrics as currency and every item has a preview", () => {
@@ -97,10 +97,12 @@ test("garage boost is not a permanent daily raise; upgrades stay cosmetic-only",
   assert.deepEqual(normalizeShopUpgrades("chrome-rims"), []);
 
   // One-time boost is modeled as a larger allowance for that day only.
-  const withBoost = tvCarBudget(0, "2026-09-18", TV_CAR_DAILY_SECONDS + GARAGE_PLUS_5_SECONDS);
+  // The base is the DAY's base — 18 Sep was still a fifteen-minute day.
+  const base = tvCarDailySeconds("2026-09-18");
+  const withBoost = tvCarBudget(0, "2026-09-18", base + GARAGE_PLUS_5_SECONDS);
   assert.equal(withBoost.remaining, 20 * 60);
   assert.equal(withBoost.locked, false);
-  assert.equal(tvCarBudget(15 * 60, "2026-09-18", TV_CAR_DAILY_SECONDS + GARAGE_PLUS_5_SECONDS).remaining, 5 * 60);
+  assert.equal(tvCarBudget(base, "2026-09-18", base + GARAGE_PLUS_5_SECONDS).remaining, GARAGE_PLUS_5_SECONDS);
 });
 
 test("appearance carries owned upgrades read-only and paint saves still ignore them", () => {

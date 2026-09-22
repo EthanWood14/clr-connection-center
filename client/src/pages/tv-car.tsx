@@ -15,7 +15,7 @@ import { defaultTvCarAppearance, isSafeTvCarWrapUrl, normalizeTvCarAppearance, v
 import { prepareTvCarWrap, type PreparedTvCarWrap } from "@/lib/tv-car-wrap";
 import { isTvCarParticipant } from "@shared/tv-race-participation";
 import { createBlankCarSkin, type TvCarSkin } from "@shared/tv-car-skin";
-import { formatTvCarRemaining, TV_CAR_TICK_MS, type TvCarBudget } from "@shared/tv-car-budget";
+import { formatTvCarRemaining, tvCarDailySeconds, TV_CAR_TICK_MS, type TvCarBudget } from "@shared/tv-car-budget";
 import { CarSkinEditor } from "@/components/tv/car-skin-editor";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
@@ -336,7 +336,7 @@ function Garage({ user }: { user: AuthUser }) {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Your garage is closed for today</AlertTitle>
           <AlertDescription>
-            Everyone gets 15 minutes a day in here. Yours is used up, so your car is locked until tomorrow —
+            Everyone gets {Math.round(tvCarDailySeconds(liveBudget?.day ?? "") / 60)} minutes a day in here. Yours is used up, so your car is locked until tomorrow —
             it keeps whatever you last saved and still races on the wall. Come back in the morning to change it.
           </AlertDescription>
         </Alert>

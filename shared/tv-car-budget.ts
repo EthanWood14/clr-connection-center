@@ -20,8 +20,32 @@
  * Pure, so the arithmetic is testable without a clock, a browser or a table.
  */
 
-/** Fifteen minutes a day, per person. */
-export const TV_CAR_DAILY_SECONDS = 15 * 60;
+/**
+ * A day's garage time, per person, before anything bought on top of it.
+ *
+ * Three minutes from 23 Sep 2026 (owner, 22 Sep: "starting tomorrow, limit
+ * garage time to 5mins a day", then "actually make it 3"). It opened at
+ * fifteen the week before, and the
+ * change is DATED rather than a straight edit: anyone who had already spent
+ * eight minutes on the day the rule changed would otherwise have been locked
+ * out retroactively, mid-session, with no warning.
+ */
+export const TV_CAR_DAILY_SECONDS = 3 * 60;
+/** What a day was worth before the shorter allowance. */
+export const TV_CAR_DAILY_SECONDS_BEFORE = 15 * 60;
+/** The first Pacific day the shorter allowance applies to. */
+export const TV_CAR_SHORTER_DAY_FROM = "2026-09-23";
+
+/**
+ * A day's base allowance. Dates are YYYY-MM-DD, so a string compare IS the
+ * date compare — and a day we cannot read gets the SHORTER allowance, because
+ * guessing generously is how a cap quietly stops being a cap.
+ */
+export function tvCarDailySeconds(day: string): number {
+  const value = String(day ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return TV_CAR_DAILY_SECONDS;
+  return value >= TV_CAR_SHORTER_DAY_FROM ? TV_CAR_DAILY_SECONDS : TV_CAR_DAILY_SECONDS_BEFORE;
+}
 /** How often the open tab reports in. */
 export const TV_CAR_TICK_MS = 15_000;
 /**
@@ -63,15 +87,16 @@ export function tvCarBudgetDay(nowMs: number, tz: string = TV_CAR_BUDGET_TZ): st
 /**
  * What a stored second count means, clamped so bad data cannot unlock anyone.
  *
- * `dailySeconds` defaults to the base fifteen minutes. The garage shop can
+ * `dailySeconds` defaults to that day's base allowance. The garage shop can
  * grant a one-time boost for today only (bonus_seconds on the day row); the
  * allowance is still clamped so a corrupt bonus cannot invent an all-day session.
  */
-export function tvCarBudget(usedSeconds: number, day: string, dailySeconds: number = TV_CAR_DAILY_SECONDS): TvCarBudget {
-  const rawDaily = Number(dailySeconds);
+export function tvCarBudget(usedSeconds: number, day: string, dailySeconds?: number): TvCarBudget {
+  const base = tvCarDailySeconds(day);
+  const rawDaily = Number(dailySeconds ?? base);
   const allowance = Number.isFinite(rawDaily) && rawDaily > 0
-    ? Math.min(TV_CAR_DAILY_SECONDS + 30 * 60, Math.max(TV_CAR_DAILY_SECONDS, Math.floor(rawDaily)))
-    : TV_CAR_DAILY_SECONDS;
+    ? Math.min(base + 30 * 60, Math.max(base, Math.floor(rawDaily)))
+    : base;
   const stored = Number(usedSeconds);
   // Anything that is not a real number is treated as nothing spent. A corrupt
   // row should not be able to lock somebody out of their own car.

@@ -25,7 +25,7 @@ import {
   type ShopItem,
   type ShopCurrency,
 } from "../shared/tv-car-shop";
-import { TV_CAR_DAILY_SECONDS, tvCarBudgetDay } from "../shared/tv-car-budget";
+import { tvCarBudgetDay, tvCarDailySeconds } from "../shared/tv-car-budget";
 
 export type ShopOwner = { id: number; org_id: number };
 
@@ -221,7 +221,7 @@ export function buildShopSnapshot(
     spent,
     owned,
     equipped,
-    garageDailySeconds: TV_CAR_DAILY_SECONDS + dayBonus,
+    garageDailySeconds: tvCarDailySeconds(tvCarBudgetDay(Date.now())) + dayBonus,
   };
 }
 

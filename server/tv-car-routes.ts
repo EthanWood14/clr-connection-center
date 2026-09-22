@@ -3,7 +3,7 @@ import { normalizeTvCarAppearance, validateTvCarAppearance, TV_CAR_WRAP_MAX_BYTE
 import { removeTvCarWrap, saveTvCarWrap, selfTvCarWrapUrl, sendTvCarWrap, TvCarWrapError, validateTvCarWrapImage } from "./tv-car-wrap";
 import { isTvCarParticipant } from "../shared/tv-race-participation";
 import { validateTvCarSkin, type TvCarSkin } from "../shared/tv-car-skin";
-import { formatTvCarRemaining, TV_CAR_DAILY_SECONDS, tvCarBudget, tvCarBudgetDay, tvCarTickSeconds, type TvCarBudget } from "../shared/tv-car-budget";
+import { formatTvCarRemaining, tvCarBudget, tvCarBudgetDay, tvCarDailySeconds, tvCarTickSeconds, type TvCarBudget } from "../shared/tv-car-budget";
 import { formatShopPrice, formatShopBalance, shopCurrencyLabel } from "../shared/tv-car-shop";
 import {
   buildShopSnapshot, purchaseShopItem, sellShopItem, readGarageDayBonusSeconds, shopUpgradesForOwner, setShopItemEquipped,
@@ -73,8 +73,8 @@ function readAppearance(db: any, owner: CarOwner): TvCarAppearance {
 }
 
 function dailyGarageSeconds(db: any, owner: CarOwner, now = Date.now()): number {
-  // Base 15 minutes + any one-time shop boosts bought for today only.
-  return TV_CAR_DAILY_SECONDS + readGarageDayBonusSeconds(db, owner, now);
+  // That day's base allowance + any one-time shop boosts bought for today only.
+  return tvCarDailySeconds(tvCarBudgetDay(now)) + readGarageDayBonusSeconds(db, owner, now);
 }
 
 /**
@@ -140,7 +140,7 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
     const budget = readTvCarBudget(deps.db(), owner);
     if (!budget.locked) return true;
     res.status(423).json({
-      error: "You have used your 15 minutes in the garage today. Your car is locked until tomorrow.",
+      error: `You have used your ${Math.round(tvCarDailySeconds(budget.day) / 60)} minutes in the garage today. Your car is locked until tomorrow.`,
       budget,
     });
     return false;

@@ -6,8 +6,11 @@ import express from "express";
 import Database from "better-sqlite3";
 import { registerTvCarRoutes } from "../server/tv-car-routes";
 import { GARAGE_PLUS_5_ITEM_ID, GARAGE_PLUS_5_SECONDS, shopItemById } from "../shared/tv-car-shop";
-import { TV_CAR_DAILY_SECONDS } from "../shared/tv-car-budget";
+import { tvCarBudgetDay, tvCarDailySeconds } from "../shared/tv-car-budget";
 import { readShopUpgradesForOrg } from "../server/tv-car-shop";
+// The allowance is a property of the DAY (it dropped to three minutes on 23 Sep),
+// so a test that runs "today" has to ask for today's rather than pin a number.
+const BASE = tvCarDailySeconds(tvCarBudgetDay(Date.now()));
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -182,8 +185,8 @@ test("garage boost is a one-time today-only grant and can be rebought", async t 
   const buy = await request("/api/me/tv-car/shop/buy", "POST", { itemId: GARAGE_PLUS_5_ITEM_ID });
   assert.equal(buy.status, 200);
   assert.equal(buy.body.inserted, true);
-  assert.equal(buy.body.budget.remaining, TV_CAR_DAILY_SECONDS + GARAGE_PLUS_5_SECONDS);
-  assert.equal(buy.body.shop.garageDailySeconds, TV_CAR_DAILY_SECONDS + GARAGE_PLUS_5_SECONDS);
+  assert.equal(buy.body.budget.remaining, BASE + GARAGE_PLUS_5_SECONDS);
+  assert.equal(buy.body.shop.garageDailySeconds, BASE + GARAGE_PLUS_5_SECONDS);
   assert.equal(buy.body.appearance.upgrades?.includes?.(GARAGE_PLUS_5_ITEM_ID) ?? false, false);
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_consumable_purchases").get().n), 1);
   assert.equal(Number(db.prepare("SELECT bonus_seconds FROM tv_car_garage_time LIMIT 1").get().bonus_seconds), GARAGE_PLUS_5_SECONDS);
@@ -194,7 +197,7 @@ test("garage boost is a one-time today-only grant and can be rebought", async t 
   const again = await request("/api/me/tv-car/shop/buy", "POST", { itemId: GARAGE_PLUS_5_ITEM_ID });
   assert.equal(again.status, 200);
   assert.equal(again.body.inserted, true);
-  assert.equal(again.body.budget.remaining, TV_CAR_DAILY_SECONDS + 2 * GARAGE_PLUS_5_SECONDS);
+  assert.equal(again.body.budget.remaining, BASE + 2 * GARAGE_PLUS_5_SECONDS);
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM tv_car_shop_consumable_purchases").get().n), 2);
 
   const shop = await request("/api/me/tv-car/shop");

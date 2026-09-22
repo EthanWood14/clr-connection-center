@@ -28,6 +28,14 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "4.125.1",
+    headline: "From tomorrow, the garage is 3 minutes a day instead of 15.",
+    items: [
+      { text: "My TV Car: starting Wednesday 23 September, everyone gets 3 minutes a day in the garage instead of 15. Anything you bought from the shop still adds on top, and today is unaffected — if you have already spent ten minutes today, you keep the rest of today's fifteen.", audience: "everyone" },
+      { text: "Nothing else about it changes: time only counts while the tab is actually in front of you, your saved car keeps racing on the wall either way, and you can always look at it even when it is locked.", audience: "everyone" },
+    ],
+  },
   { version: "4.125.0", headline: "New bodies, wings, passengers and buybacks.", items: [
     { text: "Pick a 1960s, 1990s or modern Grand Prix body, or a 1980s or modern stock car. Add ducktail, double-decker or angel wings, and bring a duck, goose, alien or helmet buddy. Sell owned cosmetics for half your original purchase price in the same currency. Selling removes the part from your car; you can buy it again.", audience: "everyone" },
   ] },
