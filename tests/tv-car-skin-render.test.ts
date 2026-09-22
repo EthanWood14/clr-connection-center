@@ -204,3 +204,23 @@ test("garage teardown covers resources, context loss and fallback uses actual au
   assert.match(preview, /imageRendering: "pixelated"/);
   assert.match(preview, /cancelled = true; control\.current = null; cleanup\(\)/);
 });
+
+
+test("era bodies have different silhouettes and all new attachments survive skin rendering", () => {
+  for(const body of ['body-f1-60s','body-f1-90s','body-f1-modern','body-stock-80s','body-stock-modern']) {
+    for(const passenger of ['rubber-duck','goose-copilot','alien-copilot','helmet-buddy']) {
+      const model=createTvCarModel({appearance:{...defaultTvCarAppearance(7),skin:skin(),upgrades:[body,passenger,'double-decker-wing']}});
+      try {
+        assert.equal(model.root.userData.bodyStyle,body);
+        assert.ok(model.root.getObjectByName(passenger));assert.ok(model.root.getObjectByName('double-decker-wing'));
+        assert.equal(model.wheels.length,4);assert.equal(model.frontSteering.length,2);
+        if(body.includes('stock')) {assert.ok(model.root.getObjectByName('stock-roof'));assert.ok(!model.root.getObjectByName('body-nose'));}
+        else assert.ok(model.root.getObjectByName('body-nose'));
+        if(body==='body-f1-60s') assert.ok(!model.root.getObjectByName('body-sidepods'));
+        if(body==='body-f1-modern') assert.ok(model.root.getObjectByName('modern-halo'));
+        const bounds=new THREE.Box3().setFromObject(model.chassis);
+        assert.ok(bounds.max.y<2.7);assert.ok(bounds.max.x<1.8);assert.ok(bounds.min.x> -1.8);
+      } finally {model.dispose();}
+    }
+  }
+});

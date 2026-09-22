@@ -6,7 +6,7 @@ import { validateTvCarSkin, type TvCarSkin } from "../shared/tv-car-skin";
 import { formatTvCarRemaining, TV_CAR_DAILY_SECONDS, tvCarBudget, tvCarBudgetDay, tvCarTickSeconds, type TvCarBudget } from "../shared/tv-car-budget";
 import { formatShopPrice, formatShopBalance, shopCurrencyLabel } from "../shared/tv-car-shop";
 import {
-  buildShopSnapshot, purchaseShopItem, readGarageDayBonusSeconds, shopUpgradesForOwner, setShopItemEquipped,
+  buildShopSnapshot, purchaseShopItem, sellShopItem, readGarageDayBonusSeconds, shopUpgradesForOwner, setShopItemEquipped,
 } from "./tv-car-shop";
 
 type CarSession = { userId?: unknown; orgId?: unknown; portal?: unknown };
@@ -334,6 +334,23 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
     } catch (error: any) {
       console.error("[tv-car] equip failed:", error?.message ?? error);
       return res.status(500).json({ error: "Could not update your equipped parts." });
+    }
+  });
+
+  app.post("/api/me/tv-car/shop/sell", deps.requireAuth, (req: any, res: Response) => {
+    try {
+      const owner = ownerFor(req, res);
+      if (!owner) return;
+      const db = deps.db();
+      const before = readAppearance(db, owner);
+      const sale = sellShopItem(db, owner, req.body?.itemId, req.body?.receipt);
+      if (!sale) return res.status(409).json({ error: "That item is no longer available to sell. Refresh your collection." });
+      const appearance = readAppearance(db, owner);
+      deps.audit({ owner, before, after: appearance });
+      return res.json({ appearance, shop: shopFor(owner), message: `Sold ${sale.item.name} for ${formatShopBalance(sale.currency, sale.refund)}.`, refund: sale.refund });
+    } catch (error: any) {
+      console.error("[tv-car] sell failed:", error?.message ?? error);
+      return res.status(500).json({ error: "Could not sell that item." });
     }
   });
 

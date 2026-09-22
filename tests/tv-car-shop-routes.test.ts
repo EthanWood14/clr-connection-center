@@ -246,3 +246,54 @@ test("currency migration retains old receipts, remains idempotent, and permits t
     assert.throws(()=>db.exec(`INSERT INTO tv_car_shop_purchases VALUES (1,7,'ion-cabin','texts',700,'new')`));
   } finally {db.close();}
 });
+
+
+test("selling refunds the original receipt, unequips, preserves spend and cannot repeat after rebuy", async t => {
+  const {db,request}=await harness(t);
+  await request('/api/me/tv-car/shop/buy','POST',{itemId:'chrome-rims'});
+  // Simulate a historical price, rather than the current 800-call sticker.
+  db.prepare("UPDATE tv_car_shop_purchases SET price=501 WHERE item_id='chrome-rims'").run();
+  const before=(await request('/api/me/tv-car/shop')).body;
+  const receipt=before.catalog.find((i:any)=>i.id==='chrome-rims').resale;
+  assert.equal(receipt.amount,250);
+  const sale=await request('/api/me/tv-car/shop/sell','POST',{itemId:'chrome-rims',receipt:receipt.receipt,refund:999999});
+  assert.equal(sale.status,200);assert.equal(sale.body.refund,250);
+  assert.equal(sale.body.shop.balances.dialpad_calls,before.balances.dialpad_calls+250);
+  assert.equal(sale.body.shop.spent.dialpad_calls,251);
+  assert.ok(!(sale.body.appearance.upgrades ?? []).includes('chrome-rims'));
+  assert.ok(!sale.body.shop.owned.includes('chrome-rims'));
+  assert.equal((await request('/api/me/tv-car/shop/sell','POST',{itemId:'chrome-rims',receipt:receipt.receipt})).status,409);
+  const rebuy=await request('/api/me/tv-car/shop/buy','POST',{itemId:'chrome-rims'});
+  assert.equal(rebuy.status,200);assert.equal(rebuy.body.shop.spent.dialpad_calls,1051);
+  assert.equal((await request('/api/me/tv-car/shop/sell','POST',{itemId:'chrome-rims',receipt:receipt.receipt})).status,409);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tv_car_shop_sales').get().n,1);
+});
+
+test("sales stay owner scoped, reject boosts and roll back if their receipt cannot be recorded", async t => {
+  const {db,request}=await harness(t);
+  await request('/api/me/tv-car/shop/buy','POST',{itemId:'chrome-rims'});
+  const receipt=(await request('/api/me/tv-car/shop')).body.catalog.find((i:any)=>i.id==='chrome-rims').resale.receipt;
+  db.prepare('UPDATE tv_car_shop_purchases SET org_id=2').run();
+  assert.equal((await request('/api/me/tv-car/shop/sell','POST',{itemId:'chrome-rims',receipt})).status,409);
+  db.prepare('UPDATE tv_car_shop_purchases SET org_id=1').run();
+  db.prepare('UPDATE tv_car_shop_purchases SET user_id=8').run();
+  assert.equal((await request('/api/me/tv-car/shop/sell','POST',{itemId:'chrome-rims',receipt})).status,409);
+  db.prepare('UPDATE tv_car_shop_purchases SET user_id=7').run();
+  assert.equal((await request('/api/me/tv-car/shop/sell','POST',{itemId:'garage-plus-5',receipt})).status,409);
+  db.exec("CREATE TRIGGER reject_sale BEFORE INSERT ON tv_car_shop_sales BEGIN SELECT RAISE(ABORT,'test rollback'); END;");
+  assert.equal((await request('/api/me/tv-car/shop/sell','POST',{itemId:'chrome-rims',receipt})).status,500);
+  const after=(await request('/api/me/tv-car/shop')).body;
+  assert.ok(after.owned.includes('chrome-rims'));assert.ok(after.equipped.includes('chrome-rims'));
+  assert.equal(after.spent.dialpad_calls,800);
+});
+
+test("new bodies and passengers equip in independent slots and can be sold", async t => {
+  const {request}=await harness(t);
+  await request('/api/me/tv-car/shop/buy','POST',{itemId:'body-f1-60s'});
+  await request('/api/me/tv-car/shop/buy','POST',{itemId:'body-f1-modern'});
+  const result=await request('/api/me/tv-car/shop/buy','POST',{itemId:'goose-copilot'});
+  assert.equal(result.status,200);
+  assert.ok(!result.body.appearance.upgrades.includes('body-f1-60s'));
+  assert.ok(result.body.appearance.upgrades.includes('body-f1-modern'));
+  assert.ok(result.body.appearance.upgrades.includes('goose-copilot'));
+});

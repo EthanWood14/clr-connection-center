@@ -238,6 +238,20 @@ function Garage({ user }: { user: AuthUser }) {
       setShopNotice(data.message);
     },
   });
+  const sell = useMutation<any, Error, { itemId: string; receipt: string }>({
+    mutationFn: input => apiRequest("POST", "/api/me/tv-car/shop/sell", input),
+    onMutate: async () => {
+      setShopNotice(null); buy.reset(); equip.reset();
+      await Promise.all([queryClient.cancelQueries({ queryKey: shopQueryKey, exact: true }), queryClient.cancelQueries({ queryKey, exact: true })]);
+    },
+    onSuccess: data => {
+      queryClient.setQueryData(shopQueryKey, data.shop);
+      queryClient.setQueryData(queryKey, (current: CarResponse | undefined) => ({ ...current, appearance: data.appearance }));
+      setDraft(current => current ? { ...current, upgrades: data.appearance.upgrades ?? [] } : null);
+      setShopNotice(data.message);
+    },
+    onError: () => { void shop.refetch(); },
+  });
   const liveBudget = budget ?? car.data?.budget ?? null;
   const locked = liveBudget?.locked ?? false;
   // A tick only while the tab is actually in front: time spent on a call with
@@ -255,7 +269,7 @@ function Garage({ user }: { user: AuthUser }) {
     const timer = window.setInterval(tick, TV_CAR_TICK_MS);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [locked]);
-  const busy = locked || save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin || buy.isPending;
+  const busy = locked || save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin || buy.isPending || equip.isPending || sell.isPending;
   const editingSkin = skinDraft ?? saved.skin ?? blankSkin;
   const skinDirty = skinDraft !== null && JSON.stringify(skinDraft) !== JSON.stringify(saved.skin ?? blankSkin);
   const hasUnsaved = dirty || skinDirty || !!preparedWrap;
@@ -444,8 +458,8 @@ function Garage({ user }: { user: AuthUser }) {
         </Card>
         <NeonShop
         data={shop.data} loading={shop.isLoading} error={shop.isError ? shop.error.message : undefined}
-        purchaseError={equip.isError ? equip.error.message : buy.isError ? buy.error.message : undefined} notice={shopNotice}
-        pendingId={equip.isPending ? equip.variables.itemId : buy.isPending ? buy.variables : undefined} onEquip={(itemId, equipped) => equip.mutate({ itemId, equipped })} onBuy={id => buy.mutate(id)} onRetry={() => { void shop.refetch(); }}
+        purchaseError={sell.isError ? sell.error.message : equip.isError ? equip.error.message : buy.isError ? buy.error.message : undefined} notice={shopNotice}
+        pendingId={sell.isPending ? sell.variables.itemId : equip.isPending ? equip.variables.itemId : buy.isPending ? buy.variables : undefined} onEquip={(itemId, equipped) => { sell.reset(); equip.mutate({ itemId, equipped }); }} onSell={(itemId, receipt) => sell.mutate({ itemId, receipt })} onBuy={id => { sell.reset(); buy.mutate(id); }} onRetry={() => { void shop.refetch(); }}
       /></div>}
       <p className="flex items-start gap-2 rounded-xl border bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground"><Flag className="mt-0.5 h-4 w-4 shrink-0" /> This is a cosmetic change only. Your transfers, race position, speed, and ranking stay exactly the same. Resetting colors also needs Save my car.</p>
     </div>

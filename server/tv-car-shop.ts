@@ -36,6 +36,7 @@ export type ShopSnapshot = {
     affordable: boolean;
     priceLabel: string;
     timesPurchased: number;
+    resale: { amount: number; currency: ShopCurrency; receipt: string } | null;
   }>;
   balances: ShopBalances;
   earned: ShopBalances;
@@ -112,6 +113,9 @@ export function readSpentShopBalances(db: any, owner: ShopOwner): ShopBalances {
     ).all(owner.org_id, owner.id) as Array<{ currency: string; n: number }>;
     for (const row of rows) addSpentRow(spent, row.currency, row.n);
   } catch { /* optional table */ }
+  const sales = db.prepare(`SELECT currency, SUM(price-refund) AS n FROM tv_car_shop_sales
+    WHERE org_id=? AND user_id=? GROUP BY currency`).all(owner.org_id, owner.id);
+  for (const row of sales) addSpentRow(spent, row.currency, row.n);
   return spent;
 }
 
@@ -197,6 +201,7 @@ export function buildShopSnapshot(
   const balances = availableShopBalances(earned, spent);
   const consumableCounts = readConsumablePurchaseCounts(db, owner);
   const dayBonus = readGarageDayBonusSeconds(db, owner);
+  const receipts = new Map<string, any>(db.prepare(`SELECT item_id,currency,price,purchased_at FROM tv_car_shop_purchases WHERE org_id=? AND user_id=?`).all(owner.org_id, owner.id).map((row: any) => [row.item_id, row]));
   return {
     catalog: TV_CAR_SHOP_CATALOG.map((item) => {
       const consumable = isConsumableShopItem(item);
@@ -204,6 +209,7 @@ export function buildShopSnapshot(
       return {
         ...item,
         owned: permanentlyOwned,
+        resale: permanentlyOwned && receipts.has(item.id) ? { amount: Math.floor(receipts.get(item.id).price / 2), currency: receipts.get(item.id).currency, receipt: receipts.get(item.id).purchased_at } : null,
         equipped: equipped.includes(item.id),
         affordable: !permanentlyOwned && balances[item.currency] >= item.price,
         priceLabel: formatPrice(item),
@@ -255,6 +261,8 @@ export function purchaseShopItem(
       inserted = Number(result.changes ?? 0) > 0;
       if (inserted) grantGarageTimeBoost(db, owner, effectSeconds, nowMs);
     } else {
+      const prior = db.prepare(`SELECT MAX(purchased_at) AS stamp FROM tv_car_shop_sales WHERE org_id=? AND user_id=? AND item_id=?`).get(owner.org_id, owner.id, evaluation.item.id);
+      if (prior?.stamp && Date.parse(prior.stamp) >= Date.parse(nowIso)) nowIso = new Date(Date.parse(prior.stamp) + 1).toISOString();
       const result = db.prepare(
         `INSERT OR IGNORE INTO tv_car_shop_purchases
           (org_id, user_id, item_id, currency, price, purchased_at)
@@ -321,4 +329,21 @@ export function readShopUpgradesForOrg(db: any, orgId: number): Map<number, stri
     for (const [uid, list] of out) out.set(uid, resolveShopEquipment(normalizeShopUpgrades(list), selections.get(uid)));
   } catch { /* optional table */ }
   return out;
+}
+
+/** Preserve historical spend, refund half the receipt, and remove ownership atomically. */
+export function sellShopItem(db: any, owner: ShopOwner, itemId: unknown, receipt: unknown) {
+  const item = shopItemById(itemId);
+  if (!item || isConsumableShopItem(item)) return null;
+  return db.transaction(() => {
+    const row = db.prepare(`SELECT currency,price,purchased_at FROM tv_car_shop_purchases WHERE org_id=? AND user_id=? AND item_id=?`).get(owner.org_id, owner.id, item.id);
+    // A stale/retried sale must never sell a subsequently repurchased copy.
+    if (!row || typeof receipt !== "string" || receipt !== row.purchased_at) return null;
+    const refund = Math.floor(floorNonNeg(row.price) / 2);
+    setShopItemEquipped(db, owner, item.id, false);
+    db.prepare(`INSERT INTO tv_car_shop_sales (org_id,user_id,item_id,currency,price,refund,purchased_at,sold_at) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(owner.org_id, owner.id, item.id, row.currency, row.price, refund, row.purchased_at, new Date().toISOString());
+    db.prepare(`DELETE FROM tv_car_shop_purchases WHERE org_id=? AND user_id=? AND item_id=?`).run(owner.org_id, owner.id, item.id);
+    return { item, refund, currency: row.currency as ShopCurrency };
+  }).immediate();
 }

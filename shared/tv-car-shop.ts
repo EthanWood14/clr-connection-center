@@ -30,7 +30,8 @@ export type ShopPreviewMotif =
   | "exhaust"
   | "cabin"
   | "number"
-  | "headlights";
+  | "headlights"
+  | "wing" | "passenger" | "body";
 
 export type ShopItemPreview = {
   from: string;
@@ -218,7 +219,19 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   {"id":"solar-fin","name":"Solar crown fin","description":"A gold dorsal blade with three radiant crown points. Replaces the trophy fin.","currency":"transfers","price":450,"tier":"Legendary","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#ffdc73","motif":"fin"}},
   {"id":"reactor-exhaust","name":"Reactor exhaust","description":"Twin violet reactor ports with glowing cyan cores.","currency":"calltools_seconds","price":64800,"tier":"Epic","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#976dff","motif":"exhaust"}},
   {"id":"hyperdrive-trail","name":"Hyperdrive trail","description":"Four neon energy trails light up when your car celebrates a transfer.","currency":"calltools_seconds","price":144000,"tier":"Legendary","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#64ffda","motif":"plume"}},
-  {"id":"holo-wing","name":"Holographic wing","description":"A luminous cyan rear aero wing with pink endplates.","currency":"transfers","price":300,"tier":"Epic","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#51edff","motif":"hood"}},
+  {"id":"holo-wing","name":"Holographic wing","description":"A luminous cyan rear aero wing with pink endplates.","currency":"transfers","price":300,"tier":"Epic","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#51edff","motif":"wing"}},
+  {"id": "ducktail-spoiler", "name": "Ducktail spoiler", "description": "A short swept lip for a clean retro silhouette.", "currency": "dialpad_calls", "price": 1000, "tier": "Street", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#79e4ff", "motif": "wing"}},
+  {"id": "double-decker-wing", "name": "Double-decker wing", "description": "Two tall aero blades and neon endplates. Subtlety sold separately.", "currency": "texts", "price": 2800, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#f28aff", "motif": "wing"}},
+  {"id": "angel-wing", "name": "Angel wings", "description": "Pearl feather-shaped wings at the rear. Aerodynamics by wishful thinking.", "currency": "transfers", "price": 350, "tier": "Legendary", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#fff0bb", "motif": "wing"}},
+  {"id": "rubber-duck", "name": "Rubber duck copilot", "description": "A giant yellow duck in the cockpit. Absolutely no license.", "currency": "texts", "price": 900, "tier": "Street", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ffe55d", "motif": "passenger"}},
+  {"id": "goose-copilot", "name": "Chaos goose", "description": "Long neck, orange beak, zero respect for the racing line.", "currency": "dialpad_calls", "price": 1800, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#f5f4e9", "motif": "passenger"}},
+  {"id": "alien-copilot", "name": "Alien copilot", "description": "A lime-green visitor with enormous eyes. Here for your transfers.", "currency": "calltools_seconds", "price": 28800, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#9eff80", "motif": "passenger"}},
+  {"id": "helmet-buddy", "name": "Helmet buddy", "description": "A tiny passenger in a bright pink racing helmet, waving from the cockpit.", "currency": "texts", "price": 1400, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ff72b9", "motif": "passenger"}},
+  {"id": "body-f1-60s", "name": "1960s Grand Prix", "description": "A slim cigar body, exposed wheels and almost no aero. Inspired by early Formula 1.", "currency": "dialpad_calls", "price": 1800, "tier": "Street", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#7fe5a1", "motif": "body"}},
+  {"id": "body-f1-90s", "name": "1990s Grand Prix", "description": "A raised narrow nose, squared sidepods and a tall rear wing.", "currency": "texts", "price": 3200, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ffbd65", "motif": "body"}},
+  {"id": "body-f1-modern", "name": "Modern Grand Prix", "description": "Sculpted sidepods, a wide layered front wing and a protective cockpit halo.", "currency": "transfers", "price": 400, "tier": "Legendary", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#64e8ff", "motif": "body"}},
+  {"id": "body-stock-80s", "name": "1980s Stock Car", "description": "A long square hood, upright cabin and slab-sided NASCAR-inspired body.", "currency": "dialpad_calls", "price": 2800, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ff826e", "motif": "body"}},
+  {"id": "body-stock-modern", "name": "Modern Stock Car", "description": "A wide closed-wheel coupe, low roof, splitter and rear spoiler. NASCAR-inspired.", "currency": "calltools_seconds", "price": 43200, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#b08aff", "motif": "body"}},
 ] as const;
 
 const CATALOG_BY_ID = new Map(TV_CAR_SHOP_CATALOG.map((item) => [item.id, item]));
@@ -243,6 +256,9 @@ export function shopItemSlot(id: string): string {
     "spark-exhaust": "exhaust", "reactor-exhaust": "exhaust",
     "victory-plume": "trail", "hyperdrive-trail": "trail",
   };
+  if (id.startsWith("body-")) return "body";
+  if (["holo-wing", "ducktail-spoiler", "double-decker-wing", "angel-wing"].includes(id)) return "rear-aero";
+  if (["rubber-duck", "goose-copilot", "alien-copilot", "helmet-buddy"].includes(id)) return "passenger";
   return slots[id] ?? id;
 }
 

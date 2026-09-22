@@ -4,6 +4,11 @@ export function migrateShopTextCurrency(db: any) {
     org_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
     upgrades_json TEXT NOT NULL, PRIMARY KEY (org_id, user_id)
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS tv_car_shop_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, org_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+    item_id TEXT NOT NULL, currency TEXT NOT NULL, price INTEGER NOT NULL,
+    refund INTEGER NOT NULL, purchased_at TEXT NOT NULL, sold_at TEXT NOT NULL
+  ); CREATE INDEX IF NOT EXISTS idx_tv_car_shop_sales_owner ON tv_car_shop_sales(org_id,user_id)`);
   for (const table of ["tv_car_shop_purchases", "tv_car_shop_consumable_purchases"]) {
     const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table);
     if (!row?.sql || row.sql.includes("'texts'")) continue;

@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.125.0", headline: "New bodies, wings, passengers and buybacks.", items: [
+    { text: "Pick a 1960s, 1990s or modern Grand Prix body, or a 1980s or modern stock car. Add ducktail, double-decker or angel wings, and bring a duck, goose, alien or helmet buddy. Sell owned cosmetics for half your original purchase price in the same currency. Selling removes the part from your car; you can buy it again.", audience: "everyone" },
+  ] },
   { version: "4.124.2", headline: "New leads need a pipeline stage.", items: [
     { text: "Automatic new-lead cards, alerts, TV notices and Shotgun intake now require a pipeline stage. Missing, blank or unassigned stages are skipped, including Retail pool leads. Retry intake checks a fresh eligible feed before publishing.", audience: "everyone" },
   ] },
