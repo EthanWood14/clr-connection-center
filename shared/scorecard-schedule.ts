@@ -1,5 +1,5 @@
 /** Schedule context only: these tags never establish a day worked or alter credit. */
-export type ScorecardScheduleKind = "full" | "half" | "time_off" | "sick" | "excused" | "weekend" | "holiday" | "inactive" | "unknown";
+export type ScorecardScheduleKind = "full" | "half" | "time_off" | "other_work" | "sick" | "excused" | "weekend" | "holiday" | "inactive" | "unknown";
 export type ScorecardScheduleStatus = {
   date: string;
   kind: ScorecardScheduleKind;
@@ -23,7 +23,8 @@ export function scorecardScheduleStatus(date: string, kind: ScorecardScheduleKin
   const descriptions: Record<ScorecardScheduleKind, [string, string]> = {
     full: ["Full day", "Standard full-day schedule; this does not confirm attendance or a qualifying workday."],
     half: ["Half day", "Approved or standing half-day schedule; qualifying workdays still use the existing 0.5 weight."],
-    time_off: ["Time off", "Approved full day off."],
+    time_off: ["Day off", "Approved full day off."],
+    other_work: ["Other work", "Working on other things; excluded from call/transfer goal days, not an absence."],
     sick: [halfSick ? "Sick · half day" : "Sick", halfSick ? "Approved half-day sick leave." : "Approved full-day sick leave."],
     excused: ["Excused absence", "Approved excused absence; no private reason is shown."],
     weekend: ["Weekend", "No standard weekday schedule inferred."],

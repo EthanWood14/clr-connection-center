@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Palmtree } from "lucide-react";
 import { LEAVE_KIND_LABELS, type LeaveKind } from "@shared/half-day";
+type DayKind = LeaveKind | "other_work";
+const DAY_LABELS = { ...LEAVE_KIND_LABELS, other_work: "Working on other things" };
 
 type TimeOffRow = {
   id: number;
@@ -20,15 +22,16 @@ type TimeOffRow = {
   endDate: string;
   reason: string;
   status: string;
-  dayPortion: "full" | "half";
-  leaveKind?: LeaveKind;
+  dayPortion: "full" | "half" | "work";
+  leaveKind?: DayKind;
 };
 
-const KINDS: LeaveKind[] = ["half", "pto", "sick_documented", "sick_undocumented"];
+const KINDS: DayKind[] = ["half", "pto", "other_work", "sick_documented", "sick_undocumented"];
 
 export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: string }) {
   const { toast } = useToast();
-  const [kind, setKind] = useState<LeaveKind>("half");
+  const [kind, setKind] = useState<DayKind>("half");
+  const [editingOtherWork, setEditingOtherWork] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
@@ -43,9 +46,10 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
     enabled: Number.isFinite(userId) && userId > 0,
   });
 
+  const { data: otherWork = [] } = useQuery<TimeOffRow[]>({ queryKey: ["/api/clr-other-work"] });
   const visible = useMemo(
-    () => rows.filter((r) => r.status !== "cancelled" && r.status !== "canceled" && r.status !== "denied"),
-    [rows],
+    () => [...rows, ...otherWork.filter(r => r.userId === userId)].filter((r) => r.status !== "cancelled" && r.status !== "canceled" && r.status !== "denied"),
+    [rows, otherWork, userId],
   );
 
   const save = useMutation({
@@ -57,9 +61,12 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
         startDate,
         endDate: end,
         leaveKind: kind,
-        reason: reason.trim() || LEAVE_KIND_LABELS[kind],
+        reason: reason.trim() || DAY_LABELS[kind],
         onBehalfOf: userId,
       };
+      if (kind === "other_work") {
+        return apiRequest(editingId != null ? "PATCH" : "POST", `/api/clr-other-work${editingId != null ? `/${editingId}` : ""}`, { ...body, userId });
+      }
       if (editingId != null) {
         return apiRequest("PATCH", `/api/time-off/${editingId}`, body);
       }
@@ -69,7 +76,7 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
       queryClient.invalidateQueries({ queryKey: ["/api/time-off"] });
       toast({
         title: editingId ? "Time off updated" : "Time off recorded",
-        description: `${LEAVE_KIND_LABELS[kind]} for ${clrName} is approved and counts in transfers/day right away.`,
+        description: kind === "other_work" ? `${clrName} is working; these dates are excluded from call and transfer goal days.` : `${DAY_LABELS[kind]} for ${clrName} is approved and updates the scorecard.`,
       });
       setEditingId(null);
       setReason("");
@@ -78,7 +85,7 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
   });
 
   const cancel = useMutation({
-    mutationFn: (id: number) => apiRequest("PATCH", `/api/time-off/${id}`, { status: "cancelled" }),
+    mutationFn: (row: TimeOffRow) => row.leaveKind === "other_work" ? apiRequest("DELETE", `/api/clr-other-work/${row.id}`) : apiRequest("PATCH", `/api/time-off/${row.id}`, { status: "cancelled" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/time-off"] });
       toast({ title: "Time off cancelled" });
@@ -87,7 +94,7 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
   });
 
   const remove = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/time-off/${id}`),
+    mutationFn: (row: TimeOffRow) => apiRequest("DELETE", `/api/${row.leaveKind === "other_work" ? "clr-other-work" : "time-off"}/${row.id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/time-off"] });
       toast({ title: "Time off removed" });
@@ -97,7 +104,8 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
 
   function beginEdit(row: TimeOffRow) {
     setEditingId(row.id);
-    setKind((row.leaveKind as LeaveKind) || (row.dayPortion === "half" ? "half" : "pto"));
+    setKind(row.leaveKind || (row.dayPortion === "half" ? "half" : "pto"));
+    setEditingOtherWork(row.leaveKind === "other_work");
     setStartDate(row.startDate);
     setEndDate(row.endDate);
     setReason(row.reason ?? "");
@@ -107,12 +115,11 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
     <Card data-testid="clr-time-off-card">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
-          <Palmtree className="w-4 h-4" /> Time off / sick
+          <Palmtree className="w-4 h-4" /> Day status
         </CardTitle>
         <CardDescription>
-          Record half day, full PTO, documented sick, or undocumented sick for {clrName}.
-          Manager entries are approved immediately so scorecard and TV pace pick them up —
-          they never sit pending and block half-day seeds.
+          Record time off or other work for {clrName}. Manager entries apply immediately.
+          Other work keeps attendance unchanged and excludes the dates from call and transfer goal days.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -121,12 +128,13 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
             <button
               key={k}
               type="button"
+              disabled={editingId != null && editingOtherWork !== (k === "other_work")}
               onClick={() => setKind(k)}
               className={"rounded-md border px-2.5 py-1 text-xs transition-colors "
                 + (kind === k ? "border-primary bg-primary/10 font-semibold text-primary" : "hover:bg-muted")}
               data-testid={"clr-leave-kind-" + k}
             >
-              {LEAVE_KIND_LABELS[k]}
+              {DAY_LABELS[k]}
             </button>
           ))}
         </div>
@@ -154,10 +162,10 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
             <p className="text-xs text-muted-foreground">No active time off on file for this CLR.</p>
           )}
           {visible.map((r) => (
-            <div key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-xs" data-testid={"clr-leave-row-" + r.id}>
+            <div key={`${r.leaveKind}:${r.id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-xs" data-testid={"clr-leave-row-" + r.id}>
               <div className="space-y-0.5">
                 <div className="font-medium">
-                  {LEAVE_KIND_LABELS[(r.leaveKind as LeaveKind) || (r.dayPortion === "half" ? "half" : "pto")]}
+                  {DAY_LABELS[r.leaveKind || (r.dayPortion === "half" ? "half" : "pto")]}
                   {" · "}{r.startDate}{r.endDate !== r.startDate ? ` → ${r.endDate}` : ""}
                   <span className="ml-1.5 text-muted-foreground">({r.status})</span>
                 </div>
@@ -165,8 +173,8 @@ export function ClrTimeOffCard({ userId, clrName }: { userId: number; clrName: s
               </div>
               <div className="flex gap-1">
                 <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => beginEdit(r)} data-testid={"clr-leave-edit-" + r.id}>Edit</Button>
-                <Button size="sm" variant="outline" className="h-7 px-2" disabled={cancel.isPending} onClick={() => cancel.mutate(r.id)} data-testid={"clr-leave-cancel-" + r.id}>Cancel</Button>
-                <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(r.id)} data-testid={"clr-leave-delete-" + r.id}>Remove</Button>
+                <Button size="sm" variant="outline" className="h-7 px-2" disabled={cancel.isPending} onClick={() => cancel.mutate(r)} data-testid={"clr-leave-cancel-" + r.id}>Cancel</Button>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive" disabled={remove.isPending} onClick={() => remove.mutate(r)} data-testid={"clr-leave-delete-" + r.id}>Remove</Button>
               </div>
             </div>
           ))}

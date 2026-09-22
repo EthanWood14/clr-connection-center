@@ -73,7 +73,7 @@ function labelFor(el: HTMLElement, fallback: string): string {
  * Passwords are skipped outright — rescuing one would put a credential in
  * localStorage, which is a worse outcome than retyping it.
  */
-export function rescueDrafts(reason: string): RescuedDraft | null {
+export function rescueDrafts(reason: string, targetStorage?: Storage, prefix = KEY_PREFIX): RescuedDraft | null {
   if (typeof window === "undefined" || typeof document === "undefined") return null;
   const fields: Record<string, string> = {};
 
@@ -120,7 +120,7 @@ export function rescueDrafts(reason: string): RescuedDraft | null {
   if (!Object.keys(fields).length) return null;
   const draft: RescuedDraft = { route: routeKey(), reason, savedAt: Date.now(), fields };
   try {
-    window.localStorage.setItem(KEY_PREFIX + draft.route, JSON.stringify(draft));
+    (targetStorage ?? window.localStorage).setItem(prefix + draft.route, JSON.stringify(draft));
   } catch { /* private mode, or full — the draft is lost, the alarm is not */ }
   return draft;
 }

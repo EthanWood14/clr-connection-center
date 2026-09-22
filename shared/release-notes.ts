@@ -28,6 +28,10 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.124.0", headline: "Task locks and clearer day status.", items: [
+    { text: "Managers can lock an employee's portal for a task from the Task Center. Completing the task with a note reopens C3. The open page is kept in place and typed work is backed up in that browser tab; managers can also unlock it early.", audience: "manager" },
+    { text: "Approved PTO now refreshes the scorecard status promptly and is labeled Day off. A new Working on other things option on CLR profiles keeps attendance unchanged while excluding the selected dates from call and transfer goal days.", audience: "manager" },
+  ] },
   { version: "4.123.1", headline: "Put your purchased parts on your car.", items: [
     { text: "Owned garage items now have Equip on car and Unequip buttons. Pick the wheel, glow, lights and other parts you want, with your choices saved for the TV race. Equipping is free and does not require remaining garage edit time.", audience: "everyone" },
     { text: "See your equipped car right above the shop. The 3D preview now rebuilds when parts change, including cars with a pixel skin, so newly equipped parts appear immediately.", audience: "everyone" },

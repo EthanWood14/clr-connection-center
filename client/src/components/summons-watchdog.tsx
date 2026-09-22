@@ -84,7 +84,7 @@ export function SummonsWatchdog() {
         if (alreadyRefreshedFor(id)) return;
         if (Date.now() - loadedAt.current < MIN_AGE_BEFORE_RELOAD_MS) return;
         if (!rememberRefresh(id)) return;
-        window.location.reload();
+        if (!document.documentElement.dataset.portalTaskLocked) window.location.reload();
       } catch {
         // Offline or the request failed — try again on the next tick.
       } finally {
@@ -106,7 +106,7 @@ export function SummonsWatchdog() {
         if (Date.now() - loadedAt.current < MIN_AGE_BEFORE_RELOAD_MS) return;
         if (alreadyRefreshedFor(-1)) return;
         if (!rememberRefresh(-1)) return;
-        window.location.reload();
+        if (!document.documentElement.dataset.portalTaskLocked) window.location.reload();
       } catch { /* nothing to do */ }
     };
 

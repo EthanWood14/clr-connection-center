@@ -60,7 +60,7 @@ test("full PTO wins over both standing and approved halves regardless of row ord
     const f = fixture();
     try {
       for (const portion of reverse ? ["full", "half"] : ["half", "full"]) f.leave(2, portion, portion === "half" ? "half" : "pto");
-      assert.equal(f.read().get(2)?.label, "Time off");
+      assert.equal(f.read().get(2)?.label, "Day off");
     } finally { f.db.close(); }
   }
 });
@@ -88,7 +88,7 @@ test("half-day sick leave is explicit, while full leave still overrides it", () 
     f.leave(1, "half_day", "sick_documented");
     assert.equal(f.read().get(1)?.label, "Sick · half day");
     f.leave(1, "full", "pto");
-    assert.equal(f.read().get(1)?.label, "Time off");
+    assert.equal(f.read().get(1)?.label, "Day off");
     f.leave(1, "full", "sick_undocumented");
     assert.equal(f.read().get(1)?.label, "Sick");
   } finally { f.db.close(); }
@@ -134,7 +134,7 @@ test("weekends and company holidays do not silently imply a standard full or sta
   } finally { f.db.close(); }
 });
 
-test("loader rejects malformed context and performs only three read-only queries", () => {
+test("loader rejects malformed context and performs only read-only queries", () => {
   const f = fixture();
   try {
     for (const org of [0, -1, 1.5, NaN]) assert.throws(() => f.read(DATE, org));
@@ -143,7 +143,7 @@ test("loader rejects malformed context and performs only three read-only queries
     loadScorecardSchedules({ prepare: (sql: string) => {
       statements.push(sql); assert.match(sql.trim(), /^SELECT /); return f.db.prepare(sql);
     } }, 1, DATE);
-    assert.equal(statements.length, 3);
+    assert.equal(statements.length, 4);
     assert.doesNotMatch(statements.join("\n"), /\breason\b|reviewer|document|email|SELECT \*/i);
     f.db.exec("DROP TABLE time_off_requests");
     assert.throws(() => f.read(), "incomplete reads must not report a default Full day");
@@ -181,7 +181,7 @@ test("all demo ranges show the same explicitly supplied schedule date without ch
   const demo = buildDemoManagerDashboard("2026-09-23", DATE);
   assert.equal(demo.scheduleDate, DATE);
   const expected = demo.byRange.today.leaderboard.map(r => r.scheduleStatus);
-  assert.deepEqual(expected.map(s => s.label), ["Full day", "Half day", "Sick", "Time off", "Full day"]);
+  assert.deepEqual(expected.map(s => s.label), ["Full day", "Half day", "Sick", "Day off", "Full day"]);
   for (const range of Object.values(demo.byRange)) assert.deepEqual(range.leaderboard.map(r => r.scheduleStatus), expected);
   assert.equal(demo.demo, true);
 });

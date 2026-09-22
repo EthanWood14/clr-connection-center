@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import type { ScorecardScheduleKind, ScorecardScheduleStatus } from "@shared/scorecard-schedule";
 
 const colors: Record<ScorecardScheduleKind, string> = {
+  other_work: "border-cyan-300 bg-cyan-50 text-cyan-800 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300",
   full: "border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300",
   half: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
   time_off: "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300",

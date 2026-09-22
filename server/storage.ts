@@ -1,4 +1,6 @@
 import { migrateShopTextCurrency } from "./tv-car-shop-schema";
+import { migratePortalTaskLocks } from "./portal-task-lock";
+import { migrateOtherWork } from "./other-work";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
@@ -2834,6 +2836,8 @@ function runNewMigrations() {
     ON tv_car_shop_consumable_purchases (org_id, user_id, item_id)`);
 
   migrateShopTextCurrency(sqlite);
+  migratePortalTaskLocks(sqlite);
+  migrateOtherWork(sqlite);
 
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss

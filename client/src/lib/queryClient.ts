@@ -37,6 +37,9 @@ export async function apiRequest(method: string, path: string, body?: any) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     const errMsg = err.error || res.statusText;
+    if (res.status === 423 && err.code === "PORTAL_TASK_LOCKED") {
+      window.dispatchEvent(new CustomEvent("c3-portal-task-lock", { detail: err.lock }));
+    }
     if (res.status === 403 && errMsg === DEMO_READONLY_MSG) {
       showDemoToast();
     }
@@ -49,6 +52,10 @@ export async function apiRequest(method: string, path: string, body?: any) {
     throw failure;
   }
   const data = await res.json();
+  if (method !== "GET" && /^\/api\/(time-off|clr-other-work)(\/|$)/.test(path)) {
+    void queryClient.invalidateQueries({ predicate: query =>
+      /^\/api\/(time-off|clr-other-work|scorecard-schedules|manager-dashboard)([/?]|$)/.test(String(query.queryKey[0])) });
+  }
   // Keep the celebration local to the browser that performed the successful
   // save; no teammate receives or replays somebody else's animation.
   if (data?.celebrateTransfer && typeof window !== "undefined") {

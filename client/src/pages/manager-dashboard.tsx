@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
 import { ClrScheduleBadge } from "@/components/clr-schedule-badge";
-import { scheduleDateLabel } from "@shared/scorecard-schedule";
+import { scheduleDateLabel, type ScorecardScheduleStatus } from "@shared/scorecard-schedule";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -127,6 +127,7 @@ type RangeBlock = {
   topLos: { id: number; name: string; transfers: number }[];
   leaderboard: {
     userId: number; name: string; activeWorkdays: number; inTraining: boolean;
+    scheduleStatus?: ScorecardScheduleStatus;
     transfers: number; textTransfers?: number; appointments: number; fellThrough: number;
     totalOutcomes: number; calls: number; messages: number; dialpadTexts?: number; conversionRate: number;
     callToolsContacts?: number; callToolsConversations?: number; callToolsActiveSeconds?: number;
@@ -958,7 +959,22 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
     enabled: fastQ.isSuccess,
     refetchInterval: 60_000,
   });
-  const data = fullQ.data ?? fastQ.data;
+  const schedules = useQuery<{ date: string; schedules: Record<number, ScorecardScheduleStatus> }>({
+    queryKey: ["/api/scorecard-schedules"], refetchInterval: 10_000, staleTime: 0,
+    enabled: fastQ.isSuccess && !fastQ.data?.demo,
+  });
+  const data = useMemo(() => {
+    const base = fullQ.data ?? fastQ.data;
+    if (!base || !schedules.data || base.demo) return base;
+    const byRange = { ...base.byRange };
+    for (const key of Object.keys(byRange) as Array<keyof typeof byRange>) {
+      const range = byRange[key];
+      byRange[key] = { ...range, leaderboard: range.leaderboard.map(row => ({
+        ...row, scheduleStatus: schedules.data!.schedules[row.userId] ?? row.scheduleStatus,
+      })) };
+    }
+    return { ...base, scheduleDate: schedules.data.date, byRange };
+  }, [fullQ.data, fastQ.data, schedules.data]);
   const isLoading = !data && (fastQ.isLoading || fullQ.isLoading);
   const isFetching = fastQ.isFetching || fullQ.isFetching;
   const refetch = () => {

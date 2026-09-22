@@ -36,6 +36,7 @@ import { AppFooter } from "@/components/app-footer";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { DailyLoPrioritiesModal, dailyLoPrioritiesStorageKey } from "@/components/daily-lo-priorities-modal";
 import { businessTodayInTz } from "@/lib/business-day";
+import { PortalTaskGate } from "@/components/portal-task-gate";
 
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const Directory = lazy(() => import("@/pages/directory"));
@@ -502,6 +503,7 @@ export default function App() {
       <TooltipProvider>
         <Router hook={useHashLocation}>
           <AuthProvider>
+            <PortalTaskGate>
             {/* Outer boundary covers the logged-out pages and the portal
                 shell. Inside the app, a nested boundary around the page keeps
                 the sidebar and header mounted across a route change. */}
@@ -530,6 +532,7 @@ export default function App() {
               </Route>
             </Switch>
             </Suspense>
+            </PortalTaskGate>
           </AuthProvider>
         </Router>
         <Toaster />

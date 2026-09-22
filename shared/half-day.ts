@@ -34,7 +34,7 @@ export type LeaveKind = "half" | "pto" | "sick_documented" | "sick_undocumented"
 
 export const LEAVE_KIND_LABELS: Record<LeaveKind, string> = {
   half: "Half day",
-  pto: "Full PTO",
+  pto: "Day off",
   sick_documented: "Documented sick",
   sick_undocumented: "Undocumented sick",
 };

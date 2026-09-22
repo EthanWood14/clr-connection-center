@@ -29,6 +29,7 @@ import {
   type DayPortion,
 } from "@shared/half-day";
 import { buildCreditExcludedPersonDays } from "@shared/stats-exclusions";
+import { otherWorkDays } from "./other-work";
 
 export {
   asAvailabilityContext,
@@ -298,7 +299,7 @@ export function paceHalfDayContext(db: any, orgId: number, from: string, today: 
     users,
     from,
     to: today,
-    extra: paceOneOffs,
+    extra: [...paceOneOffs, ...otherWorkDays(db, orgId, from, today)],
   });
   const availability: DayAvailabilityContext = {
     halfDays,

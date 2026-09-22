@@ -19,6 +19,8 @@ import {
 } from "@shared/clr-training-test";
 import { deriveSop } from "@shared/clr-sop";
 import { isTaskPriority, isTaskRecurrence, normalizeTaskScheduleDays } from "@shared/clr-tasks";
+import { portalTaskLockGuard, registerPortalTaskLockRoutes } from "./portal-task-lock";
+import { registerOtherWorkRoutes } from "./other-work";
 import { normalizeLicensedStates } from "@shared/licensed-states";
 import { isUntouchedLoaNote, parseLoaNote } from "@shared/lap-note-template";
 import { z } from "zod";
@@ -4267,6 +4269,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
     next();
   });
 
+  app.use("/api", portalTaskLockGuard(() => storageExtra.getRawSqlite()));
+
   // ── Standalone private SA console (separate from main app) ────────────────
   registerSaConsole(app);
 
@@ -5817,6 +5821,22 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   // Ask C3 — registered here, AFTER the /api auth guard, org-context and
   // LAP confinement middleware, so it inherits all three.
   registerAskC3(app);
+  registerOtherWorkRoutes(app, {
+    db: () => storageExtra.getRawSqlite(), requireAuth,
+    audit: (req, action, row) => {
+      dashboardFullCache.delete(String(req.session_user.orgId));
+      audit({ userId: Number(req.session_user.userId), userName: req.session_user.name ?? "Manager", action,
+        entityType: "clr_other_work", entityId: row.id, details: JSON.stringify(row) });
+    },
+  });
+  registerPortalTaskLockRoutes(app, {
+    db: () => storageExtra.getRawSqlite(), requireAuth,
+    audit: (req, action, lock) => audit({
+      userId: Number(req.session_user.userId), userName: req.session_user.name ?? "Manager",
+      action, entityType: "portal_task_lock", entityId: lock.id,
+      entityLabel: lock.title ?? `Task ${lock.task_id}`, details: JSON.stringify(lock),
+    }),
+  });
 
   // ── Users ────────────────────────────────────────────────────────────────────
   app.get("/api/users", (req, res) => {
@@ -10314,6 +10334,12 @@ ${safeMessage ? `<p><strong>Message:</strong></p><p style="white-space:pre-wrap"
   });
 
   // ── Time Off Requests ───────────────────────────────────────────────────────
+  app.use("/api/time-off", (req, res, next) => {
+    if (req.method !== "GET" || req.path === "/email-decision") {
+      res.once("finish", () => { if (res.statusCode < 400) dashboardFullCache.clear(); });
+    }
+    next();
+  });
   // CLRs submit requests; managers/admins approve or deny. Scoped per org.
   const isYmd = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
   function mapTimeOff(r: any, nameById: Map<number, string>) {
@@ -14444,6 +14470,15 @@ ${note}` : daysLine;
   // placement for each open tab is what made Home sit on skeletons for ~9s.
   const DASHBOARD_FULL_CACHE_TTL_MS = 60_000;
   const dashboardFullCache = new Map<string, { at: number; body: any }>();
+
+  // Schedule changes are small and time-sensitive; never wait on a cached performance report.
+  app.get("/api/scorecard-schedules", requireAuth, (req: any, res) => {
+    const me = storage.getUserById(Number(req.session_user.userId));
+    if (!me || (me.portal && me.portal !== "c3")) return res.status(403).json({ error: "C3 account required." });
+    const orgId = Number(req.session_user.orgId);
+    const date = scorecardScheduleDate();
+    res.set("Cache-Control", "no-store").json({ date, schedules: Object.fromEntries(loadScorecardSchedules(storageExtra.getRawSqlite(), orgId, date)) });
+  });
 
   app.get("/api/manager-dashboard", requireAuth, async (req: any, res) => {
     const sess = req.session_user;

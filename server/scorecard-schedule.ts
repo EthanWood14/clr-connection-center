@@ -1,6 +1,7 @@
 import { isHalfDayPortion, normalizeLeaveKind, standingHalfDayUserIds } from "@shared/half-day";
 import { isCompanyHoliday } from "@shared/company-holidays";
 import { scorecardScheduleStatus, type ScorecardScheduleStatus } from "@shared/scorecard-schedule";
+import { otherWorkRows } from "./other-work";
 
 /** Read-only minimal schedule labels. Never select reasons or medical details. */
 export function loadScorecardSchedules(db: any, orgId: number, date: string): Map<number, ScorecardScheduleStatus> {
@@ -28,6 +29,9 @@ export function loadScorecardSchedules(db: any, orgId: number, date: string): Ma
       priority.set(id, rank);
     }
   };
+  for (const row of otherWorkRows(db, orgId, date, date)) {
+    apply(row.user_id, 4, scorecardScheduleStatus(date, "other_work"));
+  }
   const leave = db.prepare(`
     SELECT r.user_id, r.day_portion, r.leave_kind
     FROM time_off_requests r JOIN users u ON u.id=r.user_id AND u.org_id=r.org_id
