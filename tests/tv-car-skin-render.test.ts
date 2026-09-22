@@ -15,6 +15,20 @@ const skin = () => {
   return result;
 };
 
+test("neon shop upgrades create visible geometry and higher variants take priority", () => {
+  const car = createTvCarModel({ appearance: { ...defaultTvCarAppearance(7), upgrades: ["pulse-rims", "prism-rims", "plasma-underglow", "neon-underglow", "laser-headlights", "ice-headlights", "ion-cabin", "solar-fin", "holo-wing", "reactor-exhaust", "hyperdrive-trail"] }, focus: true });
+  try {
+    const names: string[] = [];
+    car.root.traverse(node => names.push(node.name));
+    for (const name of ["shop-neon-rim", "solar-crown", "ion-cabin", "holo-wing", "reactor-exhaust", "neon-underglow"]) assert.ok(names.includes(name),name);
+    const light = car.root.getObjectByName('ice-headlight') as THREE.Mesh;
+    assert.equal((light.material as THREE.MeshBasicMaterial).color.getHexString(),'ff58c8');
+    const glow = car.root.getObjectByName('neon-underglow') as THREE.Mesh;
+    assert.equal((glow.material as THREE.MeshBasicMaterial).color.getHexString(),'b67bff');
+    assert.equal(car.boost.children.length,4);
+  } finally {car.dispose();}
+});
+
 test("authored panels map to the physical roof, front, sides and back with upright UVs", () => {
   assert.deepEqual(CAR_FACE_PANELS, ["right", "left", "top", null, "nose", "rear"]);
   const size = { width: 2, height: 1, depth: 4 };

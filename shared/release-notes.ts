@@ -28,6 +28,12 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.123.0", headline: "C3 Customs: a neon item shop powered by your all-time work.", items: [
+    { text: "The garage shop is now a neon showroom with Street, Rare, Epic and Legendary tiers, illustrated upgrades, search, currency filters, and your owned collection.", audience: "everyone" },
+    { text: "Spend all-time calls, texts, CallTools time and transfer credit. Your wallet separates total earned, spent and available, keeps historical activity under C3's reporting rules, and preserves half-transfer credit.", audience: "everyone" },
+    { text: "Nine new car upgrades include plasma underglow, prism turbine rims, laser headlights, an ion cockpit, a solar crown, reactor exhaust, a holographic wing and hyperdrive trails. Existing purchases stay yours.", audience: "everyone" },
+    { text: "A garage boost can be purchased even after today's editing time runs out. Each purchase adds five minutes for today only and never changes your performance stats.", audience: "everyone" },
+  ] },
   { version: "4.122.39", headline: "See today's schedule beside each CLR on the Transfer Scorecard.", items: [
     { text: "Full day, Half day, Sick, Time off and Excused absence tags now appear next to names, alongside In training and First month. Tags use approved leave and standing half-day schedules; their Pacific date stays visible on every scorecard range. No private leave reasons are shown, and performance calculations are unchanged.", audience: "everyone" },
   ] },

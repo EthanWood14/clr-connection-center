@@ -124,8 +124,8 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     rounded("body-nose", .58, .24, 1.7, 0, .5, 2.05, bodyPaint, .1, true);
     rounded("body-sidepods", 2, .24, 1.9, 0, .48, -.55, bodyPaint, .13, true);
     box(root, 2.15, .09, 4.4, 0, .27, .05, black);
-    const cabinGlass = upgrades.has("cabin-leds")
-      ? keep(new THREE.MeshPhysicalMaterial({ color: "#1a5a58", roughness: .2, metalness: .35, clearcoat: 1, emissive: "#0a3d3a", emissiveIntensity: .45 }))
+    const cabinGlass = (upgrades.has("cabin-leds") || upgrades.has("ion-cabin"))
+      ? keep(new THREE.MeshPhysicalMaterial({ color: upgrades.has("ion-cabin") ? "#7c4ace" : "#1a5a58", roughness: .2, metalness: .35, clearcoat: 1, emissive: upgrades.has("ion-cabin") ? "#6633aa" : "#0a3d3a", emissiveIntensity: .45 }))
       : glass;
     rounded("cockpit", .92, .4, 1.4, 0, .92, -.25, cabinGlass, .2);
     const helmet = new THREE.Mesh(keep(new THREE.SphereGeometry(.24, 12, 8)), accent); helmet.position.set(0, 1.16, -.13); root.add(helmet);
@@ -146,7 +146,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     // All of it is decoration: nothing here touches the wheels, the track
     // anchor or the skin panels.
     rounded("engine-cover", .62, .5, 1.25, 0, .96, -1.06, bodyPaint, .22);
-    box(root, .07, .36, 1.45, 0, 1.28, -1.45, upgrades.has("trophy-fin") ? material("#f1d552", .28, .55) : bodyPaint).name = "shark-fin";
+    box(root, .07, .36, 1.45, 0, 1.28, -1.45, (upgrades.has("trophy-fin") || upgrades.has("solar-fin")) ? material("#f1d552", .28, .55) : bodyPaint).name = "shark-fin";
     const mirrorMat = upgrades.has("carbon-mirrors") ? material("#1a1a1a", .85, .15) : black;
     for (const x of [-.58, .58]) {
       box(root, .2, .1, .08, x, 1, .42, mirrorMat).name = "mirror";
@@ -170,9 +170,9 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
     if (upgrades.has("matte-hood")) {
       box(root, .28, .02, 1.7, 0, .72, 1.55, material("#1a1a1a", .95, .05)).name = "matte-hood";
     }
-    if (upgrades.has("ice-headlights")) {
+    if (upgrades.has("ice-headlights") || upgrades.has("laser-headlights")) {
       for (const x of [-.22, .22]) {
-        box(root, .14, .08, .06, x, .52, 2.85, keep(new THREE.MeshBasicMaterial({ color: "#9ad8ff" }))).name = "ice-headlight";
+        box(root, .14, .08, .06, x, .52, 2.85, keep(new THREE.MeshBasicMaterial({ color: upgrades.has("laser-headlights") ? "#ff58c8" : "#9ad8ff" }))).name = "ice-headlight";
       }
     }
     if (upgrades.has("champion-plate")) {
@@ -190,6 +190,12 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       const pivot = new THREE.Group(); pivot.name = "wheel-spin"; mount.add(pivot);
       const tire = new THREE.Mesh(wheelGeometry, rubber); tire.rotation.z = Math.PI / 2; tire.castShadow = true; pivot.add(tire);
       const rim = new THREE.Mesh(rimGeometry, upgrades.has("chrome-rims") ? steel : accent); rim.rotation.z = Math.PI / 2; pivot.add(rim); wheels.push(pivot);
+      if (upgrades.has("pulse-rims") || upgrades.has("prism-rims")) {
+        for (const side of [-1, 1]) {
+          const ring = new THREE.Mesh(keep(new THREE.TorusGeometry(.29, .035, 8, 24)), keep(new THREE.MeshBasicMaterial({color: upgrades.has("prism-rims") && z < 0 ? "#ff69db" : "#38e8ff"})));
+          ring.name = "shop-neon-rim"; ring.rotation.y = Math.PI / 2; ring.position.x = side * .19; pivot.add(ring);
+        }
+      }
       for (const turn of [0, Math.PI / 2]) {
         const spoke = new THREE.Mesh(unitBox, black); spoke.name = "wheel-spoke";
         spoke.scale.set(.4, .54, .055); spoke.rotation.x = turn; pivot.add(spoke);
@@ -211,16 +217,33 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       const halo = new THREE.Mesh(keep(new THREE.RingGeometry(2.65, 2.82, 48)), keep(new THREE.MeshBasicMaterial({ color: "#7cf5ee", transparent: true, opacity: .85, side: THREE.DoubleSide, depthWrite: false })));
       halo.name = "focus-halo"; halo.rotation.x = -Math.PI / 2; halo.position.y = .1; root.add(halo);
     }
-    if (upgrades.has("neon-underglow")) {
-      const neon = keep(new THREE.MeshBasicMaterial({ color: "#5cf0ff", transparent: true, opacity: .55, depthWrite: false }));
+    if (upgrades.has("neon-underglow") || upgrades.has("plasma-underglow")) {
+      const neon = keep(new THREE.MeshBasicMaterial({ color: upgrades.has("plasma-underglow") ? "#b67bff" : "#5cf0ff", transparent: true, opacity: .55, depthWrite: false }));
       const under = new THREE.Mesh(keep(new THREE.RingGeometry(1.15, 1.55, 40)), neon);
       under.name = "neon-underglow"; under.rotation.x = -Math.PI / 2; under.position.y = .08; root.add(under);
     }
+    if (upgrades.has("solar-fin")) {
+      for (const z of [-1.8, -1.4, -1]) box(root, .1, .22, .12, 0, 1.55, z, keep(new THREE.MeshBasicMaterial({color:"#ffdc73"}))).name = "solar-crown";
+    }
+    if (upgrades.has("ion-cabin")) {
+      for (const x of [-.3, .3]) box(root, .045, .045, .65, x, 1.08, .2, keep(new THREE.MeshBasicMaterial({color:"#a78bfa"}))).name = "ion-cabin";
+    }
+    if (upgrades.has("holo-wing")) {
+      box(root, 2.25, .055, .38, 0, 1.18, -2.35, keep(new THREE.MeshBasicMaterial({color:"#51edff",transparent:true,opacity:.75}))).name = "holo-wing";
+      for (const x of [-1.1, 1.1]) box(root, .05, .3, .45, x, 1.23, -2.35, keep(new THREE.MeshBasicMaterial({color:"#ff58c8"})));
+    }
+    if (upgrades.has("reactor-exhaust")) {
+      for (const x of [-.28, .28]) {
+        const port = new THREE.Mesh(keep(new THREE.TorusGeometry(.14,.045,8,20)),keep(new THREE.MeshBasicMaterial({color:"#976dff"})));
+        port.name="reactor-exhaust"; port.position.set(x,.65,-2.4); root.add(port);
+        box(root,.14,.14,.03,x,.65,-2.42,keep(new THREE.MeshBasicMaterial({color:"#64ffda"})));
+      }
+    }
     const boost = new THREE.Group(); root.add(boost);
     if (focus) {
-      const plume = upgrades.has("victory-plume") ? "#ffb347" : "#86fff1";
+      const plume = upgrades.has("hyperdrive-trail") ? "#64ffda" : upgrades.has("victory-plume") ? "#ffb347" : "#86fff1";
       const glow = keep(new THREE.MeshBasicMaterial({ color: plume, transparent: true, opacity: .65, depthWrite: false }));
-      for (const x of [-1.25, 1.25]) box(boost, .08, .06, 5.2, x, .25, -4.7, glow);
+      for (const x of (upgrades.has("hyperdrive-trail") ? [-1.25, -.7, .7, 1.25] : [-1.25, 1.25])) box(boost, .08, .06, 5.2, x, .25, -4.7, glow);
     }
     // Articulate the sprung body without moving the track anchor or tire contact
     // points. Identity transforms keep the garage's static model unchanged.

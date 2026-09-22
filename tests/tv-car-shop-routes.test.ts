@@ -1,3 +1,4 @@
+import { migrateShopTextCurrency } from "../server/tv-car-shop-schema";
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -22,6 +23,13 @@ async function harness(t: TestContext, transferCredit = 500) {
     assert.ok(ddl, `production DDL exists for ${table}`);
     db.exec(ddl[0].slice(0, -1));
   }
+  migrateShopTextCurrency(db);
+  db.exec(`CREATE TABLE daily_call_logs (org_id INTEGER, assistant_id INTEGER, log_date TEXT, calls_made INTEGER);
+    CREATE TABLE eod_reports (assistant_id INTEGER, report_date TEXT, messages_sent INTEGER);
+    CREATE TABLE bonzo_call_events (org_id INTEGER, user_id INTEGER, business_date TEXT, prospect_id INTEGER, occurred_at TEXT, counts INTEGER);
+    CREATE TABLE dialpad_sms_events (org_id INTEGER, user_id INTEGER, agent_key TEXT, message_date TEXT);
+    CREATE TABLE dialpad_agent_links (org_id INTEGER, agent_key TEXT, user_id INTEGER);
+    CREATE TABLE callsync_activity_events (org_id INTEGER, assistant_id INTEGER, call_id TEXT, external_event_id TEXT);`);
   db.exec(`CREATE TABLE dialpad_daily_stats (
     id INTEGER PRIMARY KEY AUTOINCREMENT, org_id INTEGER, stat_date TEXT, agent_key TEXT,
     agent_name TEXT, user_id INTEGER, calls INTEGER, synced_at TEXT
@@ -35,9 +43,9 @@ async function harness(t: TestContext, transferCredit = 500) {
     (7,1,'Taylor','assistant',1,1,NULL);`);
   // Seed enough Dialpad + CallTools for expensive catalog purchases.
   db.prepare(`INSERT INTO dialpad_daily_stats (org_id,stat_date,agent_key,agent_name,user_id,calls,synced_at)
-    VALUES (1,'2026-09-01','taylor','Taylor',7,5000,'now')`).run();
+    VALUES (1,'2026-09-15','taylor','Taylor',7,5000,'now')`).run();
   db.prepare(`INSERT INTO callsync_agent_activity_daily (org_id,assistant_id,activity_date,active_seconds)
-    VALUES (1,7,'2026-09-01',200000)`).run();
+    VALUES (1,7,'2026-09-15',200000)`).run();
 
   const app = express();
   app.use(express.json({ limit: "32kb" }));
@@ -152,4 +160,48 @@ test("garage boost is a one-time today-only grant and can be rebought", async t 
   const boost = shop.body.catalog.find((i: any) => i.id === GARAGE_PLUS_5_ITEM_ID);
   assert.equal(boost.owned, false);
   assert.equal(boost.timesPurchased, 2);
+});
+
+test("all-time balances include historical logs and provider activity without double-counting or crossing owners", async t => {
+  const {db,request} = await harness(t, 501.5);
+  db.exec(`INSERT INTO daily_call_logs VALUES (1,7,'2024-01-01',240),(1,7,'2026-09-16',99999),(2,7,'2024-01-01',99999),(1,8,'2024-01-01',99999);
+    INSERT INTO eod_reports VALUES (7,'2024-01-01',900),(7,'2026-09-16',99999);
+    INSERT INTO dialpad_agent_links VALUES (1,'taylor',7),(2,'other',7);
+    INSERT INTO dialpad_sms_events VALUES (1,7,'taylor','2026-09-15'),(1,NULL,'taylor','2026-09-16'),(2,7,'other','2026-09-16'),(1,8,'other','2026-09-16'),(1,7,'taylor','2024-01-01');
+    INSERT INTO bonzo_call_events VALUES (1,7,'2026-09-16',100,'2026-09-16T10:00:01',1),(1,7,'2026-09-16',100,'2026-09-16T10:00:02',1);
+    INSERT INTO callsync_activity_events VALUES (1,7,'call-1','event-1'),(1,7,'call-1','event-2'),(2,7,'call-2','event-3');
+    INSERT INTO callsync_agent_activity_daily VALUES (1,7,'2024-01-01',3600),(2,7,'2024-01-01',99999),(1,8,'2024-01-01',99999);`);
+  const res = await request('/api/me/tv-car/shop');
+  assert.equal(res.status,200);
+  assert.deepEqual(res.body.earned,{transfers:501.5,texts:902,dialpad_calls:5242,calltools_seconds:203600});
+  const buy = await request('/api/me/tv-car/shop/buy','POST',{itemId:'ion-cabin',userId:8,orgId:2,price:0});
+  assert.equal(buy.status,200);
+  assert.equal(buy.body.shop.balances.texts,202);
+  assert.equal(buy.body.shop.earned.texts,902);
+  assert.deepEqual(buy.body.appearance.upgrades,['ion-cabin']);
+  const duplicate = await request('/api/me/tv-car/shop/buy','POST',{itemId:'ion-cabin'});
+  assert.equal(duplicate.body.shop.balances.texts,202);
+  const denied = await request('/api/me/tv-car/shop/buy','POST',{itemId:'laser-headlights'});
+  assert.equal(denied.status,402);
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS n FROM tv_car_shop_purchases').get().n),1);
+  const transfer = await request('/api/me/tv-car/shop/buy','POST',{itemId:'solar-fin'});
+  assert.equal(transfer.body.shop.balances.transfers,51.5);
+});
+
+test("currency migration retains old receipts, remains idempotent, and permits text purchases", () => {
+  const db = new Database(':memory:');
+  try {
+    const source=read('server/storage.ts');
+    for(const table of ['tv_car_shop_purchases','tv_car_shop_consumable_purchases']) {
+      const ddl=source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\)\\\``))!;
+      db.exec(ddl[0].slice(0,-1));
+    }
+    db.exec(`INSERT INTO tv_car_shop_purchases VALUES (1,7,'chrome-rims','dialpad_calls',800,'old');
+      INSERT INTO tv_car_shop_consumable_purchases VALUES (12,1,7,'garage-plus-5','calltools_seconds',18000,300,'2026-09-20','old');`);
+    migrateShopTextCurrency(db); migrateShopTextCurrency(db);
+    assert.equal(db.prepare('SELECT price FROM tv_car_shop_purchases').get().price,800);
+    assert.equal(db.prepare('SELECT id FROM tv_car_shop_consumable_purchases').get().id,12);
+    db.exec(`INSERT INTO tv_car_shop_purchases VALUES (1,7,'ion-cabin','texts',700,'new')`);
+    assert.throws(()=>db.exec(`INSERT INTO tv_car_shop_purchases VALUES (1,7,'ion-cabin','texts',700,'new')`));
+  } finally {db.close();}
 });

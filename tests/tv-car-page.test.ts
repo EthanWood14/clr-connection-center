@@ -123,15 +123,13 @@ test("the garage spends a daily time budget and locks itself when it runs out", 
   assert.match(page, /locked until tomorrow/);
 });
 
-test("the garage page includes a shop tab that spends earned stats, not race position", () => {
-  assert.match(page, /data-testid="tv-car-shop"/);
+test("the garage page connects the neon shop to its authenticated purchase API", () => {
+  const shop = readFileSync(new URL("../client/src/components/tv/neon-shop.tsx", import.meta.url), "utf8");
+  assert.match(page, /<NeonShop/);
   assert.match(page, /data-testid="tv-car-shop-tab"/);
-  assert.match(page, /\/api\/me\/tv-car\/shop/);
-  assert.match(page, /\/api\/me\/tv-car\/shop\/buy/);
-  assert.match(page, /Spend what you have earned/);
-  assert.match(page, /never change scoreboards/);
-  assert.match(page, /data-testid="tv-car-shop-preview"/);
-  assert.match(page, /function ShopPreviewArt/);
-  assert.match(page, /One-time boost/);
-  assert.match(page, /Buy boost/);
+  assert.ok(page.includes('/api/me/tv-car/shop/buy'));
+  assert.match(shop, /data-testid="tv-car-shop"/);
+  assert.match(shop, /Purchases never reduce your performance stats/);
+  assert.match(shop, /data-testid="tv-car-shop-preview"/);
+  assert.match(shop, /Garage boosts add 5 minutes for today only/);
 });

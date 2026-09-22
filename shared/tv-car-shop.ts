@@ -3,7 +3,8 @@
  *
  * Currencies are ONLY metrics C3 already tracks per person:
  *   - transfers          → lifetime transfer credit (same scale as scorecards)
- *   - dialpad_calls      → Dialpad outbound calls (dialpad_daily_stats)
+ *   - dialpad_calls      → all counted calls (legacy currency key retained for receipts)
+ *   - texts              → all counted outbound texts
  *   - calltools_seconds  → CallTools talk / active seconds (callsync daily)
  *
  * Spending never touches real transfer scoring, race position, or goals.
@@ -12,7 +13,7 @@
  * and may be bought again.
  */
 
-export type ShopCurrency = "transfers" | "dialpad_calls" | "calltools_seconds";
+export type ShopCurrency = "transfers" | "dialpad_calls" | "texts" | "calltools_seconds";
 
 export type ShopItemKind = "cosmetic" | "garage";
 
@@ -37,7 +38,11 @@ export type ShopItemPreview = {
   motif: ShopPreviewMotif;
 };
 
+export const SHOP_TIERS = ["Street", "Rare", "Epic", "Legendary"] as const;
+export type ShopTier = typeof SHOP_TIERS[number];
+
 export type ShopItem = {
+  tier: ShopTier;
   id: string;
   name: string;
   description: string;
@@ -74,6 +79,7 @@ export const GARAGE_PLUS_5_SECONDS = 5 * 60;
 export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   {
     id: "chrome-rims",
+    tier: "Street",
     name: "Chrome rims",
     description: "Bright metal rims on your TV car. Purely cosmetic.",
     currency: "dialpad_calls",
@@ -84,6 +90,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "neon-underglow",
+    tier: "Rare",
     name: "Neon underglow",
     description: "A soft cyan glow under the chassis on the TV race.",
     currency: "dialpad_calls",
@@ -94,6 +101,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "ice-headlights",
+    tier: "Rare",
     name: "Ice headlights",
     description: "Cool ice-blue headlights that cut through the night race.",
     currency: "dialpad_calls",
@@ -104,6 +112,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "carbon-mirrors",
+    tier: "Street",
     name: "Carbon mirrors",
     description: "Matte carbon-fiber side mirrors — subtle garage flex.",
     currency: "dialpad_calls",
@@ -114,6 +123,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "cabin-leds",
+    tier: "Street",
     name: "Cabin LED wash",
     description: "A soft teal wash inside the cockpit glass on TV.",
     currency: "dialpad_calls",
@@ -124,6 +134,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "gold-rain-light",
+    tier: "Rare",
     name: "Gold rain light",
     description: "Your rear rain light shines gold instead of accent paint.",
     currency: "transfers",
@@ -134,6 +145,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "trophy-fin",
+    tier: "Epic",
     name: "Trophy shark fin",
     description: "A gold shark fin on the engine cover — bragging rights only.",
     currency: "transfers",
@@ -144,6 +156,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "matte-hood",
+    tier: "Street",
     name: "Matte hood stripe",
     description: "A dark matte stripe down the nose — looks fast standing still.",
     currency: "transfers",
@@ -154,6 +167,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "champion-plate",
+    tier: "Legendary",
     name: "Champion number plate",
     description: "A gold number plate behind the rank digit on the nose.",
     currency: "transfers",
@@ -164,6 +178,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "victory-plume",
+    tier: "Epic",
     name: "Victory plume",
     description: "A warmer boost trail when you score a transfer on the wall.",
     currency: "calltools_seconds",
@@ -174,6 +189,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: "spark-exhaust",
+    tier: "Rare",
     name: "Spark exhaust",
     description: "Copper-tipped exhaust that pops a spark on celebration boosts.",
     currency: "calltools_seconds",
@@ -184,6 +200,7 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   },
   {
     id: GARAGE_PLUS_5_ITEM_ID,
+    tier: "Street",
     name: "+5 min garage boost",
     description:
       "One-time: adds five minutes to today's garage edit time only. Not a permanent daily raise — buy again whenever you need another boost.",
@@ -193,6 +210,15 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
     consumable: true,
     preview: { from: "#0f1f18", to: "#5dcea0", motif: "garage" },
   },
+  {"id":"pulse-rims","name":"Pulse rims","description":"Electric cyan wheel rings with a bright neon core.","currency":"dialpad_calls","price":2400,"tier":"Rare","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#38e8ff","motif":"rims"}},
+  {"id":"plasma-underglow","name":"Plasma underglow","description":"A wide violet halo underneath your car. Replaces cyan underglow.","currency":"texts","price":3500,"tier":"Epic","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#b67bff","motif":"underglow"}},
+  {"id":"laser-headlights","name":"Laser headlights","description":"Twin pink laser blades across the nose. Replaces ice headlights.","currency":"texts","price":1600,"tier":"Rare","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#ff58c8","motif":"headlights"}},
+  {"id":"ion-cabin","name":"Ion cockpit","description":"A violet canopy framed by luminous rails. Replaces the teal cabin wash.","currency":"texts","price":700,"tier":"Street","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#a78bfa","motif":"cabin"}},
+  {"id":"prism-rims","name":"Prism turbine rims","description":"Alternating cyan and pink turbine rings. Takes priority over Pulse and Chrome.","currency":"dialpad_calls","price":6000,"tier":"Legendary","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#ff69db","motif":"rims"}},
+  {"id":"solar-fin","name":"Solar crown fin","description":"A gold dorsal blade with three radiant crown points. Replaces the trophy fin.","currency":"transfers","price":450,"tier":"Legendary","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#ffdc73","motif":"fin"}},
+  {"id":"reactor-exhaust","name":"Reactor exhaust","description":"Twin violet reactor ports with glowing cyan cores.","currency":"calltools_seconds","price":64800,"tier":"Epic","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#976dff","motif":"exhaust"}},
+  {"id":"hyperdrive-trail","name":"Hyperdrive trail","description":"Four neon energy trails light up when your car celebrates a transfer.","currency":"calltools_seconds","price":144000,"tier":"Legendary","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#64ffda","motif":"plume"}},
+  {"id":"holo-wing","name":"Holographic wing","description":"A luminous cyan rear aero wing with pink endplates.","currency":"transfers","price":300,"tier":"Epic","kind":"cosmetic","consumable":false,"preview":{"from":"#090d22","to":"#51edff","motif":"hood"}},
 ] as const;
 
 const CATALOG_BY_ID = new Map(TV_CAR_SHOP_CATALOG.map((item) => [item.id, item]));
@@ -222,7 +248,7 @@ export function normalizeShopUpgrades(raw: unknown): string[] {
 }
 
 export function emptyShopBalances(): ShopBalances {
-  return { transfers: 0, dialpad_calls: 0, calltools_seconds: 0 };
+  return { transfers: 0, dialpad_calls: 0, texts: 0, calltools_seconds: 0 };
 }
 
 /** Clamp earned/spent figures so bad rows cannot invent negative money. */
@@ -234,7 +260,8 @@ export function shopBalance(earned: number, spent: number): number {
 
 export function availableShopBalances(earned: ShopBalances, spent: ShopBalances): ShopBalances {
   return {
-    transfers: shopBalance(earned.transfers, spent.transfers),
+    transfers: Math.max(0, (Number(earned.transfers) || 0) - (Number(spent.transfers) || 0)),
+    texts: shopBalance(earned.texts, spent.texts),
     dialpad_calls: shopBalance(earned.dialpad_calls, spent.dialpad_calls),
     calltools_seconds: shopBalance(earned.calltools_seconds, spent.calltools_seconds),
   };
@@ -253,7 +280,8 @@ export function evaluateShopPurchase(args: {
   const item = shopItemById(args.itemId);
   if (!item) return { status: "unknown_item", itemId: String(args.itemId ?? "") };
   const owned = new Set(Array.from(args.owned ?? []).map(String));
-  const balance = Math.max(0, Math.floor(Number(args.available[item.currency]) || 0));
+  const raw = Number(args.available[item.currency]);
+  const balance = Number.isFinite(raw) ? Math.max(0, item.currency === "transfers" ? raw : Math.floor(raw)) : 0;
   if (!isConsumableShopItem(item) && owned.has(item.id)) {
     return { status: "already_owned", item, balance };
   }
@@ -278,11 +306,12 @@ export function garageDailyBonusSeconds(_owned: Iterable<string>): number {
 }
 
 export function formatShopPrice(item: ShopItem): string {
+  if (item.currency === "texts") return `${item.price.toLocaleString()} texts`;
   if (item.currency === "transfers") {
     return `${item.price} transfer${item.price === 1 ? "" : "s"}`;
   }
   if (item.currency === "dialpad_calls") {
-    return `${item.price} Dialpad call${item.price === 1 ? "" : "s"}`;
+    return `${item.price} call${item.price === 1 ? "" : "s"}`;
   }
   const hours = item.price / 3600;
   if (hours >= 1 && item.price % 3600 === 0) {
@@ -293,15 +322,19 @@ export function formatShopPrice(item: ShopItem): string {
 }
 
 export function formatShopBalance(currency: ShopCurrency, amount: number): string {
-  const n = Math.max(0, Math.floor(Number(amount) || 0));
+  const n = Math.max(0, currency === "transfers" ? (Number(amount) || 0) : Math.floor(Number(amount) || 0));
+  if (currency === "texts") return `${n.toLocaleString()} texts`;
   if (currency === "transfers") return `${n} transfer${n === 1 ? "" : "s"}`;
-  if (currency === "dialpad_calls") return `${n} Dialpad call${n === 1 ? "" : "s"}`;
-  const minutes = Math.floor(n / 60);
-  return `${minutes} min CallTools time`;
+  if (currency === "dialpad_calls") return `${n} call${n === 1 ? "" : "s"}`;
+  const hours = Math.floor(n / 3600);
+  const minutes = Math.floor((n % 3600) / 60);
+  const seconds = n % 60;
+  return hours ? `${hours}h ${minutes}m CallTools time` : `${minutes}m ${seconds}s CallTools time`;
 }
 
 export function shopCurrencyLabel(currency: ShopCurrency): string {
+  if (currency === "texts") return "Texts";
   if (currency === "transfers") return "Transfers";
-  if (currency === "dialpad_calls") return "Dialpad calls";
+  if (currency === "dialpad_calls") return "Calls";
   return "CallTools talk time";
 }

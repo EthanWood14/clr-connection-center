@@ -296,11 +296,13 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
       return res.json({
         ...shop,
         balanceLabels: {
+          texts: formatShopBalance("texts", shop.balances.texts),
           transfers: formatShopBalance("transfers", shop.balances.transfers),
           dialpad_calls: formatShopBalance("dialpad_calls", shop.balances.dialpad_calls),
           calltools_seconds: formatShopBalance("calltools_seconds", shop.balances.calltools_seconds),
         },
         currencyLabels: {
+          texts: shopCurrencyLabel("texts"),
           transfers: shopCurrencyLabel("transfers"),
           dialpad_calls: shopCurrencyLabel("dialpad_calls"),
           calltools_seconds: shopCurrencyLabel("calltools_seconds"),
@@ -323,9 +325,10 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
       const owner = ownerFor(req, res);
       if (!owner) return;
       const itemId = req.body?.itemId ?? req.body?.id;
-      const { evaluation, snapshot, inserted } = purchaseShopItem(
-        deps.db(), owner, itemId, transferCredit(owner), formatShopPrice,
-      );
+      const db = deps.db();
+      const { evaluation, snapshot, inserted } = db.transaction(() => purchaseShopItem(
+        db, owner, itemId, transferCredit(owner), formatShopPrice,
+      )).immediate();
       if (evaluation.status === "unknown_item") {
         return res.status(400).json({ error: "That upgrade is not in the shop.", shop: snapshot });
       }
@@ -349,6 +352,7 @@ export function registerTvCarRoutes(app: Express, deps: TvCarRouteDeps): void {
         shop: {
           ...snapshot,
           balanceLabels: {
+            texts: formatShopBalance("texts", snapshot.balances.texts),
             transfers: formatShopBalance("transfers", snapshot.balances.transfers),
             dialpad_calls: formatShopBalance("dialpad_calls", snapshot.balances.dialpad_calls),
             calltools_seconds: formatShopBalance("calltools_seconds", snapshot.balances.calltools_seconds),

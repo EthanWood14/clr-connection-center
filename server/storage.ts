@@ -1,3 +1,4 @@
+import { migrateShopTextCurrency } from "./tv-car-shop-schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
@@ -2831,6 +2832,8 @@ function runNewMigrations() {
   )`);
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tv_car_shop_consumables_owner
     ON tv_car_shop_consumable_purchases (org_id, user_id, item_id)`);
+
+  migrateShopTextCurrency(sqlite);
 
   // "Go see your manager." A raised summons takes over that person's C3 until a
   // MANAGER clears it — the person being summoned deliberately cannot dismiss

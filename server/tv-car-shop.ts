@@ -1,3 +1,4 @@
+import { COUNTED_CALLS_SQL, COUNTED_MESSAGES_SQL } from "../shared/self-reported";
 /**
  * Garage-shop persistence and earned-balance readers.
  *
@@ -45,17 +46,19 @@ function floorNonNeg(value: unknown): number {
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
 }
 
-/** Dialpad outbound calls already attributed to this person. */
+/** All recorded history, using the same historical cutoff as C3 reports. */
 export function readEarnedDialpadCalls(db: any, owner: ShopOwner): number {
-  try {
-    const row = db.prepare(
-      `SELECT COALESCE(SUM(calls), 0) AS n FROM dialpad_daily_stats
-        WHERE org_id = ? AND user_id = ?`,
-    ).get(owner.org_id, owner.id);
-    return floorNonNeg(row?.n);
-  } catch {
-    return 0;
-  }
+  const row = db.prepare(`SELECT COALESCE(SUM(calls),0) AS n FROM ${COUNTED_CALLS_SQL}
+    WHERE org_id=? AND assistant_id=?`).get(owner.org_id, owner.id);
+  const calltools = db.prepare(`SELECT COUNT(DISTINCT COALESCE(NULLIF(call_id,''),external_event_id)) AS n
+    FROM callsync_activity_events WHERE org_id=? AND assistant_id=?`).get(owner.org_id, owner.id);
+  return floorNonNeg(row?.n) + floorNonNeg(calltools?.n);
+}
+
+export function readEarnedTexts(db: any, owner: ShopOwner): number {
+  const row = db.prepare(`SELECT COALESCE(SUM(messages),0) AS n FROM ${COUNTED_MESSAGES_SQL}
+    WHERE org_id=? AND assistant_id=?`).get(owner.org_id, owner.id);
+  return floorNonNeg(row?.n);
 }
 
 /** CallTools active / talk seconds from the daily CallSync rollup. */
@@ -125,7 +128,8 @@ export function readEarnedShopBalances(
   transferCredit: number,
 ): ShopBalances {
   return {
-    transfers: floorNonNeg(transferCredit),
+    transfers: Number.isFinite(transferCredit) ? Math.max(0, transferCredit) : 0,
+    texts: readEarnedTexts(db, owner),
     dialpad_calls: readEarnedDialpadCalls(db, owner),
     calltools_seconds: readEarnedCalltoolsSeconds(db, owner),
   };

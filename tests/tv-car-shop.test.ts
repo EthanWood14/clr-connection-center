@@ -20,13 +20,13 @@ import { normalizeTvCarAppearance, validateTvCarAppearance } from "../shared/tv-
 test("catalog uses only existing CLR metrics as currency and every item has a preview", () => {
   assert.ok(TV_CAR_SHOP_CATALOG.length >= 10);
   const currencies = new Set(TV_CAR_SHOP_CATALOG.map((item) => item.currency));
-  assert.deepEqual([...currencies].sort(), ["calltools_seconds", "dialpad_calls", "transfers"]);
+  assert.deepEqual([...currencies].sort(), ["calltools_seconds", "dialpad_calls", "texts", "transfers"]);
   for (const item of TV_CAR_SHOP_CATALOG) {
     assert.ok(Number.isInteger(item.price) && item.price > 0, item.id);
     assert.ok(item.kind === "cosmetic" || item.kind === "garage", item.id);
     assert.ok(item.name.trim().length > 2);
     assert.ok(item.preview?.from && item.preview?.to && item.preview?.motif, item.id);
-    assert.match(formatShopPrice(item), /transfer|Dialpad|CallTools/);
+    assert.match(formatShopPrice(item), /transfer|call|text|CallTools/);
     assert.equal(typeof item.consumable, "boolean");
   }
   assert.ok(shopItemById(GARAGE_PLUS_5_ITEM_ID)?.consumable);
@@ -44,16 +44,16 @@ test("balances never go negative and ignore garbage input", () => {
   assert.equal(shopBalance(NaN as any, 3), 0);
   assert.deepEqual(
     availableShopBalances(
-      { transfers: 50, dialpad_calls: 200, calltools_seconds: 3600 },
-      { transfers: 15, dialpad_calls: 250, calltools_seconds: 600 },
+      { transfers: 50, dialpad_calls: 200, texts: 0, calltools_seconds: 3600 },
+      { transfers: 15, dialpad_calls: 250, texts: 0, calltools_seconds: 600 },
     ),
-    { transfers: 35, dialpad_calls: 0, calltools_seconds: 3000 },
+    { transfers: 35, dialpad_calls: 0, texts: 0, calltools_seconds: 3000 },
   );
-  assert.deepEqual(emptyShopBalances(), { transfers: 0, dialpad_calls: 0, calltools_seconds: 0 });
+  assert.deepEqual(emptyShopBalances(), { transfers: 0, dialpad_calls: 0, texts: 0, calltools_seconds: 0 });
 });
 
 test("purchase rules: unknown, insufficient, ok, already-owned cosmetics, rebuyable boosts", () => {
-  const available = { transfers: 300, dialpad_calls: 2_000, calltools_seconds: 100_000 };
+  const available = { transfers: 300, dialpad_calls: 2_000, texts: 0, calltools_seconds: 100_000 };
   assert.equal(evaluateShopPurchase({ itemId: "missing", owned: [], available }).status, "unknown_item");
 
   const gold = shopItemById("gold-rain-light")!;
@@ -79,7 +79,7 @@ test("purchase rules: unknown, insufficient, ok, already-owned cosmetics, rebuya
   const brokeButOwned = evaluateShopPurchase({
     itemId: gold.id,
     owned: [gold.id],
-    available: { transfers: 0, dialpad_calls: 0, calltools_seconds: 0 },
+    available: { transfers: 0, dialpad_calls: 0, texts: 0, calltools_seconds: 0 },
   });
   assert.equal(brokeButOwned.status, "already_owned");
 
