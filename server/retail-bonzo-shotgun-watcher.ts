@@ -5,6 +5,7 @@
  * CLR assignments. The existing Shotgun timer assigns anything left `queued`.
  */
 import { loNewLeadIsFresh } from "@shared/lo-new-leads";
+import { hasPipelineStage } from "@shared/new-lead-stage";
 import {
   RETAIL_DESK_BONZO_EMAIL,
   isRetailDeskShotgunLead,
@@ -92,6 +93,7 @@ export function publishRetailDeskShotgunLeads(orgId: number, los: NewestLeadsByL
   }
   for (const row of los) {
     for (const lead of row.leads) {
+      if (!hasPipelineStage(lead)) continue;
       if (!lead.externalId || !loNewLeadIsFresh(lead.landedAt, now)) continue;
       if (!isRetailDeskShotgunLead(row.email, row.name)) continue;
       const { inserted, row: recorded } = storageExtra.recordLoNewLead({

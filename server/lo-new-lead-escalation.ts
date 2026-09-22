@@ -31,10 +31,13 @@ export function markLoNewLeadEscalated(id: number, shotgunLeadId: number | null,
 }
 
 /** Unclaimed leads past the claim window — atomically taken for Shotgun. */
-export function loNewLeadsDueForShotgun(orgId: number, cutoffIso: string): any[] {
+export function loNewLeadsDueForShotgun(orgId: number, cutoffIso: string, eligibleExternalIds: ReadonlySet<string> = new Set()): any[] {
+  const ids = Array.from(eligibleExternalIds).filter(Boolean);
+  if (!ids.length) return [];
   const sqlite = getRawSqlite();
-  const candidates = sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND status='new' AND first_seen_at<=? ORDER BY first_seen_at, id LIMIT 50`)
-    .all(orgId, cutoffIso) as any[];
+  const candidates = sqlite.prepare(`SELECT * FROM lo_new_leads WHERE org_id=? AND status='new' AND first_seen_at<=?
+    AND external_id IN (${ids.map(() => "?").join(",")}) ORDER BY first_seen_at, id LIMIT 50`)
+    .all(orgId, cutoffIso, ...ids) as any[];
   const taken: any[] = [];
   for (const lead of candidates) {
     if (takeLoNewLeadForEscalation(Number(lead.id))) taken.push(lead);

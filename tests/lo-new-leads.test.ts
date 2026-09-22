@@ -91,7 +91,8 @@ test("the watcher runs on its own five-second clock and shares the popup's cache
   assert.match(watcher, /hours: LO_NEW_LEAD_POLL_HOURS, per: LO_NEW_LEAD_POLL_PER/);
   assert.match(routes, /const LO_NEW_LEAD_POLL_HOURS = 72;/);
   assert.match(routes, /const LO_NEW_LEAD_POLL_PER = 5;/);
-  assert.match(watcher, /escalateUnclaimedLoLeads\(orgId\)/);
+  assert.match(watcher, /escalateUnclaimedLoLeads\(orgId, eligibleExternalIds\)/);
+  assert.match(watcher, /if \(!result.stale\)/);
   assert.match(routes, /\}, 5_000\);\s*\n\s*loLeadWatcher\.unref/);
   assert.match(routes, /onFresh: \(los: NewestLeadsByLo\[\]\) => \{ try \{ announceFreshLoLeads\(orgId, los\); \}/);
   assert.match(routes, /await newestLeadsForLos\(emails, \{ hours, per \}, newestLeadsDeps\(orgId\)\)/);

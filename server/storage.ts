@@ -5163,8 +5163,8 @@ export function claimLoNewLead(orgId: number, externalId: string, userId: number
 }
 
 /** Unclaimed leads whose window closed at or before `cutoffIso` — take before Shotgun publish. */
-export function loNewLeadsDueForShotgun(orgId: number, cutoffIso: string): any[] {
-  return loNewLeadEscalation.loNewLeadsDueForShotgun(orgId, cutoffIso);
+export function loNewLeadsDueForShotgun(orgId: number, cutoffIso: string, eligibleExternalIds: ReadonlySet<string> = new Set()): any[] {
+  return loNewLeadEscalation.loNewLeadsDueForShotgun(orgId, cutoffIso, eligibleExternalIds);
 }
 
 export const takeLoNewLeadForEscalation = loNewLeadEscalation.takeLoNewLeadForEscalation;

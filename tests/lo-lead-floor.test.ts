@@ -44,7 +44,8 @@ test("the feed hands each CLR the floor's unclaimed leads, never their own twice
   assert.match(open, /status='new' AND shotgun_lead_id IS NULL/);
   assert.match(open, /first_seen_at<=\? AND first_seen_at>\?/);
   assert.match(open, /includes\(Number\(excludeUserId\)\)/, "your own lead already has a card");
-  const route = routes.slice(routes.indexOf("const floorLos ="), routes.indexOf("res.json({\n      ...result,"));
+  const route = routes.slice(routes.indexOf("const floorCandidates ="), routes.indexOf("res.json({\n      ...result,"));
+  assert.match(route, /stageQualifiedFloorLeads\(floorCandidates, floorSnapshot\)/);
   assert.match(route, /shotgunOptedOut \?\? meRow\?\.shotgun_opted_out\) \? \[\]/, "somebody off the rotation is off this too");
   assert.match(route, /new Date\(nowMs - LO_NEW_LEAD_FLOOR_AFTER_MS\)\.toISOString\(\)/);
   assert.match(route, /new Date\(nowMs - LO_NEW_LEAD_CLAIM_WINDOW_MS\)\.toISOString\(\)/);

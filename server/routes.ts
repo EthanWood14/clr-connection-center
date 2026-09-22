@@ -147,7 +147,8 @@ import {
   PEOPLE_TTL_MS, PEOPLE_STALE_MAX_MS, PEOPLE_REFRESH_MS,
   type LeadVaultPerson, type PeopleResult,
 } from "./leadvault-people";
-import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, type NewestLeadsByLo } from "./leadvault-newest-leads";
+import { loEmailsFor, newestLeadsForLos, newestLeadsFanInEmails, stageQualifiedFloorLeads, type NewestLeadsByLo } from "./leadvault-newest-leads";
+import { hasPipelineStage } from "@shared/new-lead-stage";
 import { LO_NEW_LEAD_CLAIM_WINDOW_MS, LO_NEW_LEAD_FLOOR_AFTER_MS, loNewLeadEscalateAt, loNewLeadHeadStartUntil, loNewLeadIsFresh } from "@shared/lo-new-leads";
 import { computeShotgunSla, computeShotgunSlaByClr } from "./shotgun-sla";
 import type { ShotgunSlaClrSummary } from "../shared/shotgun-sla";
@@ -19928,6 +19929,7 @@ ${note}` : daysLine;
       return res.status(401).json({ ok: false, error: "invalid token" });
     }
 
+    if (!hasPipelineStage(req.body)) return res.json({ ok: true, shown: false, reason: "missing pipeline stage" });
     const lead = recordNewLead(req.body ?? {});
     // Older than the buffer's own ten-minute window. Answered 200 on purpose:
     // a retry of this morning's delivery is not an error on LeadVault's side,
@@ -20381,6 +20383,7 @@ ${note}` : daysLine;
       if (!assigned.length) continue; // nobody is calling for this LO today — not a CLR's lead
       const loName = String(lo.fullName ?? lo.full_name ?? row.name ?? "");
       for (const lead of row.leads) {
+        if (!hasPipelineStage(lead)) continue;
         if (!lead.externalId || !loNewLeadIsFresh(lead.landedAt, now)) continue;
         const { inserted, row: recorded } = storageExtra.recordLoNewLead({
           orgId, externalId: String(lead.externalId), loId: Number(lo.id), loEmail: row.email, loName,
@@ -20451,9 +20454,9 @@ ${note}` : daysLine;
   }
 
   /** Hand every lead nobody claimed inside the window to the Shotgun rotation. */
-  function escalateUnclaimedLoLeads(orgId: number): void {
+  function escalateUnclaimedLoLeads(orgId: number, eligibleExternalIds: ReadonlySet<string>): void {
     const cutoff = new Date(Date.now() - LO_NEW_LEAD_CLAIM_WINDOW_MS).toISOString();
-    const due = storageExtra.loNewLeadsDueForShotgun(orgId, cutoff);
+    const due = storageExtra.loNewLeadsDueForShotgun(orgId, cutoff, eligibleExternalIds);
     if (!due.length) return;
     // Published under the first active admin: Shotgun wants a publisher, and a
     // lead the feed handed over has no human one.
@@ -20493,8 +20496,15 @@ ${note}` : daysLine;
           const { byLo } = todaysAssignmentsByLo(orgId);
           const los = (storage.getLoanOfficers() as any[]).filter((lo) => byLo.has(Number(lo.id)));
           const emails = Array.from(new Set([...loEmailsFor(los), ...newestLeadsFanInEmails()]));
-          if (emails.length) await newestLeadsForLos(emails, { hours: LO_NEW_LEAD_POLL_HOURS, per: LO_NEW_LEAD_POLL_PER }, newestLeadsDeps(orgId));
-          escalateUnclaimedLoLeads(orgId);
+          if (emails.length) {
+            const result = await newestLeadsForLos(emails, { hours: LO_NEW_LEAD_POLL_HOURS, per: LO_NEW_LEAD_POLL_PER }, newestLeadsDeps(orgId));
+            // Retry only leads still present with a stage in a fresh upstream snapshot.
+            // Old unstaged rows must not bypass the intake filter after a deploy.
+            if (!result.stale) {
+              const eligibleExternalIds = new Set(result.los.flatMap(row => row.leads.filter(hasPipelineStage).map(lead => String(lead.externalId))));
+              escalateUnclaimedLoLeads(orgId, eligibleExternalIds);
+            }
+          }
         });
       }
     } catch (e: any) { console.error("[lo-new-lead] watcher failed:", e?.message ?? e); }
@@ -20578,12 +20588,17 @@ ${note}` : daysLine;
     // off the Shotgun rotation is left out of this too.
     const nowMs = Date.now();
     const meRow = storage.getUserById(userId) as any;
-    const floorLos = (meRow?.shotgunOptedOut ?? meRow?.shotgun_opted_out) ? [] : storageExtra.openFloorLoNewLeads(
+    const floorCandidates = (meRow?.shotgunOptedOut ?? meRow?.shotgun_opted_out) ? [] : storageExtra.openFloorLoNewLeads(
       orgId,
       new Date(nowMs - LO_NEW_LEAD_FLOOR_AFTER_MS).toISOString(),
       new Date(nowMs - LO_NEW_LEAD_CLAIM_WINDOW_MS).toISOString(),
       userId,
-    ).map((row: any) => ({
+    );
+    const floorSnapshot = floorCandidates.length ? await newestLeadsForLos(
+      Array.from(new Set(floorCandidates.map((row: any) => String(row.lo_email ?? "")).filter(Boolean))),
+      { hours, per: Math.max(per, 5) }, newestLeadsDeps(orgId),
+    ) : { stale: false, los: [] };
+    const floorLos = stageQualifiedFloorLeads(floorCandidates, floorSnapshot).map((row: any) => ({
       email: String(row.lo_email ?? ""),
       lo: { id: Number(row.lo_id), name: String(row.lo_name ?? "") },
       leads: [{

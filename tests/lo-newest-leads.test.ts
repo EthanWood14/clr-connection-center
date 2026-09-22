@@ -17,7 +17,7 @@ const page = read("client/src/pages/assignments.tsx");
 const payload = (emails: string[]) => ({
   los: emails.map((email, i) => ({
     email, name: `LO ${i}`,
-    leads: [{ externalId: String(i), borrowerName: `Borrower ${i}`, landedAt: "2026-09-09T19:00:00Z" }],
+    leads: [{ externalId: String(i), borrowerName: `Borrower ${i}`, stage: "New leads", landedAt: "2026-09-09T19:00:00Z" }],
   })),
 });
 

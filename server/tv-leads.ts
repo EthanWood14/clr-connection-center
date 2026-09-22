@@ -25,6 +25,8 @@
  * so the buffer is install-wide by construction.
  */
 
+import { hasPipelineStage } from "@shared/new-lead-stage";
+
 /** Everything the wall is given about a lead. Nothing else is kept. */
 export interface NewLead {
   id: number;
@@ -40,6 +42,15 @@ export interface NewLead {
  * here earns a copy of the rest.
  */
 export interface NewLeadInput {
+  stage?: unknown;
+  stageId?: unknown;
+  stage_id?: unknown;
+  stageName?: unknown;
+  stage_name?: unknown;
+  pipelineStage?: unknown;
+  pipeline_stage?: unknown;
+  pipelineStageId?: unknown;
+  pipeline_stage_id?: unknown;
   name?: unknown;
   source?: unknown;
   state?: unknown;
@@ -85,6 +96,7 @@ function prune(now: number): void {
  * answering 200 keeps it from being retried forever.
  */
 export function recordNewLead(input: NewLeadInput, now = Date.now()): NewLead | null {
+  if (!hasPipelineStage(input)) return null;
   const ms = arrivedAt(input.at, now);
   if (now - ms > NEW_LEAD_MAX_AGE_MS) return null;
   seq += 1;

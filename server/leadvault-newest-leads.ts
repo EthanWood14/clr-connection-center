@@ -33,6 +33,8 @@
  * or show an error to a CLR who cannot do anything about it.
  */
 
+import { hasPipelineStage } from "@shared/new-lead-stage";
+
 export type NewestLead = {
   externalId: string;
   bonzoId: string | null;
@@ -110,11 +112,18 @@ export function losFromPayload(payload: unknown): NewestLeadsByLo[] {
     .map((r) => ({
       email: String(r.email).toLowerCase(),
       name: r.name ?? null,
-      leads: Array.isArray(r.leads) ? (r.leads as NewestLead[]) : [],
+      leads: Array.isArray(r.leads) ? (r.leads as NewestLead[]).filter(hasPipelineStage) : [],
     }));
 }
 
 type Entry = { at: number; los: NewestLeadsByLo[] };
+
+/** Saved floor cards need current stage evidence from their own LO's feed. */
+export function stageQualifiedFloorLeads<T extends { lo_email?: string; external_id: string }>(rows: T[], snapshot: { stale: boolean; los: NewestLeadsByLo[] }): T[] {
+  if (snapshot.stale) return [];
+  const eligible = new Map(snapshot.los.map(row => [row.email.trim().toLowerCase(), new Set(row.leads.filter(hasPipelineStage).map(lead => String(lead.externalId)))]));
+  return rows.filter(row => eligible.get(String(row.lo_email ?? "").trim().toLowerCase())?.has(String(row.external_id)));
+}
 
 const cache = new Map<string, Entry>();
 const inFlight = new Map<string, Promise<NewestLeadsByLo[] | null>>();

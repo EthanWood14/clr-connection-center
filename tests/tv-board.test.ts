@@ -1137,7 +1137,7 @@ test("the ring buffer keeps a few minutes of arrivals and nothing else", async (
   // Only what the wall shows is kept. A state and a campaign are accepted so
   // LeadVault does not need a different body for C3 — and then dropped.
   const one = recordNewLead(
-    { name: " Maria  Alvarez ", source: "Facebook", state: "CA", campaign: "Sept Refi", at: new Date(t0).toISOString() },
+    { stage: "New leads", name: " Maria  Alvarez ", source: "Facebook", state: "CA", campaign: "Sept Refi", at: new Date(t0).toISOString() },
     t0,
   )!;
   assert.deepEqual(Object.keys(one).sort(), ["at", "id", "name", "source"]);
@@ -1146,14 +1146,14 @@ test("the ring buffer keeps a few minutes of arrivals and nothing else", async (
   // Older than the window is not news, and is never taken in at all. This is
   // the retry-storm guard: a backfill pointed at the webhook cannot replay the
   // morning onto the wall.
-  const stale = recordNewLead({ name: "This morning", at: new Date(t0 - NEW_LEAD_MAX_AGE_MS - 1000).toISOString() }, t0);
+  const stale = recordNewLead({ stage: "New leads", name: "This morning", at: new Date(t0 - NEW_LEAD_MAX_AGE_MS - 1000).toISOString() }, t0);
   assert.equal(stale, null);
   assert.equal(newLeadsSince(new Date(t0 - 60_000).toISOString(), t0).length, 1);
 
   // The buffer is short on purpose: past a screenful, the oldest go.
   resetNewLeads();
   for (let i = 0; i < NEW_LEAD_KEEP + 12; i += 1) {
-    recordNewLead({ name: `Lead ${i}`, at: new Date(t0).toISOString() }, t0);
+    recordNewLead({ stage: "New leads", name: `Lead ${i}`, at: new Date(t0).toISOString() }, t0);
   }
   const held = newLeadsSince(new Date(t0 - 60_000).toISOString(), t0);
   assert.equal(held.length, NEW_LEAD_KEEP);
@@ -1166,10 +1166,10 @@ test("the ring buffer keeps a few minutes of arrivals and nothing else", async (
   // A sender an hour fast cannot park a notice at the top of the buffer: an
   // unreadable or future stamp is simply when it arrived.
   resetNewLeads();
-  const skewed = recordNewLead({ name: "Clock skew", at: new Date(t0 + 3_600_000).toISOString() }, t0)!;
+  const skewed = recordNewLead({ stage: "New leads", name: "Clock skew", at: new Date(t0 + 3_600_000).toISOString() }, t0)!;
   assert.equal(skewed.at, new Date(t0).toISOString());
-  assert.equal(recordNewLead({ name: "No stamp" }, t0)!.at, new Date(t0).toISOString());
-  assert.equal(recordNewLead({ at: "garbage" }, t0)!.name, "A new lead", "a nameless lead still reads as a sentence");
+  assert.equal(recordNewLead({ stage: "New leads", name: "No stamp" }, t0)!.at, new Date(t0).toISOString());
+  assert.equal(recordNewLead({ stage: "New leads", at: "garbage" }, t0)!.name, "A new lead", "a nameless lead still reads as a sentence");
 });
 
 test("the feed hands the board only the leads after its cursor", async () => {
@@ -1177,7 +1177,7 @@ test("the feed hands the board only the leads after its cursor", async () => {
   resetNewLeads();
   const t0 = Date.parse("2026-09-02T17:00:00.000Z");
   const at = (secs: number) => new Date(t0 + secs * 1000).toISOString();
-  for (const s of [10, 20, 30]) recordNewLead({ name: `Lead ${s}`, at: at(s) }, t0 + 60_000);
+  for (const s of [10, 20, 30]) recordNewLead({ stage: "New leads", name: `Lead ${s}`, at: at(s) }, t0 + 60_000);
 
   // Strictly after, exactly like the event query's COALESCE(...) > ?.
   assert.deepEqual(newLeadsSince(at(20), t0 + 60_000).map((l) => l.name), ["Lead 30"]);

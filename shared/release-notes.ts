@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.124.2", headline: "New leads need a pipeline stage.", items: [
+    { text: "Automatic new-lead cards, alerts, TV notices and Shotgun intake now require a pipeline stage. Missing, blank or unassigned stages are skipped, including Retail pool leads. Retry intake checks a fresh eligible feed before publishing.", audience: "everyone" },
+  ] },
   { version: "4.124.1", headline: "Admins can task-lock other admins.", items: [
     { text: "Admins can assign a task to another admin or manager and lock their portal until it is completed. Self-locking stays blocked, and non-admin managers cannot lock admin or manager accounts.", audience: "manager" },
   ] },
