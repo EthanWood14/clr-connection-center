@@ -62,7 +62,7 @@ function componentHarness() {
   const scope: Record<string, any> = { React, exports, useState: () => [sort, (next: typeof sort) => { sort = next; }],
     DEFAULT_SCORECARD_SORT, resolveScorecardSort, selectScorecardSort, sortScorecardRows,
     projectPerformanceTransfers, PERFORMANCE_WORKDAY_DESCRIPTION,
-    Card: "Card", CardContent: "CardContent", Button: "Button", ClrTrainingBadge: "ClrTrainingBadge",
+    Card: "Card", CardContent: "CardContent", Button: "Button", ClrTrainingBadge: "ClrTrainingBadge", ClrScheduleBadge: "ClrScheduleBadge",
     ArrowUpDown: "ArrowUpDown", ArrowUp: "ArrowUp", ArrowDown: "ArrowDown",
     heatColor: () => "", formatTransferCount: String, formatSlaSeconds: String, paceTier: () => null,
   };
@@ -72,6 +72,17 @@ function componentHarness() {
 function all(node: any): any[] { return node && typeof node === "object" ? [node, ...(node.children ?? []).flatMap(all)] : []; }
 function find(node: any, predicate: (n: any) => boolean) { const result = all(node).find(predicate); assert.ok(result, "rendered element exists"); return result; }
 function displayedIds(node: any) { return find(node, n => n.type === "tbody").children.map((n: any) => n.props.key); }
+
+test("schedule tag stays beside the CLR and training tag in both daily and MTD scorecards", () => {
+  const scheduleStatus = { date: "2026-09-22", kind: "half", label: "Half day", detail: "Approved half day" };
+  for (const pace of [undefined, true]) {
+    const view = componentHarness().render([{ ...row("Sample CLR", 3), userId: 1, inTraining: true, activeWorkdays: 5, scheduleStatus }], pace);
+    const cell = find(view, n => n.type === "tbody").children[0].children[1];
+    assert.equal(find(cell, n => n.type === "ClrScheduleBadge").props.status, scheduleStatus);
+    assert.equal(find(cell, n => n.type === "ClrTrainingBadge").props.activeWorkdays, 5);
+    assert.ok(all(cell).some(n => n.type === "span" && n.props.className.includes("flex-wrap")));
+  }
+});
 
 test("actual header buttons and picker sort every category and expose accessible direction", () => {
   const h = componentHarness();

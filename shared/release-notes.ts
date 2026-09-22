@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.122.39", headline: "See today's schedule beside each CLR on the Transfer Scorecard.", items: [
+    { text: "Full day, Half day, Sick, Time off and Excused absence tags now appear next to names, alongside In training and First month. Tags use approved leave and standing half-day schedules; their Pacific date stays visible on every scorecard range. No private leave reasons are shown, and performance calculations are unchanged.", audience: "everyone" },
+  ] },
   {
     version: "4.122.38",
     headline: "Shotgun calms down: a lead stops asking after 30 minutes, and only people actually at C3 get offers.",

@@ -92,6 +92,8 @@ import { type ClrTotals, compare as compareClr, metricsFor as clrMetricsFor, com
 import { clrTrainingStatus, CLR_TRAINING_WORKDAY_THRESHOLD, type ClrTrainingStatus } from "./clr-training-status";
 import { transfersPerWorkingDay, MIN_WORKING_DAYS_FOR_RATE, type ClrWorkdayRate } from "./clr-workday-rate";
 import { loadPerformanceDays } from "./performance-workdays";
+import { loadScorecardSchedules } from "./scorecard-schedule";
+import { scorecardScheduleDate, scorecardScheduleStatus, type ScorecardScheduleStatus } from "@shared/scorecard-schedule";
 import { loadScorecardDigestContext } from "./scorecard-digest-context";
 import { performanceDaysByUser, performanceDayWeight, remainingPerformancePaceDays, PERFORMANCE_WORKDAY_DESCRIPTION } from "@shared/performance-workday";
 import { AUDIT_WINDOWS, type AuditWindow, buildAuditRows, auditSummary, windowStart, windowLabel, type TransferRow, type PackageRow, AUDIT_DOC_LABELS, AUDIT_DOC_TYPES } from "./lap-transfer-audit";
@@ -14466,16 +14468,23 @@ ${note}` : daysLine;
       return res.status(403).json({ error: "Organization context required." });
     }
     const orgKey = String(reportOrgId);
-    if (isDemoOrg(reportOrgId)) return res.json(buildDemoManagerDashboard(businessTodayForRequest(req, storageExtra.getRawSqlite())));
+    const scheduleDate = scorecardScheduleDate();
+    if (isDemoOrg(reportOrgId)) return res.json(buildDemoManagerDashboard(businessTodayForRequest(req, storageExtra.getRawSqlite()), scheduleDate));
     if (!isFast) {
       const hit = dashboardFullCache.get(orgKey);
-      if (hit && Date.now() - hit.at < DASHBOARD_FULL_CACHE_TTL_MS) {
+      if (hit && hit.body.scheduleDate === scheduleDate && Date.now() - hit.at < DASHBOARD_FULL_CACHE_TTL_MS) {
         res.setHeader("X-Dashboard-Cache", "HIT");
         return res.json({ ...hit.body, generatedAt: hit.body.generatedAt, phase: "full", cached: true });
       }
     }
 
     const todayStr = businessTodayForRequest(req, storageExtra.getRawSqlite());
+    let scheduleByUser = new Map<number, ScorecardScheduleStatus>();
+    try {
+      scheduleByUser = loadScorecardSchedules(storageExtra.getRawSqlite(), reportOrgId, scheduleDate);
+    } catch {
+      console.error("[manager-dashboard] schedule labels unavailable");
+    }
     // Complete CallTools volume. C3's own callsync feed sees only a fraction
     // (185 calls on 2026-08-24 against 8,729 dialed), so the dialer series comes
     // from LeadVault, 5-minute cached, falling back per-day to the local table.
@@ -15409,6 +15418,7 @@ ${note}` : daysLine;
             userId: u.id,
             name: u.name,
             ...trainingForUser(trainingByUser, u.id),
+            scheduleStatus: scheduleByUser.get(Number(u.id)) ?? scorecardScheduleStatus(scheduleDate, "unknown"),
             transfers: s.transfers,
             workedDays: workedDaysByUser.get(Number(u.id)) ?? 0,
             remainingPaceDays: remainingPerformancePaceDays(Number(u.id), endDate, workdayAvailability),
@@ -15721,6 +15731,7 @@ ${note}` : daysLine;
     const payload = {
       generatedAt: new Date().toISOString(),
       phase: isFast ? "fast" : "full",
+      scheduleDate,
       today: todayStr,
       dailyMetrics: managerDailyMetrics({
         callToolsTotal: leadvaultCallTools.get(todayStr),

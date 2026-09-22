@@ -4,6 +4,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ClrTrainingBadge } from "@/components/clr-training-badge";
+import { ClrScheduleBadge } from "@/components/clr-schedule-badge";
+import { scheduleDateLabel } from "@shared/scorecard-schedule";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -165,6 +167,7 @@ type RangeBlock = {
 };
 type ManagerData = {
   demo?: boolean;
+  scheduleDate?: string;
   dailyMetrics?: ManagerDailyMetrics;
   generatedAt: string;
   /** "fast" = KPI/scorecard windows only; "full" = every byRange including all-time. */
@@ -638,9 +641,10 @@ function TransferScorecard({ rows, rangeLabel, pace }: {
               <tr key={r.userId} className="border-t border-border">
                 <td className="px-3 py-2 text-muted-foreground tabular-nums">{idx + 1}</td>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">
-                  <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex flex-wrap items-center gap-1.5 max-w-[300px]">
                     {r.name}
                     <ClrTrainingBadge inTraining={r.inTraining} activeWorkdays={r.activeWorkdays} />
+                    <ClrScheduleBadge status={r.scheduleStatus} />
                   </span>
                 </td>
                 {cols.map((c, ci) => {
@@ -1352,6 +1356,9 @@ export default function ManagerDashboard({ view = "advanced" }: { view?: "advanc
         >
           Transfer Scorecard — {byRange[scorecardRange]?.window?.label ?? ""}
         </SectionTitle>
+        {data.scheduleDate && <p className="mb-2 text-xs text-muted-foreground" data-testid="scorecard-schedule-date">
+          Schedule tags: {scheduleDateLabel(data.scheduleDate)} (Pacific) — today's schedule, not days worked in the selected range.
+        </p>}
         {scorecardRange === "mtd" && (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>Pace uses each CLR's qualified days worked and remaining availability:</span>

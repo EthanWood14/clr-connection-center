@@ -10,6 +10,7 @@ import { managerDailyMetrics } from "../shared/manager-daily-metrics";
 import { dropWeekendRows, isWeekday } from "../client/src/lib/weekday-date";
 import { isClrTrendWorkday } from "../client/src/lib/clr-trend-workday";
 import * as performanceWorkday from "../shared/performance-workday";
+import * as scorecardSchedule from "../shared/scorecard-schedule";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(root, rel), "utf8");
@@ -155,6 +156,7 @@ function harness(options: { fast?: any; full?: any; fastError?: boolean; fullErr
     "@/lib/weekday-date": { dropWeekendRows, isWeekday },
     "@/lib/clr-trend-workday": { isClrTrendWorkday },
     "@shared/performance-workday": performanceWorkday,
+    "@shared/scorecard-schedule": scorecardSchedule,
     "@shared/transfer-credit": { formatTransferCount: String },
     "date-fns": dates,
   };
@@ -169,7 +171,7 @@ function fixture() {
   const block = { window: { label: "Last 30 days" }, trend: [], leaderboard: [], outcomeBreakdown: [], topLos: [], fellThroughReasons: [] };
   const activity = { calls: 201, contacts: 110, conversations: 91, activeSeconds: 3600 };
   return {
-    generatedAt: "2026-09-21T18:00:00Z", today: "2026-09-21", phase: "full", dailyMetrics: managerDailyMetrics(input),
+    generatedAt: "2026-09-21T18:00:00Z", today: "2026-09-21", scheduleDate: "2026-09-21", phase: "full", dailyMetrics: managerDailyMetrics(input),
     stats: { today: {}, week: {}, month: {}, priorWeek: {}, priorMonth: {} },
     callActivity: { today: activity, week: activity, month: activity, priorWeek: activity, priorMonth: activity },
     clrCards: [], activityFeed: [], alerts: [],

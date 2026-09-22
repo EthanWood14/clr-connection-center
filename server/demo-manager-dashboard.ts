@@ -1,6 +1,7 @@
 import { addIsoDays } from "./business-day";
 import { buildTransferScorecardWindows } from "./manager-scorecard";
 import { remainingPerformancePaceDays } from "@shared/performance-workday";
+import { scorecardScheduleStatus, type ScorecardScheduleKind } from "@shared/scorecard-schedule";
 
 // Read-only, fictional fixtures. Never seed or query live team records to make
 // a demo look populated; rolling dates keep the preview useful after launch.
@@ -69,7 +70,7 @@ function rangeBlock(days: ReturnType<typeof sampleDays>, window: { startDate: st
     placementRoutingProblem: null };
 }
 
-export function buildDemoManagerDashboard(today: string) {
+export function buildDemoManagerDashboard(today: string, scheduleDate = today) {
   const days = sampleDays(today);
   const windows: Record<string, any> = { ...buildTransferScorecardWindows(today),
     week: { startDate: addIsoDays(today, -6), endDate: today, days: 7, label: "Last 7 days" },
@@ -77,13 +78,17 @@ export function buildDemoManagerDashboard(today: string) {
     all: { startDate: addIsoDays(today, -89), endDate: today, days: 0, label: "All sample history" } };
   const byRange: Record<string, ReturnType<typeof rangeBlock>> = {};
   for (const [key, window] of Object.entries(windows)) byRange[key] = rangeBlock(days, window);
+  const sampleSchedules: ScorecardScheduleKind[] = ["full", "half", "sick", "time_off", "full"];
+  for (const range of Object.values(byRange)) {
+    range.leaderboard.forEach((row, i) => { row.scheduleStatus = scorecardScheduleStatus(scheduleDate, sampleSchedules[i]); });
+  }
   const stats = (key: string) => ({ totalCallsToday: sum(byRange[key].leaderboard, "calls"),
     transfers: sum(byRange[key].leaderboard, "transfers"), appointments: sum(byRange[key].leaderboard, "appointments"), fellThrough: 0 });
   const activity = (key: string) => ({ calls: sum(byRange[key].leaderboard, "callToolsCalls"),
     contacts: sum(byRange[key].leaderboard, "callToolsContacts"), conversations: sum(byRange[key].leaderboard, "callToolsConversations"),
     activeSeconds: sum(byRange[key].leaderboard, "callToolsActiveSeconds") });
   const todayRows = byRange.today.leaderboard;
-  return { demo: true, generatedAt: new Date().toISOString(), phase: "full", today,
+  return { demo: true, generatedAt: new Date().toISOString(), phase: "full", today, scheduleDate,
     dailyMetrics: { callToolsCalls: sum(todayRows, "callToolsCalls"), callToolsSource: "provider",
       transfers: sum(todayRows, "transfers"), appointments: sum(todayRows, "appointments"),
       callToolsConversations: sum(todayRows, "callToolsConversations"), dialpadCalls: sum(todayRows, "dialpadCalls"),
