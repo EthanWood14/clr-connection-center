@@ -329,6 +329,9 @@ export const TV_CAR_SHOP_CATALOG: readonly ShopItem[] = [
   {"id": "party-hat", "name": "Party hat", "description": "A pink cone with a gold pom. Every transfer is an occasion.", "currency": "texts", "price": 800, "tier": "Street", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ff5fa2", "motif": "hat"}},
   {"id": "gold-crown", "name": "Gold crown", "description": "For whoever is leading. Nobody checks.", "currency": "transfers", "price": 300, "tier": "Legendary", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#ffd34d", "motif": "hat"}},
   {"id": "body-stock-modern", "name": "Modern Stock Car", "description": "A wide closed-wheel coupe, low roof, splitter and rear spoiler. NASCAR-inspired.", "currency": "calltools_seconds", "price": 43200, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#b08aff", "motif": "body"}},
+  {"id": "body-pickup", "name": "Pit crew pickup", "description": "A square cab, open cargo bed and chunky bumpers. Haul your duck to victory.", "currency": "dialpad_calls", "price": 2200, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#e7b573", "motif": "body"}},
+  {"id": "body-van", "name": "Questionable cargo van", "description": "A tall panel van with rear doors. Definitely full of racing equipment.", "currency": "texts", "price": 2600, "tier": "Rare", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#a7c5ff", "motif": "body"}},
+  {"id": "body-suv", "name": "Boxy trail SUV", "description": "An upright cabin, roof rails and a rear spare tire. School-run energy, race-day attitude.", "currency": "transfers", "price": 220, "tier": "Epic", "kind": "cosmetic", "consumable": false, "preview": {"from": "#090d22", "to": "#97e6b6", "motif": "body"}},
 ] as const;
 
 const CATALOG_BY_ID = new Map(TV_CAR_SHOP_CATALOG.map((item) => [item.id, item]));

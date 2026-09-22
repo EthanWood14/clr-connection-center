@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.126.1", headline: "Garage shutters and a bigger fleet.", items: [
+    { text: "New pickup truck, cargo van and boxy SUV bodies are in the shop. When garage time runs out, a steel shutter rolls down over the page. Buy a five-minute boost to reopen or head back to C3. Your current draft stays behind the door while the page remains open. Reduced-motion settings skip the animation.", audience: "everyone" },
+  ] },
   {
     version: "4.126.0",
     headline: "Six new copilots and four hats for the shop.",

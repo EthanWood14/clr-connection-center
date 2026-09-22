@@ -69,7 +69,9 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
   };
   try {
     const upgrades = new Set(appearance.upgrades ?? []);
-    const stock = upgrades.has("body-stock-80s") || upgrades.has("body-stock-modern");
+    const pickup = upgrades.has("body-pickup"), van = upgrades.has("body-van"), suv = upgrades.has("body-suv");
+    const utility = pickup || van || suv;
+    const stock = utility || upgrades.has("body-stock-80s") || upgrades.has("body-stock-modern");
     const classic = upgrades.has("body-f1-60s");
     const nineties = upgrades.has("body-f1-90s");
     const modern = upgrades.has("body-f1-modern");
@@ -126,7 +128,36 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       const mesh = new THREE.Mesh(geometry, body && appearance.skin ? bodyMaterials : mat);
       mesh.name = name; mesh.position.set(x, y, z); mesh.castShadow = mesh.receiveShadow = true; root.add(mesh); return mesh;
     };
-    if (stock) {
+    if (utility) {
+      rounded("utility-chassis",1.92,.5,4.7,0,.71,.2,bodyPaint,.08,true);
+      const tint=upgrades.has("ion-cabin")?material("#8854ce"):upgrades.has("cabin-leds")?material("#259e96"):glass;
+      if(pickup) {
+        rounded("pickup-cab",2.02,.83,1.85,0,1.32,.56,bodyPaint,.07,true);
+        box(root,1.77,.48,.035,0,1.44,1.505,tint).name="pickup-windshield";
+        for(const x of [-1.025,1.025]) box(root,.025,.45,1.35,x,1.44,.55,tint);
+        box(root,1.85,.05,1.55,0,1,-1.33,black).name="pickup-bed";
+        for(const x of [-1.04,1.04]) box(root,.13,.5,1.75,x,1.2,-1.32,bodyPaint);
+        box(root,2.15,.5,.12,0,1.2,-2.16,bodyPaint).name="pickup-tailgate";
+      } else {
+        rounded(van?"van-cargo-box":"suv-cabin",2.05,1.05,van?3.58:2.85,0,1.34,van?-.08:-.26,bodyPaint,.08,true);
+        box(root,1.8,.52,.04,0,1.57,van?1.73:1.19,tint).name="utility-windshield";
+        for(const x of [-1.04,1.04]) {
+          box(root,.035,.48,van?1.0:2.2,x,1.55,van?1.05:-.08,tint).name="utility-side-window";
+          if(suv) box(root,.07,.08,2.7,x*.82,1.96,-.24,black).name="suv-roof-rail";
+        }
+        if(van) {box(root,.04,.95,.04,0,1.32,-1.89,black).name="van-rear-doors";for(const x of [-.12,.12]) box(root,.05,.16,.06,x,1.3,-1.93,steel);}
+        if(suv) {const spare=new THREE.Mesh(keep(new THREE.TorusGeometry(.29,.12,10,20)),rubber);spare.position.set(.48,1.19,-2.15);spare.name="suv-spare-tire";root.add(spare);}
+      }
+      for(const x of [-1.04,1.04]) {
+        for(const z of [-1.42,1.6]) box(root,.26,.13,.99,x,.97,z,black).name="utility-fender";
+        box(root,.22,.13,.2,x*1.11,1.38,1.02,upgrades.has("carbon-mirrors")?black:accent).name="mirror";
+      }
+      for(const z of [-2.23,2.58]) box(root,2.19,.19,.17,0,.55,z,steel).name="utility-bumper";
+      box(root,1.3,.26,.05,0,.9,2.57,black).name="utility-grille";
+      for(const x of [-.78,.78]) box(root,.36,.22,.06,x,1.04,2.57,material("#e5f4ff"));
+      box(root,.22,.13,.06,0,.87,-2.3,upgrades.has("gold-rain-light")?material("#f1d552"):accent).name="rain-light";
+      if(upgrades.has("trophy-fin")||upgrades.has("solar-fin")) box(root,.08,.3,.8,0,2,-.8,material("#f1d552")).name="shark-fin";
+    } else if (stock) {
       const retro = upgrades.has("body-stock-80s");
       rounded("stock-body", 1.85, .46, 4.9, 0, .65, .25, bodyPaint, retro ? .04 : .22, true);
       rounded("stock-hood", 2.12, .16, 1.7, 0, .94, 1.6, bodyPaint, .08, true);
@@ -261,7 +292,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       under.name = "neon-underglow"; under.rotation.x = -Math.PI / 2; under.scale.y = 1.85; under.position.y = .08; root.add(under);
     }
     if (upgrades.has("solar-fin")) {
-      for (const z of [-1.8, -1.4, -1]) box(root, .1, .22, .12, 0, 1.55, z, keep(new THREE.MeshBasicMaterial({color:"#ffdc73"}))).name = "solar-crown";
+      for (const z of [-1.8, -1.4, -1]) box(root, .1, .22, .12, 0, utility ? 2.2 : 1.55, utility ? z + .6 : z, keep(new THREE.MeshBasicMaterial({color:"#ffdc73"}))).name = "solar-crown";
     }
     if (upgrades.has("ion-cabin")) {
       for (const x of [-.3, .3]) box(root, .045, .045, .65, x, 1.08, .2, keep(new THREE.MeshBasicMaterial({color:"#a78bfa"}))).name = "ion-cabin";
@@ -297,7 +328,7 @@ export function createTvCarModel(options: CarModelOptions): TvCarModel {
       // With a passenger the group is the passenger seat. With only a hat it
       // sits on the driver's own helmet, which is the point of the hat being
       // its own slot rather than part of a character.
-      buddy.position.set(rider?.38:0, rider?(stock?1.5:1.13):(stock?1.53:1.16), rider?-.18:-.13);
+      buddy.position.set(rider ? .38 : 0, utility ? 1.78 : rider ? (stock ? 1.5 : 1.13) : (stock ? 1.53 : 1.16), utility && pickup ? .5 : rider ? -.18 : -.13);
       root.add(buddy);
       const orb=(r:number,x:number,y:number,z:number,mat:THREE.Material,sx=1,sy=1,sz=1)=>{
         const m=new THREE.Mesh(keep(new THREE.SphereGeometry(r,16,12)),mat);m.position.set(x,y,z);m.scale.set(sx,sy,sz);m.castShadow=true;buddy.add(m);return m;

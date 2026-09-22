@@ -117,10 +117,10 @@ test("the garage spends a daily time budget and locks itself when it runs out", 
   // spends the last second rather than at the next tick.
   assert.match(page, /const takeBudget = \(result: CarResponse \| undefined\) => \{ if \(result\?\.budget\) setBudget\(result\.budget\); \};/);
   assert.equal((page.match(/takeBudget\(data\);/g) ?? []).length, 3, "paint, wrap and skin saves all carry it");
-  assert.match(page, /data-testid="tv-car-locked"/);
+  assert.match(page, /<GarageDoor closed=\{locked\}/);
   assert.match(page, /data-testid="tv-car-time-left"/);
-  assert.match(page, /Your garage is closed for today/);
-  assert.match(page, /locked until tomorrow/);
+  assert.match(read("client/src/components/tv/garage-door.tsx"), /GARAGE CLOSED/);
+  assert.match(read("client/src/components/tv/garage-door.tsx"), /dialog.showModal\(\)/);
 });
 
 test("the garage page connects the neon shop to its authenticated purchase API", () => {

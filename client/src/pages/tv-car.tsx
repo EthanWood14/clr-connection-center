@@ -1,3 +1,4 @@
+import { GarageDoor } from "@/components/tv/garage-door";
 import { NeonShop, type ShopResponse } from "@/components/tv/neon-shop";
 import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -269,6 +270,20 @@ function Garage({ user }: { user: AuthUser }) {
     const timer = window.setInterval(tick, TV_CAR_TICK_MS);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [locked]);
+  // A new day or a boost purchased elsewhere can reopen a door left on screen.
+  useEffect(() => {
+    if (!locked) return;
+    let stopped = false;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void apiRequest("GET", "/api/me/tv-car").then((data: CarResponse) => {
+        if (!stopped && data.budget) setBudget(data.budget);
+      }).catch(() => {});
+    };
+    const timer = window.setInterval(refresh, 30_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { stopped = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
+  }, [locked]);
   const busy = locked || save.isPending || wrap.isPending || preparingWrap || skinSave.isPending || preparingSkin || buy.isPending || equip.isPending || sell.isPending;
   const editingSkin = skinDraft ?? saved.skin ?? blankSkin;
   const skinDirty = skinDraft !== null && JSON.stringify(skinDraft) !== JSON.stringify(saved.skin ?? blankSkin);
@@ -331,16 +346,8 @@ function Garage({ user }: { user: AuthUser }) {
         </div>
       </div>
 
-      {locked && (
-        <Alert data-testid="tv-car-locked">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Your garage is closed for today</AlertTitle>
-          <AlertDescription>
-            Everyone gets {Math.round(tvCarDailySeconds(liveBudget?.day ?? "") / 60)} minutes a day in here. Yours is used up, so your car is locked until tomorrow —
-            it keeps whatever you last saved and still races on the wall. Come back in the morning to change it.
-          </AlertDescription>
-        </Alert>
-      )}
+      <GarageDoor closed={locked} boost={shop.data?.catalog.find(item => item.id === "garage-plus-5")} pending={buy.isPending}
+        error={buy.isError ? buy.error.message : undefined} hasUnsaved={hasUnsaved} onBoost={() => buy.mutate("garage-plus-5")} />
 
       <div className="flex flex-wrap gap-2" role="group" aria-label="Garage workspace">
         <Button type="button" variant={garageMode === "skin" ? "default" : "outline"} aria-pressed={garageMode === "skin"} onClick={() => setGarageMode("skin")}>Pixel skin studio{skinDirty ? " •" : ""}</Button>
