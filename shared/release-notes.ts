@@ -28,6 +28,9 @@ export type ReleaseNote = {
 };
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  { version: "4.126.2", headline: "Priority instructions now count as priority.", items: [
+    { text: "An explicitly prioritised LO earns full Priority credit regardless of workload. C3 saves the priority status with each transfer so unpinning someone later cannot erase that credit. Older records use recorded priority-change history where available, with a frozen baseline for gaps. Investment routing requirements still apply.", audience: "manager" },
+  ] },
   { version: "4.126.1", headline: "Garage shutters and a bigger fleet.", items: [
     { text: "New pickup truck, cargo van and boxy SUV bodies are in the shop. When garage time runs out, a steel shutter rolls down over the page. Buy a five-minute boost to reopen or head back to C3. Your current draft stays behind the door while the page remains open. Reduced-motion settings skip the animation.", audience: "everyone" },
   ] },

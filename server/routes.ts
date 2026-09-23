@@ -15341,7 +15341,7 @@ ${note}` : daysLine;
           // manager selected is judged; the run-up exists to reconstruct the
           // floor those transfers landed on, not to be scored a second time.
           const placementRows = (sqlite.prepare(
-            `SELECT assistant_id, lo_id, loa_id, date, conversation_notes
+            `SELECT assistant_id, lo_id, loa_id, date, conversation_notes, priority_at_transfer
                FROM lead_outcomes
               WHERE org_id = ? AND outcome_type='transfer' AND date >= ? AND date <= ?`,
           ).all(placementOrg, startDate, endDate) as any[]).map((o: any): PlacementTransfer => ({
@@ -15372,6 +15372,7 @@ ${note}` : daysLine;
             // through, the module counts them instead (`investmentUnscored`) and
             // the column shows a dash and the reason. The one switch that may
             // unflag a row is the module's own, honoured here at the call site.
+            priorityAtTransfer: Number(o.priority_at_transfer) === 1,
             investmentProperty: INVESTMENT_PROPERTY_INPUT_AVAILABLE && isInvestmentProperty(o.conversation_notes),
           }));
           // The roster, so a CLR who transferred nobody gets a null rather than

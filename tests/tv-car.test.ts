@@ -7,7 +7,7 @@ import {
   TV_CAR_COLORS,
 } from "../shared/tv-car";
 import { canCustomizeTvCar, registerTvCarRoutes } from "../server/tv-car-routes";
-import { tvCarBudgetDay } from "../shared/tv-car-budget";
+import { tvCarBudgetDay, tvCarDailySeconds } from "../shared/tv-car-budget";
 import { isTvCarParticipant, isTvRaceGuest } from "../shared/tv-race-participation";
 import { withTvRaceGuests, tvRaceCreditsForEvents } from "../server/tv-race-roster";
 
@@ -195,7 +195,7 @@ test("GET returns defaults and does not create a preference or audit row", (t) =
   const opened = h.call("GET") as any;
   // Every car response also says how much garage time is left today
   // (shared/tv-car-budget.ts). Looking is free: a GET spends nothing.
-  assert.deepEqual(opened.body.budget, { used: 0, remaining: 900, locked: false, day: tvCarBudgetDay(Date.now()) });
+  assert.deepEqual(opened.body.budget, { used: 0, remaining: tvCarDailySeconds(tvCarBudgetDay(Date.now())), locked: false, day: tvCarBudgetDay(Date.now()) });
   assert.deepEqual({ status: opened.status, body: { appearance: opened.body.appearance } }, { status: 200, body: { appearance: defaultTvCarAppearance(7) } });
   assert.equal(h.count(), 0);
   assert.deepEqual(h.audits, []);

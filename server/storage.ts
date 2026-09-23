@@ -1,3 +1,4 @@
+import { migrateTransferPrioritySnapshots } from "./transfer-priority-snapshot";
 import { migrateShopTextCurrency } from "./tv-car-shop-schema";
 import { migratePortalTaskLocks } from "./portal-task-lock";
 import { migrateOtherWork } from "./other-work";
@@ -2835,6 +2836,7 @@ function runNewMigrations() {
   sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_tv_car_shop_consumables_owner
     ON tv_car_shop_consumable_purchases (org_id, user_id, item_id)`);
 
+  migrateTransferPrioritySnapshots(sqlite);
   migrateShopTextCurrency(sqlite);
   migratePortalTaskLocks(sqlite);
   migrateOtherWork(sqlite);

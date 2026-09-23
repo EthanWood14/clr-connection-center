@@ -1979,9 +1979,9 @@ test("the tooltip describes the stat the server actually computes", () => {
   assert.match(text, /Justin, Mateo or John/);
   assert.match(text, /matching assistant scores 60–100% by workload/);
   assert.match(text, /NOT the percentage sent to LOs marked priority at transfer time/);
-  assert.match(text, /priority flags and the active roster come from current settings/);
-  assert.match(text, /not a saved transfer-time snapshot/);
-  assert.match(text, /Changing those settings can change past scores/);
+  assert.match(text, /saved priority status/);
+  assert.match(text, /frozen baseline/);
+  assert.match(text, /Changing priority flags later does not change/);
   // ...including the half that stings, which is the half most likely to be
   // quietly dropped from a tooltip.
   assert.match(text, /no assistant recorded at all, scores zero/);
@@ -2307,4 +2307,11 @@ test("the link is explicit, never inferred from a name", () => {
   const fn = src.slice(src.indexOf("export function mergeHybridLoads"), src.indexOf("export function recipientCredits"));
   assert.doesNotMatch(fn, /\.name\b/, "the merge must never look at a name");
   assert.match(fn, /sameAsLoaId/);
+});
+
+test("saved explicit priority cannot bypass mandatory investment routing", () => {
+  const rows = five("Cal", REDOBLE, true, JONJAIRO).map(row => ({ ...row, priorityAtTransfer: true }));
+  const result = scoreTransferPriority(rows, recipients)[0];
+  assert.equal(result.pct, 0);
+  assert.equal(result.breaches, 5);
 });

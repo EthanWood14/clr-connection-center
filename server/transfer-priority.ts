@@ -463,6 +463,8 @@ export interface RecipientRow extends StarvedRow {
  * the other counts credit earned — and that is why.
  */
 export interface TransferRow {
+  /** Saved explicit priority status. False must never inherit a later priority flag. */
+  priorityAtTransfer?: boolean;
   /**
    * The CLR who made the transfer (lead_outcomes.assistant_id) — the one who
    * CHOSE the destination. Never the shotgun publisher; see the note above.
@@ -1376,13 +1378,13 @@ export function scoreTransferPriority(
   // Credits cost a sort per pool and repeat hard: one snapshot per day per
   // distinct eligible set, not one per transfer.
   const cache = new Map<string, Map<string, number>>();
-  const creditsFor = (dayIndex: number, keys: string[]): Map<string, number> => {
-    const cacheKey = `${dayIndex} ${keys.length ? [...keys].sort().join("|") : "*"}`;
+  const creditsFor = (dayIndex: number, keys: string[], frozenPriority = false): Map<string, number> => {
+    const cacheKey = `${frozenPriority} ${dayIndex} ${keys.length ? [...keys].sort().join("|") : "*"}`;
     const hit = cache.get(cacheKey);
     if (hit) return hit;
     // dayIndex -1 is "no usable date", and loadAt reads that as the end of the
     // window — the harshest snapshot, and the only one nobody can game.
-    const rows = officers.map((r) => ({ ...r, transfers: loadAt(recipientKey("lo", r.id), dayIndex) }));
+    const rows = officers.map((r) => ({ ...r, needsTransfers: frozenPriority ? false : r.needsTransfers, transfers: loadAt(recipientKey("lo", r.id), dayIndex) }));
     const built = creditIndex(recipientCredits(rows, { ...opts, poolKeys: keys, roster: undefined }));
     cache.set(cacheKey, built);
     return built;
@@ -1514,7 +1516,13 @@ export function scoreTransferPriority(
     // Counted on the way past: silence here is not the same as compliance.
     if (t.investmentProperty === true) row.investmentUnscored += 1;
 
-    const onPriorityDesk = deskKey !== null && priorityDesks.has(deskKey);
+    // Following an explicit priority instruction is full credit regardless of workload.
+    // Investment routing above remains a separate, mandatory destination rule.
+    if (t.priorityAtTransfer === true) {
+      row.scored += 1; row.sum += 1; row.priorityDeskScored += 1;
+      continue;
+    }
+    const onPriorityDesk = t.priorityAtTransfer === undefined && deskKey !== null && priorityDesks.has(deskKey);
     if (onPriorityDesk) {
       const ladder = deskLadders.get(deskKey as string);
       // No assistant recorded is not a breach here and never a zero: the desk
@@ -1541,7 +1549,7 @@ export function scoreTransferPriority(
     const free = keyList(t.eligible).filter((k) => known.has(k));
     if (!free.length) row.unrestricted += 1;
 
-    const credit = transferCredit(t, creditsFor(dayIndex, free));
+    const credit = transferCredit(t, creditsFor(dayIndex, free, t.priorityAtTransfer !== undefined));
     if (credit === null) row.unplaced += 1;
     else {
       row.scored += 1;
